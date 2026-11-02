@@ -221,7 +221,17 @@ export class AiService {
         type: 'Positive',
         priority: req.priority || 'High',
         status: 'Draft', // Strict proposal rule: Never auto-approve!
+        isAiDrafted: true,
         steps: positiveSteps,
+        sourceReferences: [
+          {
+            documentId: doc?.id || req.sourceReferences?.[0]?.documentId || 'DOC-02',
+            documentTitle: docTitle,
+            version: docVer,
+            section: docSec,
+            citationHash
+          }
+        ],
         groundedCitation: {
           documentId: doc?.id || req.sourceReferences?.[0]?.documentId || 'DOC-02',
           requirementId: req.id,
@@ -238,6 +248,7 @@ export class AiService {
         type: 'Boundary',
         priority: 'Critical',
         status: 'Draft',
+        isAiDrafted: true,
         steps: [
           {
             stepNumber: 1,
@@ -248,6 +259,15 @@ export class AiService {
             stepNumber: 2,
             action: 'Verify security audit log record',
             expectedResult: 'Failed attempt is recorded in tamper-evident audit trail with SHA-256 event hash'
+          }
+        ],
+        sourceReferences: [
+          {
+            documentId: doc?.id || req.sourceReferences?.[0]?.documentId || 'DOC-02',
+            documentTitle: docTitle,
+            version: docVer,
+            section: docSec,
+            citationHash
           }
         ],
         groundedCitation: {
