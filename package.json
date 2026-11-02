@@ -8,7 +8,8 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:all": "vitest run && npm --prefix server test"
+    "test:all": "vitest run && npm --prefix server test",
+    "agent": "npm --prefix server run agent --"
   },
   "dependencies": {
     "clsx": "^2.1.1",

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useApp } from '../../context/AppContext';
 import { useI18n } from '../../common/i18n/I18nContext';
 import {
@@ -17,16 +17,31 @@ import {
   RefreshCw,
   Save,
   Check,
-  AlertCircle
+  AlertCircle,
+  Terminal,
+  Play,
+  Copy,
+  Download,
+  Bot,
+  Zap,
+  CornerDownLeft
 } from 'lucide-react';
 import { Card, Badge, Button } from '../../common/components';
-import { getAiSettings, saveAiSettings, testAiConnection } from '../../common/services/api';
+import {
+  getAiSettings,
+  saveAiSettings,
+  testAiConnection,
+  getAgentConfig,
+  saveAgentConfig,
+  generateAgentToken,
+  executeAgentCommand
+} from '../../common/services/api';
 
 export const SettingsView: React.FC = () => {
   const { activeProject, auditEvents, currentRole } = useApp();
   const { t } = useI18n();
 
-  const [activeTab, setActiveTab] = useState<'ai' | 'audit' | 'rbac' | 'workspace'>('ai');
+  const [activeTab, setActiveTab] = useState<'ai' | 'agent' | 'audit' | 'rbac' | 'workspace'>('agent');
 
   // AI Configuration State
   const [provider, setProvider] = useState<'gemini' | 'openai'>('gemini');
@@ -47,9 +62,38 @@ export const SettingsView: React.FC = () => {
   const [testResult, setTestResult] = useState<{ success: boolean; message: string; latencyMs?: number } | null>(null);
   const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
 
+  // Terminal Agent State
+  const [agentName, setAgentName] = useState<string>('DocQA-Terminal-Copilot');
+  const [agentPersona, setAgentPersona] = useState<string>('QA Automation & Grounding Specialist');
+  const [autonomyLevel, setAutonomyLevel] = useState<string>('assisted');
+  const [cliToken, setCliToken] = useState<string>('');
+  const [isRotatingToken, setIsRotatingToken] = useState<boolean>(false);
+  const [isSavingAgent, setIsSavingAgent] = useState<boolean>(false);
+  const [agentSaveMsg, setAgentSaveMsg] = useState<string | null>(null);
+  const [copiedToken, setCopiedToken] = useState<boolean>(false);
+  const [copiedCmd, setCopiedCmd] = useState<string | null>(null);
+
+  // Interactive Terminal Emulator State
+  const [terminalInput, setTerminalInput] = useState<string>('status');
+  const [isTerminalRunning, setIsTerminalRunning] = useState<boolean>(false);
+  const [terminalHistory, setTerminalHistory] = useState<Array<{ command: string; stdout: string; latencyMs?: number; isError?: boolean }>>([
+    {
+      command: 'status',
+      stdout: `DocQA Terminal Agent CLI Initialized.\nType "help" to list available commands or click quick action buttons below.`
+    }
+  ]);
+  const terminalBottomRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     loadSettings();
+    loadAgentProfile();
   }, []);
+
+  useEffect(() => {
+    if (activeTab === 'agent') {
+      terminalBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [terminalHistory, activeTab]);
 
   const loadSettings = async () => {
     try {
@@ -65,6 +109,20 @@ export const SettingsView: React.FC = () => {
       }
     } catch (err) {
       console.warn('Failed to fetch settings from backend:', err);
+    }
+  };
+
+  const loadAgentProfile = async () => {
+    try {
+      const data = await getAgentConfig();
+      if (data) {
+        setAgentName(data.agentName || 'DocQA-Terminal-Copilot');
+        setAgentPersona(data.persona || 'QA Automation & Grounding Specialist');
+        setAutonomyLevel(data.autonomyLevel || 'assisted');
+        setCliToken(data.cliToken || '');
+      }
+    } catch (err) {
+      console.warn('Failed to fetch agent profile:', err);
     }
   };
 
@@ -108,6 +166,94 @@ export const SettingsView: React.FC = () => {
       });
     } finally {
       setIsTesting(false);
+    }
+  };
+
+  const handleSaveAgent = async () => {
+    setIsSavingAgent(true);
+    setAgentSaveMsg(null);
+    try {
+      await saveAgentConfig({ agentName, persona: agentPersona, autonomyLevel });
+      setAgentSaveMsg(t('agentSaveConfigSuccess'));
+      setTimeout(() => setAgentSaveMsg(null), 3000);
+    } catch (err: any) {
+      alert(`Failed to update agent profile: ${err.message}`);
+    } finally {
+      setIsSavingAgent(false);
+    }
+  };
+
+  const handleRotateToken = async () => {
+    if (!window.confirm('Bạn có chắc chắn muốn cấp lại CLI Access Token mới?')) return;
+    setIsRotatingToken(true);
+    try {
+      const res = await generateAgentToken();
+      if (res?.cliToken) {
+        setCliToken(res.cliToken);
+      }
+    } catch (err: any) {
+      alert(`Error generating token: ${err.message}`);
+    } finally {
+      setIsRotatingToken(false);
+    }
+  };
+
+  const handleCopy = (text: string, isToken: boolean = false) => {
+    navigator.clipboard.writeText(text);
+    if (isToken) {
+      setCopiedToken(true);
+      setTimeout(() => setCopiedToken(false), 2000);
+    } else {
+      setCopiedCmd(text);
+      setTimeout(() => setCopiedCmd(null), 2000);
+    }
+  };
+
+  const handleDownloadRc = () => {
+    const rcContent = `# DocQA Terminal Agent Configuration File\nDOCQA_ENDPOINT=http://localhost:5001/api/v1\nDOCQA_AGENT_NAME=${agentName}\nDOCQA_TOKEN=${cliToken}\nDOCQA_MODEL=${geminiModel}\n`;
+    const blob = new Blob([rcContent], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = '.docqarc';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleRunTerminalCommand = async (cmdToRun?: string) => {
+    const cmd = (cmdToRun || terminalInput).trim();
+    if (!cmd) return;
+
+    if (cmd === 'clear') {
+      setTerminalHistory([]);
+      setTerminalInput('');
+      return;
+    }
+
+    setIsTerminalRunning(true);
+    try {
+      const res = await executeAgentCommand(cmd);
+      setTerminalHistory(prev => [
+        ...prev,
+        {
+          command: cmd,
+          stdout: res.stdout,
+          latencyMs: res.latencyMs,
+          isError: res.exitCode !== 0
+        }
+      ]);
+      setTerminalInput('');
+    } catch (err: any) {
+      setTerminalHistory(prev => [
+        ...prev,
+        {
+          command: cmd,
+          stdout: `[CLI ERROR]: ${err.message}`,
+          isError: true
+        }
+      ]);
+    } finally {
+      setIsTerminalRunning(false);
     }
   };
 
@@ -162,6 +308,15 @@ export const SettingsView: React.FC = () => {
     }
   ];
 
+  const quickCommands = [
+    { label: 'status', cmd: 'status', desc: 'Kiểm tra trạng thái DB & AI' },
+    { label: 'generate REQ-001', cmd: 'generate REQ-001', desc: 'Sinh Test Case có căn cứ' },
+    { label: 'impact DOC-02', cmd: 'impact DOC-02', desc: 'Phân tích phạm vi ảnh hưởng' },
+    { label: 'verify', cmd: 'verify', desc: 'Kiểm toán chuỗi khối SHA-256' },
+    { label: 'help', cmd: 'help', desc: 'Danh sách lệnh' },
+    { label: 'clear', cmd: 'clear', desc: 'Xóa màn hình' }
+  ];
+
   return (
     <div className="space-y-6">
       {/* Top Header */}
@@ -171,6 +326,17 @@ export const SettingsView: React.FC = () => {
           <p className="text-xs text-slate-400 mt-0.5">{t('settingsSubtitle')}</p>
         </div>
         <div className="flex items-center gap-1.5 p-1 rounded-xl bg-slate-900 border border-slate-800 text-xs">
+          <button
+            onClick={() => setActiveTab('agent')}
+            className={`px-3 py-1.5 rounded-lg font-semibold flex items-center gap-1.5 transition-all ${
+              activeTab === 'agent'
+                ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-md shadow-emerald-950/40 ring-1 ring-emerald-500/50'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Terminal className="w-3.5 h-3.5 text-emerald-300" />
+            <span>{t('settingsTabAgent')}</span>
+          </button>
           <button
             onClick={() => setActiveTab('ai')}
             className={`px-3 py-1.5 rounded-lg font-semibold flex items-center gap-1.5 transition-all ${
@@ -217,6 +383,262 @@ export const SettingsView: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* TAB: TERMINAL & CLI AGENT SETTINGS */}
+      {activeTab === 'agent' && (
+        <div className="space-y-6">
+          {/* Agent Persona & Configuration Card */}
+          <Card className="space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center gap-2 text-sm font-bold text-white">
+                <Bot className="w-4 h-4 text-emerald-400" />
+                <span>{t('agentProfileTitle')}</span>
+              </div>
+              <Badge variant="success">CLI Agent Active</Badge>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                  {t('agentNameLabel')}
+                </label>
+                <input
+                  type="text"
+                  value={agentName}
+                  onChange={e => setAgentName(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-750 text-slate-200 text-xs rounded-xl px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-emerald-500 font-mono"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                  {t('agentPersonaLabel')}
+                </label>
+                <select
+                  value={agentPersona}
+                  onChange={e => setAgentPersona(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-750 text-slate-200 text-xs rounded-xl px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                >
+                  <option value="QA Automation & Grounding Specialist">QA Automation & Grounding Specialist</option>
+                  <option value="Security & Compliance Audit Agent">Security & Compliance Audit Agent</option>
+                  <option value="BA Requirements Analyst Agent">BA Requirements Analyst Agent</option>
+                  <option value="Regression Blast-Radius Monitor">Regression Blast-Radius Monitor</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                  {t('agentAutonomyLabel')}
+                </label>
+                <select
+                  value={autonomyLevel}
+                  onChange={e => setAutonomyLevel(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-750 text-slate-200 text-xs rounded-xl px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                >
+                  <option value="assisted">{t('agentAutonomyAssisted')}</option>
+                  <option value="draft-only">{t('agentAutonomyDraftOnly')}</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              {agentSaveMsg && (
+                <span className="text-xs text-emerald-400 font-semibold flex items-center gap-1">
+                  <Check className="w-3.5 h-3.5" />
+                  {agentSaveMsg}
+                </span>
+              )}
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={handleSaveAgent}
+                disabled={isSavingAgent}
+                className="bg-emerald-600 hover:bg-emerald-500 text-white flex items-center gap-1.5"
+              >
+                <Save className="w-3.5 h-3.5" />
+                <span>{t('actionSave')}</span>
+              </Button>
+            </div>
+          </Card>
+
+          {/* Terminal CLI Access & Cheat Sheet */}
+          <Card className="space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center gap-2 text-sm font-bold text-white">
+                <Terminal className="w-4 h-4 text-emerald-400" />
+                <span>{t('agentCliAccessTitle')}</span>
+              </div>
+              <span className="text-[11px] font-mono text-slate-400">
+                Executable: <code className="text-emerald-400 font-bold">npm run agent</code>
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Token & Config File */}
+              <div className="p-4 rounded-xl bg-slate-950 border border-slate-850 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-slate-300">{t('agentTokenLabel')}</span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => handleCopy(cliToken, true)}
+                      className="text-[11px] text-emerald-400 hover:text-emerald-300 flex items-center gap-1"
+                    >
+                      {copiedToken ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                      <span>{copiedToken ? 'Đã sao chép' : 'Sao chép'}</span>
+                    </button>
+                    <button
+                      onClick={handleRotateToken}
+                      disabled={isRotatingToken}
+                      className="text-[11px] text-slate-400 hover:text-slate-200 flex items-center gap-1"
+                    >
+                      <RefreshCw className={`w-3 h-3 ${isRotatingToken ? 'animate-spin' : ''}`} />
+                      <span>{t('agentGenerateNewToken')}</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800 font-mono text-xs text-slate-300 break-all select-all">
+                  {cliToken || 'docqa_tok_loading...'}
+                </div>
+
+                <div className="flex items-center justify-between pt-1">
+                  <span className="text-[11px] text-slate-400">File cấu hình môi trường:</span>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={handleDownloadRc}
+                    className="flex items-center gap-1 text-[11px]"
+                  >
+                    <Download className="w-3 h-3 text-slate-400" />
+                    <span>{t('agentDownloadRc')}</span>
+                  </Button>
+                </div>
+              </div>
+
+              {/* Terminal Quickstart Commands */}
+              <div className="p-4 rounded-xl bg-slate-950 border border-slate-850 space-y-2.5 text-xs">
+                <span className="font-semibold text-white block mb-1">Các lệnh CLI thường dùng trên Terminal:</span>
+                {[
+                  { cmd: 'npm run agent status', desc: 'Kiểm tra trạng thái DB, số lượng REQ/TC/Bugs' },
+                  { cmd: 'npm run agent generate --req REQ-001', desc: 'Chạy AI tạo Test Case có căn cứ từ terminal' },
+                  { cmd: 'npm run agent impact --doc DOC-02', desc: 'Phân tích phạm vi ảnh hưởng khi tài liệu sửa' },
+                  { cmd: 'npm run agent verify', desc: 'Kiểm tra tính toàn vẹn chuỗi khối SHA-256' },
+                  { cmd: 'npm run agent interactive', desc: 'Khởi chạy chế độ Agent hội thoại trực tiếp' }
+                ].map((item, idx) => (
+                  <div key={idx} className="flex items-center justify-between group p-1.5 rounded hover:bg-slate-900">
+                    <div className="font-mono text-emerald-400 text-[11px] select-all font-semibold">
+                      {item.cmd}
+                    </div>
+                    <button
+                      onClick={() => handleCopy(item.cmd)}
+                      className="opacity-0 group-hover:opacity-100 transition-opacity text-slate-400 hover:text-white"
+                      title="Sao chép lệnh"
+                    >
+                      {copiedCmd === item.cmd ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </Card>
+
+          {/* Interactive In-Browser Terminal Emulator */}
+          <Card className="space-y-3 bg-slate-950 border-slate-800 p-0 overflow-hidden shadow-2xl">
+            {/* Terminal Window Header */}
+            <div className="px-4 py-3 bg-slate-900/90 border-b border-slate-800 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5">
+                  <div className="w-3 h-3 rounded-full bg-rose-500/80" />
+                  <div className="w-3 h-3 rounded-full bg-amber-500/80" />
+                  <div className="w-3 h-3 rounded-full bg-emerald-500/80" />
+                </div>
+                <span className="text-xs font-mono font-bold text-slate-300 ml-2">
+                  docqa-agent-cli (zsh / bash) • localhost:5001
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                <span className="text-[10px] font-mono text-emerald-400 font-semibold">LIVE REPL</span>
+              </div>
+            </div>
+
+            {/* Quick Chips */}
+            <div className="px-4 py-2 bg-slate-900/40 border-b border-slate-850 flex flex-wrap items-center gap-1.5 text-[11px]">
+              <span className="text-slate-400 text-[11px] mr-1">{t('agentQuickActions')}</span>
+              {quickCommands.map(q => (
+                <button
+                  key={q.cmd}
+                  onClick={() => handleRunTerminalCommand(q.cmd)}
+                  disabled={isTerminalRunning}
+                  className="px-2 py-0.5 rounded-md bg-slate-850 hover:bg-slate-750 text-slate-300 hover:text-emerald-300 font-mono border border-slate-750 transition-colors"
+                >
+                  {q.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Terminal Output Body */}
+            <div className="p-4 font-mono text-xs max-h-96 min-h-64 overflow-y-auto space-y-4 bg-slate-950 text-slate-200 leading-relaxed">
+              {terminalHistory.map((entry, idx) => (
+                <div key={idx} className="space-y-1">
+                  <div className="flex items-center gap-2 text-emerald-400 font-bold">
+                    <span>$ docqa-agent</span>
+                    <span className="text-white">{entry.command}</span>
+                    {entry.latencyMs !== undefined && (
+                      <span className="text-[10px] text-slate-500 font-normal">({entry.latencyMs}ms)</span>
+                    )}
+                  </div>
+                  <pre className={`whitespace-pre-wrap font-mono text-xs pl-2 border-l-2 ${
+                    entry.isError ? 'border-rose-500 text-rose-300' : 'border-slate-800 text-slate-300'
+                  }`}>
+                    {entry.stdout}
+                  </pre>
+                </div>
+              ))}
+              {isTerminalRunning && (
+                <div className="flex items-center gap-2 text-emerald-400 animate-pulse">
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  <span>Agent executing task via backend SQLite and AI engine...</span>
+                </div>
+              )}
+              <div ref={terminalBottomRef} />
+            </div>
+
+            {/* Terminal Command Input Prompt */}
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleRunTerminalCommand();
+              }}
+              className="p-3 bg-slate-900/90 border-t border-slate-800 flex items-center gap-2"
+            >
+              <div className="font-mono font-bold text-emerald-400 text-xs pl-2 flex items-center gap-1">
+                <span>$</span>
+                <span className="text-slate-400">docqa-agent</span>
+                <span>&gt;</span>
+              </div>
+              <input
+                type="text"
+                value={terminalInput}
+                onChange={e => setTerminalInput(e.target.value)}
+                placeholder={t('agentRunCommandPlaceholder')}
+                disabled={isTerminalRunning}
+                className="flex-1 bg-transparent border-0 text-white text-xs font-mono focus:outline-none focus:ring-0 placeholder:text-slate-500"
+              />
+              <Button
+                type="submit"
+                variant="primary"
+                size="sm"
+                disabled={isTerminalRunning || !terminalInput.trim()}
+                className="bg-emerald-600 hover:bg-emerald-500 text-white font-mono flex items-center gap-1"
+              >
+                <span>{t('agentExecuteBtn')}</span>
+                <CornerDownLeft className="w-3 h-3" />
+              </Button>
+            </form>
+          </Card>
+        </div>
+      )}
 
       {/* TAB 1: AI & LLM CONFIGURATION */}
       {activeTab === 'ai' && (

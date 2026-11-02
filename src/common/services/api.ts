@@ -283,6 +283,41 @@ export const settingsApi = {
   }
 };
 
+/* -------------------------------------------------------------
+ * 11. TERMINAL AGENT & CLI RUNNER API
+ * ----------------------------------------------------------- */
+export const agentApi = {
+  async getConfig(): Promise<any> {
+    return fetchJson<any>(`${API_BASE_URL}/agent/config`);
+  },
+  async saveConfig(data: {
+    agentName?: string;
+    persona?: string;
+    autonomyLevel?: string;
+  }): Promise<any> {
+    return fetchJson<any>(`${API_BASE_URL}/agent/config`, {
+      method: 'POST',
+      body: JSON.stringify(data)
+    });
+  },
+  async generateToken(): Promise<any> {
+    return fetchJson<any>(`${API_BASE_URL}/agent/generate-token`, {
+      method: 'POST'
+    });
+  },
+  async executeCommand(command: string): Promise<{
+    command: string;
+    stdout: string;
+    latencyMs: number;
+    exitCode: number;
+  }> {
+    return fetchJson<any>(`${API_BASE_URL}/agent/execute`, {
+      method: 'POST',
+      body: JSON.stringify({ command })
+    });
+  }
+};
+
 // Aliases for backwards compatibility with earlier components
 export const getAiStatus = aiApi.getStatus;
 export const requestAiTestCases = aiApi.generateTestCases;
@@ -291,3 +326,7 @@ export const verifyAuditChainOnBackend = auditApi.verifyChain;
 export const getAiSettings = settingsApi.getAiConfig;
 export const saveAiSettings = settingsApi.saveAiConfig;
 export const testAiConnection = settingsApi.testConnection;
+export const getAgentConfig = agentApi.getConfig;
+export const saveAgentConfig = agentApi.saveConfig;
+export const generateAgentToken = agentApi.generateToken;
+export const executeAgentCommand = agentApi.executeCommand;

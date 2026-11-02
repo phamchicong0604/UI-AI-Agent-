@@ -259,5 +259,25 @@ export const en = {
   aiTesting: 'Testing...',
   aiSaving: 'Saving...',
   aiConfigSuccess: 'AI settings saved to SQLite database successfully!',
-  aiZeroKeyNotice: 'Zero-Key Fallback Engine: If no API key is configured, the system automatically uses the deterministic local rule engine without requiring external network connectivity.'
+  aiZeroKeyNotice: 'Zero-Key Fallback Engine: If no API key is configured, the system automatically uses the deterministic local rule engine without requiring external network connectivity.',
+
+  // Terminal & CLI Agent Settings
+  settingsTabAgent: 'Terminal & CLI Agent',
+  agentTitle: 'AI Agent Profile & Terminal CLI Runner Configuration',
+  agentSubtitle: 'Set up autonomous QA agents, configure CLI access tokens, and run terminal commands.',
+  agentProfileTitle: 'Agent Identity Profile',
+  agentNameLabel: 'Agent Name',
+  agentPersonaLabel: 'Role & Persona',
+  agentAutonomyLabel: 'Autonomy Level',
+  agentAutonomyAssisted: 'Assisted (Human-in-the-loop - Recommended)',
+  agentAutonomyDraftOnly: 'Autonomous (Draft Generation Only)',
+  agentCliAccessTitle: 'Terminal Command-Line Interface (CLI) Access',
+  agentTokenLabel: 'Secret CLI Access Token',
+  agentGenerateNewToken: 'Generate New Token',
+  agentDownloadRc: 'Download .docqarc',
+  agentTerminalRunnerTitle: 'In-Browser Terminal CLI Emulator & Runner',
+  agentRunCommandPlaceholder: 'Type a CLI command (e.g. status, generate REQ-001, impact DOC-02, verify)...',
+  agentExecuteBtn: 'Run Command',
+  agentQuickActions: 'Quick Commands:',
+  agentSaveConfigSuccess: 'Agent profile updated successfully!'
 };

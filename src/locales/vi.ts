@@ -259,5 +259,25 @@ export const vi = {
   aiTesting: 'Đang kiểm tra...',
   aiSaving: 'Đang lưu...',
   aiConfigSuccess: 'Đã lưu cấu hình AI vào SQLite thành công!',
-  aiZeroKeyNotice: 'Chế độ Zero-Key Fallback Engine: Nếu không nhập API key, hệ thống sẽ tự động dùng bộ sinh kịch bản cục bộ không cần Internet, đảm bảo 100% tuân thủ Proposal.'
+  aiZeroKeyNotice: 'Chế độ Zero-Key Fallback Engine: Nếu không nhập API key, hệ thống sẽ tự động dùng bộ sinh kịch bản cục bộ không cần Internet, đảm bảo 100% tuân thủ Proposal.',
+
+  // Terminal & CLI Agent Settings
+  settingsTabAgent: 'Terminal & CLI Agent',
+  agentTitle: 'Cấu hình AI Agent & Trình chạy Dòng lệnh (Terminal CLI Runner)',
+  agentSubtitle: 'Thiết lập Agent tự động hóa QA, lấy mã Token xác thực CLI và chạy thử lệnh trực tiếp.',
+  agentProfileTitle: 'Hồ sơ Định danh Agent (Agent Profile)',
+  agentNameLabel: 'Tên Agent',
+  agentPersonaLabel: 'Vai trò / Nhiệm vụ (Persona)',
+  agentAutonomyLabel: 'Mức độ Tự chủ (Autonomy Level)',
+  agentAutonomyAssisted: 'Hỗ trợ có kiểm soát (Human-in-the-loop - Khuyên dùng)',
+  agentAutonomyDraftOnly: 'Tự động tạo bản nháp (Draft Only)',
+  agentCliAccessTitle: 'Cấu hình Truy cập Dòng lệnh Terminal (CLI Access)',
+  agentTokenLabel: 'CLI Access Token bí mật',
+  agentGenerateNewToken: 'Tạo Token mới',
+  agentDownloadRc: 'Tải file .docqarc',
+  agentTerminalRunnerTitle: 'Trình giả lập Dòng lệnh Trực tiếp (In-Browser CLI Terminal)',
+  agentRunCommandPlaceholder: 'Nhập lệnh (vd: status, generate REQ-001, impact DOC-02, verify)...',
+  agentExecuteBtn: 'Chạy lệnh',
+  agentQuickActions: 'Lệnh nhanh:',
+  agentSaveConfigSuccess: 'Đã cập nhật cấu hình Agent thành công!'
 };

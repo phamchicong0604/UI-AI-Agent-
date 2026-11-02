@@ -10,6 +10,7 @@ import { bugsRouter } from './modules/bugs/bugs.router.js';
 import { traceabilityRouter } from './modules/traceability/traceability.router.js';
 import { auditRouter } from './modules/audit/audit.router.js';
 import { settingsRouter } from './modules/settings/settings.router.js';
+import { agentRouter } from './modules/agent/agent.router.js';
 
 export const app = express();
 
@@ -39,6 +40,7 @@ app.use('/api/v1/bugs', bugsRouter);
 app.use('/api/v1/traceability', traceabilityRouter);
 app.use('/api/v1/audit', auditRouter);
 app.use('/api/v1/settings', settingsRouter);
+app.use('/api/v1/agent', agentRouter);
 
 // Root summary endpoint
 app.get('/api/v1', (req, res) => {
