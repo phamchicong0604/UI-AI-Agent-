@@ -315,6 +315,27 @@ export const agentApi = {
       method: 'POST',
       body: JSON.stringify({ command })
     });
+  },
+  async getBackgroundAgents(): Promise<any[]> {
+    return fetchJson<any[]>(`${API_BASE_URL}/agent/background`);
+  },
+  async startBackgroundAgent(id: string): Promise<any> {
+    return fetchJson<any>(`${API_BASE_URL}/agent/background/${id}/start`, {
+      method: 'POST'
+    });
+  },
+  async stopBackgroundAgent(id: string): Promise<any> {
+    return fetchJson<any>(`${API_BASE_URL}/agent/background/${id}/stop`, {
+      method: 'POST'
+    });
+  },
+  async triggerBackgroundAgent(id: string): Promise<any> {
+    return fetchJson<any>(`${API_BASE_URL}/agent/background/${id}/trigger`, {
+      method: 'POST'
+    });
+  },
+  async getBackgroundAgentLogs(id: string): Promise<any[]> {
+    return fetchJson<any[]>(`${API_BASE_URL}/agent/background/${id}/logs`);
   }
 };
 
@@ -330,3 +351,8 @@ export const getAgentConfig = agentApi.getConfig;
 export const saveAgentConfig = agentApi.saveConfig;
 export const generateAgentToken = agentApi.generateToken;
 export const executeAgentCommand = agentApi.executeCommand;
+export const getBackgroundAgents = agentApi.getBackgroundAgents;
+export const startBackgroundAgent = agentApi.startBackgroundAgent;
+export const stopBackgroundAgent = agentApi.stopBackgroundAgent;
+export const triggerBackgroundAgent = agentApi.triggerBackgroundAgent;
+export const getBackgroundAgentLogs = agentApi.getBackgroundAgentLogs;

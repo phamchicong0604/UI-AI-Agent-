@@ -20,11 +20,17 @@ import {
   AlertCircle,
   Terminal,
   Play,
+  Square,
   Copy,
   Download,
   Bot,
   Zap,
-  CornerDownLeft
+  CornerDownLeft,
+  Activity,
+  Clock,
+  Layers,
+  FileCode,
+  X
 } from 'lucide-react';
 import { Card, Badge, Button } from '../../common/components';
 import {
@@ -34,14 +40,20 @@ import {
   getAgentConfig,
   saveAgentConfig,
   generateAgentToken,
-  executeAgentCommand
+  executeAgentCommand,
+  getBackgroundAgents,
+  startBackgroundAgent,
+  stopBackgroundAgent,
+  triggerBackgroundAgent,
+  getBackgroundAgentLogs
 } from '../../common/services/api';
+import { BackgroundAgentRecord } from '../../types';
 
 export const SettingsView: React.FC = () => {
   const { activeProject, auditEvents, currentRole } = useApp();
   const { t } = useI18n();
 
-  const [activeTab, setActiveTab] = useState<'ai' | 'agent' | 'audit' | 'rbac' | 'workspace'>('agent');
+  const [activeTab, setActiveTab] = useState<'agent' | 'ai' | 'audit' | 'rbac' | 'workspace'>('agent');
 
   // AI Configuration State
   const [provider, setProvider] = useState<'gemini' | 'openai'>('gemini');
@@ -73,13 +85,21 @@ export const SettingsView: React.FC = () => {
   const [copiedToken, setCopiedToken] = useState<boolean>(false);
   const [copiedCmd, setCopiedCmd] = useState<string | null>(null);
 
+  // Background Agents State
+  const [backgroundAgents, setBackgroundAgents] = useState<BackgroundAgentRecord[]>([]);
+  const [isLoadingAgents, setIsLoadingAgents] = useState<boolean>(false);
+  const [operatingAgentId, setOperatingAgentId] = useState<string | null>(null);
+  const [selectedAgentForLogs, setSelectedAgentForLogs] = useState<BackgroundAgentRecord | null>(null);
+  const [agentLogs, setAgentLogs] = useState<Array<{ timestamp: string; message: string; level: string }>>([]);
+  const [isLoadingLogs, setIsLoadingLogs] = useState<boolean>(false);
+
   // Interactive Terminal Emulator State
-  const [terminalInput, setTerminalInput] = useState<string>('status');
+  const [terminalInput, setTerminalInput] = useState<string>('daemon status');
   const [isTerminalRunning, setIsTerminalRunning] = useState<boolean>(false);
   const [terminalHistory, setTerminalHistory] = useState<Array<{ command: string; stdout: string; latencyMs?: number; isError?: boolean }>>([
     {
-      command: 'status',
-      stdout: `DocQA Terminal Agent CLI Initialized.\nType "help" to list available commands or click quick action buttons below.`
+      command: 'daemon status',
+      stdout: `DocQA Background Agents Daemon Initialized.\n4 Autonomous workers are configured to execute in the background.\nType "help" to list CLI commands or run daemon controls below.`
     }
   ]);
   const terminalBottomRef = useRef<HTMLDivElement>(null);
@@ -87,6 +107,7 @@ export const SettingsView: React.FC = () => {
   useEffect(() => {
     loadSettings();
     loadAgentProfile();
+    loadBackgroundAgentsList();
   }, []);
 
   useEffect(() => {
@@ -123,6 +144,70 @@ export const SettingsView: React.FC = () => {
       }
     } catch (err) {
       console.warn('Failed to fetch agent profile:', err);
+    }
+  };
+
+  const loadBackgroundAgentsList = async () => {
+    setIsLoadingAgents(true);
+    try {
+      const list = await getBackgroundAgents();
+      if (Array.isArray(list)) {
+        setBackgroundAgents(list);
+      }
+    } catch (err) {
+      console.warn('Failed to fetch background agents:', err);
+    } finally {
+      setIsLoadingAgents(false);
+    }
+  };
+
+  const handleStartAgent = async (id: string) => {
+    setOperatingAgentId(id);
+    try {
+      await startBackgroundAgent(id);
+      await loadBackgroundAgentsList();
+    } catch (err: any) {
+      alert(`Error starting agent ${id}: ${err.message}`);
+    } finally {
+      setOperatingAgentId(null);
+    }
+  };
+
+  const handleStopAgent = async (id: string) => {
+    setOperatingAgentId(id);
+    try {
+      await stopBackgroundAgent(id);
+      await loadBackgroundAgentsList();
+    } catch (err: any) {
+      alert(`Error stopping agent ${id}: ${err.message}`);
+    } finally {
+      setOperatingAgentId(null);
+    }
+  };
+
+  const handleTriggerAgent = async (id: string) => {
+    setOperatingAgentId(id);
+    try {
+      const res = await triggerBackgroundAgent(id);
+      await loadBackgroundAgentsList();
+      alert(`⚡ Đã kích hoạt 1 chu kỳ cho ${id}:\n${res?.log || 'Hoàn thành'}`);
+    } catch (err: any) {
+      alert(`Error triggering agent ${id}: ${err.message}`);
+    } finally {
+      setOperatingAgentId(null);
+    }
+  };
+
+  const handleViewLogs = async (agent: BackgroundAgentRecord) => {
+    setSelectedAgentForLogs(agent);
+    setIsLoadingLogs(true);
+    try {
+      const logs = await getBackgroundAgentLogs(agent.id);
+      setAgentLogs(Array.isArray(logs) ? logs : []);
+    } catch (err: any) {
+      alert(`Error fetching logs: ${err.message}`);
+    } finally {
+      setIsLoadingLogs(false);
     }
   };
 
@@ -243,6 +328,10 @@ export const SettingsView: React.FC = () => {
         }
       ]);
       setTerminalInput('');
+      // If a daemon start/stop/trigger was run in CLI, refresh the UI list
+      if (cmd.startsWith('daemon')) {
+        await loadBackgroundAgentsList();
+      }
     } catch (err: any) {
       setTerminalHistory(prev => [
         ...prev,
@@ -309,13 +398,16 @@ export const SettingsView: React.FC = () => {
   ];
 
   const quickCommands = [
-    { label: 'status', cmd: 'status', desc: 'Kiểm tra trạng thái DB & AI' },
-    { label: 'generate REQ-001', cmd: 'generate REQ-001', desc: 'Sinh Test Case có căn cứ' },
-    { label: 'impact DOC-02', cmd: 'impact DOC-02', desc: 'Phân tích phạm vi ảnh hưởng' },
-    { label: 'verify', cmd: 'verify', desc: 'Kiểm toán chuỗi khối SHA-256' },
-    { label: 'help', cmd: 'help', desc: 'Danh sách lệnh' },
-    { label: 'clear', cmd: 'clear', desc: 'Xóa màn hình' }
+    { label: 'daemon status', cmd: 'daemon status' },
+    { label: 'daemon trigger AGENT-DOC-WATCHER', cmd: 'daemon trigger AGENT-DOC-WATCHER' },
+    { label: 'daemon trigger AGENT-QA-SYNTH', cmd: 'daemon trigger AGENT-QA-SYNTH' },
+    { label: 'daemon trigger AGENT-AUDIT-GUARDIAN', cmd: 'daemon trigger AGENT-AUDIT-GUARDIAN' },
+    { label: 'generate REQ-001', cmd: 'generate REQ-001' },
+    { label: 'status', cmd: 'status' },
+    { label: 'clear', cmd: 'clear' }
   ];
+
+  const runningCount = backgroundAgents.filter(a => a.status === 'running').length;
 
   return (
     <div className="space-y-6">
@@ -334,8 +426,8 @@ export const SettingsView: React.FC = () => {
                 : 'text-slate-400 hover:text-slate-200'
             }`}
           >
-            <Terminal className="w-3.5 h-3.5 text-emerald-300" />
-            <span>{t('settingsTabAgent')}</span>
+            <Activity className="w-3.5 h-3.5 text-emerald-300 animate-pulse" />
+            <span>Agent Chạy Nền (Daemons)</span>
           </button>
           <button
             onClick={() => setActiveTab('ai')}
@@ -384,80 +476,192 @@ export const SettingsView: React.FC = () => {
         </div>
       </div>
 
-      {/* TAB: TERMINAL & CLI AGENT SETTINGS */}
+      {/* TAB: BACKGROUND DAEMON AGENTS & TERMINAL RUNNER */}
       {activeTab === 'agent' && (
         <div className="space-y-6">
-          {/* Agent Persona & Configuration Card */}
+          {/* Top Banner KPI for Background Daemon Pool */}
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <Card className="p-4 bg-slate-900/80 border-slate-800 flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
+                <Activity className="w-5 h-5 animate-pulse" />
+              </div>
+              <div>
+                <div className="text-slate-400 text-[11px] font-medium uppercase tracking-wider">Trạng thái Chạy nền</div>
+                <div className="text-lg font-bold text-white mt-0.5 flex items-center gap-2">
+                  <span>{runningCount} / {backgroundAgents.length} Running</span>
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
+                </div>
+              </div>
+            </Card>
+
+            <Card className="p-4 bg-slate-900/80 border-slate-800 flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400">
+                <Clock className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="text-slate-400 text-[11px] font-medium uppercase tracking-wider">Chu kỳ Polling</div>
+                <div className="text-lg font-bold text-white mt-0.5">30s - 60s Interval</div>
+              </div>
+            </Card>
+
+            <Card className="p-4 bg-slate-900/80 border-slate-800 flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400">
+                <Terminal className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="text-slate-400 text-[11px] font-medium uppercase tracking-wider">Lệnh CLI Terminal</div>
+                <div className="text-sm font-bold font-mono text-emerald-400 mt-1 select-all">npm run agent daemon</div>
+              </div>
+            </Card>
+
+            <Card className="p-4 bg-slate-900/80 border-slate-800 flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
+                <Shield className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="text-slate-400 text-[11px] font-medium uppercase tracking-wider">Chính sách Bảo mật</div>
+                <div className="text-sm font-bold text-amber-300 mt-1">Section 8.1 Draft Only</div>
+              </div>
+            </Card>
+          </div>
+
+          {/* Background Agents List Card */}
           <Card className="space-y-4">
             <div className="flex items-center justify-between pb-3 border-b border-slate-800">
               <div className="flex items-center gap-2 text-sm font-bold text-white">
-                <Bot className="w-4 h-4 text-emerald-400" />
-                <span>{t('agentProfileTitle')}</span>
+                <Layers className="w-4 h-4 text-emerald-400" />
+                <span>Danh sách các Agent Chạy Nền (Daemon Background Workers)</span>
               </div>
-              <Badge variant="success">CLI Agent Active</Badge>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                  {t('agentNameLabel')}
-                </label>
-                <input
-                  type="text"
-                  value={agentName}
-                  onChange={e => setAgentName(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-750 text-slate-200 text-xs rounded-xl px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-emerald-500 font-mono"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                  {t('agentPersonaLabel')}
-                </label>
-                <select
-                  value={agentPersona}
-                  onChange={e => setAgentPersona(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-750 text-slate-200 text-xs rounded-xl px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={loadBackgroundAgentsList}
+                  disabled={isLoadingAgents}
+                  className="flex items-center gap-1.5 text-xs"
                 >
-                  <option value="QA Automation & Grounding Specialist">QA Automation & Grounding Specialist</option>
-                  <option value="Security & Compliance Audit Agent">Security & Compliance Audit Agent</option>
-                  <option value="BA Requirements Analyst Agent">BA Requirements Analyst Agent</option>
-                  <option value="Regression Blast-Radius Monitor">Regression Blast-Radius Monitor</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                  {t('agentAutonomyLabel')}
-                </label>
-                <select
-                  value={autonomyLevel}
-                  onChange={e => setAutonomyLevel(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-750 text-slate-200 text-xs rounded-xl px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                >
-                  <option value="assisted">{t('agentAutonomyAssisted')}</option>
-                  <option value="draft-only">{t('agentAutonomyDraftOnly')}</option>
-                </select>
+                  <RefreshCw className={`w-3 h-3 ${isLoadingAgents ? 'animate-spin' : ''}`} />
+                  <span>Làm mới danh sách</span>
+                </Button>
               </div>
             </div>
 
-            <div className="flex items-center justify-end gap-3 pt-2">
-              {agentSaveMsg && (
-                <span className="text-xs text-emerald-400 font-semibold flex items-center gap-1">
-                  <Check className="w-3.5 h-3.5" />
-                  {agentSaveMsg}
-                </span>
-              )}
-              <Button
-                variant="primary"
-                size="sm"
-                onClick={handleSaveAgent}
-                disabled={isSavingAgent}
-                className="bg-emerald-600 hover:bg-emerald-500 text-white flex items-center gap-1.5"
-              >
-                <Save className="w-3.5 h-3.5" />
-                <span>{t('actionSave')}</span>
-              </Button>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              {backgroundAgents.map(agent => {
+                const isRunning = agent.status === 'running';
+                const isOperating = operatingAgentId === agent.id;
+
+                return (
+                  <div
+                    key={agent.id}
+                    className={`p-4 rounded-xl border transition-all flex flex-col justify-between ${
+                      isRunning
+                        ? 'bg-slate-950/80 border-emerald-500/40 shadow-lg shadow-emerald-950/20'
+                        : 'bg-slate-950/40 border-slate-800 opacity-80'
+                    }`}
+                  >
+                    <div className="space-y-3">
+                      {/* Top Header of Card */}
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono text-xs font-bold text-emerald-400">{agent.id}</span>
+                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                              isRunning
+                                ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
+                                : 'bg-slate-800 text-slate-400 border border-slate-700'
+                            }`}>
+                              <span className={`w-1.5 h-1.5 rounded-full ${isRunning ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'}`} />
+                              <span>{isRunning ? `RUNNING (PID ${agent.pid || 'Worker'})` : 'STOPPED'}</span>
+                            </span>
+                          </div>
+                          <h4 className="font-bold text-sm text-white mt-1">{agent.name}</h4>
+                          <p className="text-xs text-indigo-300 font-mono mt-0.5">{agent.role}</p>
+                        </div>
+                      </div>
+
+                      <p className="text-xs text-slate-300 leading-relaxed">
+                        {agent.description}
+                      </p>
+
+                      {/* Execution Metrics */}
+                      <div className="grid grid-cols-3 gap-2 p-2.5 rounded-lg bg-slate-900 border border-slate-850 text-[11px] font-mono">
+                        <div>
+                          <div className="text-slate-500">Chu kỳ:</div>
+                          <div className="text-slate-200 font-semibold mt-0.5">{agent.intervalSeconds}s loop</div>
+                        </div>
+                        <div>
+                          <div className="text-slate-500">Đã chạy:</div>
+                          <div className="text-emerald-400 font-semibold mt-0.5">{agent.runsCount} chu kỳ</div>
+                        </div>
+                        <div>
+                          <div className="text-slate-500">Lần chạy tiếp:</div>
+                          <div className="text-slate-300 mt-0.5 truncate">{agent.nextRun ? agent.nextRun.slice(-5) : 'N/A'}</div>
+                        </div>
+                      </div>
+
+                      {/* Latest Log Console Line */}
+                      {agent.lastLog && (
+                        <div className="p-2 rounded bg-slate-950 border border-slate-850 text-[11px] font-mono text-slate-400 truncate flex items-center gap-1.5">
+                          <Activity className="w-3 h-3 text-emerald-400 shrink-0" />
+                          <span className="truncate">{agent.lastLog}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Action Bar */}
+                    <div className="flex items-center justify-between gap-2 pt-4 mt-3 border-t border-slate-850">
+                      <div className="flex items-center gap-2">
+                        {isRunning ? (
+                          <Button
+                            variant="danger"
+                            size="sm"
+                            onClick={() => handleStopAgent(agent.id)}
+                            disabled={isOperating}
+                            className="flex items-center gap-1 text-xs px-2.5 py-1"
+                          >
+                            <Square className="w-3 h-3" />
+                            <span>Dừng Worker</span>
+                          </Button>
+                        ) : (
+                          <Button
+                            variant="primary"
+                            size="sm"
+                            onClick={() => handleStartAgent(agent.id)}
+                            disabled={isOperating}
+                            className="bg-emerald-600 hover:bg-emerald-500 text-white flex items-center gap-1 text-xs px-2.5 py-1"
+                          >
+                            <Play className="w-3 h-3" />
+                            <span>Khởi động</span>
+                          </Button>
+                        )}
+
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => handleTriggerAgent(agent.id)}
+                          disabled={isOperating}
+                          className="flex items-center gap-1 text-xs px-2.5 py-1 text-amber-300 hover:text-amber-200 border-amber-500/30"
+                          title="Chạy ngay lập tức 1 chu kỳ mà không cần chờ interval"
+                        >
+                          <Zap className="w-3 h-3 text-amber-400" />
+                          <span>Chạy ngay</span>
+                        </Button>
+                      </div>
+
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => handleViewLogs(agent)}
+                        className="flex items-center gap-1 text-xs px-2.5 py-1 text-slate-300"
+                      >
+                        <FileCode className="w-3 h-3" />
+                        <span>Xem Logs</span>
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </Card>
 
@@ -517,13 +721,13 @@ export const SettingsView: React.FC = () => {
 
               {/* Terminal Quickstart Commands */}
               <div className="p-4 rounded-xl bg-slate-950 border border-slate-850 space-y-2.5 text-xs">
-                <span className="font-semibold text-white block mb-1">Các lệnh CLI thường dùng trên Terminal:</span>
+                <span className="font-semibold text-white block mb-1">Các lệnh CLI quản trị Agent chạy nền:</span>
                 {[
-                  { cmd: 'npm run agent status', desc: 'Kiểm tra trạng thái DB, số lượng REQ/TC/Bugs' },
-                  { cmd: 'npm run agent generate --req REQ-001', desc: 'Chạy AI tạo Test Case có căn cứ từ terminal' },
-                  { cmd: 'npm run agent impact --doc DOC-02', desc: 'Phân tích phạm vi ảnh hưởng khi tài liệu sửa' },
-                  { cmd: 'npm run agent verify', desc: 'Kiểm tra tính toàn vẹn chuỗi khối SHA-256' },
-                  { cmd: 'npm run agent interactive', desc: 'Khởi chạy chế độ Agent hội thoại trực tiếp' }
+                  { cmd: 'npm run agent daemon status', desc: 'Xem danh sách và PID các background agent' },
+                  { cmd: 'npm run agent daemon start AGENT-QA-SYNTH', desc: 'Bật worker tự động tạo test case' },
+                  { cmd: 'npm run agent daemon stop AGENT-DOC-WATCHER', desc: 'Tắt worker theo dõi tài liệu' },
+                  { cmd: 'npm run agent daemon trigger AGENT-GAP-SCANNER', desc: 'Kích hoạt quét lỗ hổng ngay' },
+                  { cmd: 'npm run agent status', desc: 'Kiểm tra tổng thể platform & database' }
                 ].map((item, idx) => (
                   <div key={idx} className="flex items-center justify-between group p-1.5 rounded hover:bg-slate-900">
                     <div className="font-mono text-emerald-400 text-[11px] select-all font-semibold">
@@ -558,13 +762,13 @@ export const SettingsView: React.FC = () => {
               </div>
               <div className="flex items-center gap-1.5">
                 <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                <span className="text-[10px] font-mono text-emerald-400 font-semibold">LIVE REPL</span>
+                <span className="text-[10px] font-mono text-emerald-400 font-semibold">DAEMON CONTROLLER</span>
               </div>
             </div>
 
             {/* Quick Chips */}
-            <div className="px-4 py-2 bg-slate-900/40 border-b border-slate-850 flex flex-wrap items-center gap-1.5 text-[11px]">
-              <span className="text-slate-400 text-[11px] mr-1">{t('agentQuickActions')}</span>
+            <div className="px-4 py-2 bg-slate-900/40 border-b border-slate-855 flex flex-wrap items-center gap-1.5 text-[11px]">
+              <span className="text-slate-400 text-[11px] mr-1">Lệnh mẫu:</span>
               {quickCommands.map(q => (
                 <button
                   key={q.cmd}
@@ -598,7 +802,7 @@ export const SettingsView: React.FC = () => {
               {isTerminalRunning && (
                 <div className="flex items-center gap-2 text-emerald-400 animate-pulse">
                   <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                  <span>Agent executing task via backend SQLite and AI engine...</span>
+                  <span>Agent executing daemon command via backend SQLite and AI engine...</span>
                 </div>
               )}
               <div ref={terminalBottomRef} />
@@ -621,7 +825,7 @@ export const SettingsView: React.FC = () => {
                 type="text"
                 value={terminalInput}
                 onChange={e => setTerminalInput(e.target.value)}
-                placeholder={t('agentRunCommandPlaceholder')}
+                placeholder="Nhập lệnh (vd: daemon status, daemon start AGENT-QA-SYNTH, status)..."
                 disabled={isTerminalRunning}
                 className="flex-1 bg-transparent border-0 text-white text-xs font-mono focus:outline-none focus:ring-0 placeholder:text-slate-500"
               />
@@ -632,11 +836,71 @@ export const SettingsView: React.FC = () => {
                 disabled={isTerminalRunning || !terminalInput.trim()}
                 className="bg-emerald-600 hover:bg-emerald-500 text-white font-mono flex items-center gap-1"
               >
-                <span>{t('agentExecuteBtn')}</span>
+                <span>Chạy lệnh</span>
                 <CornerDownLeft className="w-3 h-3" />
               </Button>
             </form>
           </Card>
+        </div>
+      )}
+
+      {/* MODAL: LIVE LOGS FOR A BACKGROUND AGENT */}
+      {selectedAgentForLogs && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-2xl bg-slate-900 border border-slate-750 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[80vh]">
+            <div className="px-5 py-3.5 bg-slate-850 border-b border-slate-750 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Activity className="w-4 h-4 text-emerald-400" />
+                <span className="font-bold text-sm text-white">
+                  Logs thời gian thực: {selectedAgentForLogs.name}
+                </span>
+                <span className="text-[10px] font-mono text-emerald-400 px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20">
+                  {selectedAgentForLogs.id}
+                </span>
+              </div>
+              <button
+                onClick={() => setSelectedAgentForLogs(null)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-750"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-4 overflow-y-auto font-mono text-xs space-y-2 bg-slate-950 flex-1">
+              {isLoadingLogs ? (
+                <div className="text-center py-6 text-slate-400">Đang tải nhật ký...</div>
+              ) : agentLogs.length === 0 ? (
+                <div className="text-center py-6 text-slate-500">Chưa có nhật ký hoạt động nào.</div>
+              ) : (
+                agentLogs.map((log, idx) => (
+                  <div key={idx} className="p-2 rounded bg-slate-900 border border-slate-850 flex items-start gap-2">
+                    <span className="text-slate-500 text-[10px] shrink-0">{log.timestamp}</span>
+                    <span className={`text-[10px] font-bold px-1 rounded uppercase shrink-0 ${
+                      log.level === 'error' ? 'bg-rose-500/20 text-rose-400' :
+                      log.level === 'warn' ? 'bg-amber-500/20 text-amber-300' :
+                      'bg-emerald-500/20 text-emerald-300'
+                    }`}>
+                      {log.level}
+                    </span>
+                    <span className="text-slate-200 break-all">{log.message}</span>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="px-5 py-3 bg-slate-850 border-t border-slate-750 flex items-center justify-between">
+              <span className="text-[11px] text-slate-400">
+                Lưu trữ 50 bản ghi gần nhất trong bộ nhớ đệm
+              </span>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setSelectedAgentForLogs(null)}
+              >
+                Đóng
+              </Button>
+            </div>
+          </div>
         </div>
       )}
 

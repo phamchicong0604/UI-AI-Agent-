@@ -9,7 +9,8 @@ import {
   TestCaseItem, 
   TestRunItem, 
   BugItem, 
-  AuditEvent 
+  AuditEvent,
+  BackgroundAgentRecord 
 } from '../common/types.js';
 import { computeSha256, computeAuditEventHash } from '../common/crypto.js';
 
@@ -94,6 +95,21 @@ db.exec(`
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL,
     updated_at TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS background_agents (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT,
+    role TEXT NOT NULL,
+    interval_seconds INTEGER NOT NULL DEFAULT 30,
+    status TEXT NOT NULL DEFAULT 'stopped',
+    pid INTEGER,
+    last_run TEXT,
+    next_run TEXT,
+    runs_count INTEGER DEFAULT 0,
+    last_log TEXT,
+    config TEXT
   );
 `);
 
@@ -390,6 +406,91 @@ function seedDatabaseIfEmpty() {
 
 seedDatabaseIfEmpty();
 
+function seedBackgroundAgentsIfEmpty() {
+  const count = (db.prepare('SELECT count(*) as count FROM background_agents').get() as any).count;
+  if (count === 0) {
+    console.log('[SQLite DB] Seeding 4 baseline background agents...');
+    const initialAgents: BackgroundAgentRecord[] = [
+      {
+        id: 'AGENT-DOC-WATCHER',
+        name: 'Document Revision & Blast-Radius Watcher',
+        description: 'Chạy nền tự động quét thay đổi trong 8 thư mục tài liệu; khi phát hiện phiên bản mới, tự động chạy Blast-Radius Analysis và gắn cờ In Review cho các Test Case liên quan.',
+        role: 'Document Governance & Blast-Radius Daemon',
+        intervalSeconds: 45,
+        status: 'running',
+        pid: process.pid,
+        lastRun: new Date().toISOString().replace('T', ' ').slice(0, 16),
+        nextRun: new Date(Date.now() + 45000).toISOString().replace('T', ' ').slice(0, 16),
+        runsCount: 14,
+        lastLog: '[WATCHER] Scanned 8 folders. Document DOC-02 checksum sha256:7bc5... verified valid.'
+      },
+      {
+        id: 'AGENT-QA-SYNTH',
+        name: 'Continuous Grounded QA Synthesizer',
+        description: 'Chạy nền tự động phát hiện các Yêu cầu mới chuyển sang trạng thái Approved; dùng AI sinh kịch bản kiểm thử có trích dẫn SHA-256 dưới dạng Draft.',
+        role: 'QA Test Case Drafting Daemon',
+        intervalSeconds: 30,
+        status: 'running',
+        pid: process.pid,
+        lastRun: new Date().toISOString().replace('T', ' ').slice(0, 16),
+        nextRun: new Date(Date.now() + 30000).toISOString().replace('T', ' ').slice(0, 16),
+        runsCount: 28,
+        lastLog: '[QA-SYNTH] Checked 2 requirements. Grounded 1 test case against BRD v1.2 specifications.'
+      },
+      {
+        id: 'AGENT-AUDIT-GUARDIAN',
+        name: 'Tamper-Evident SHA-256 Audit Guardian',
+        description: 'Định kỳ quét toàn bộ chuỗi khối kiểm toán liên kết; cảnh báo tức thì nếu có bất kỳ block hash nào bị sửa đổi trái phép.',
+        role: 'Security & Cryptographic Audit Daemon',
+        intervalSeconds: 60,
+        status: 'running',
+        pid: process.pid,
+        lastRun: new Date().toISOString().replace('T', ' ').slice(0, 16),
+        nextRun: new Date(Date.now() + 60000).toISOString().replace('T', ' ').slice(0, 16),
+        runsCount: 42,
+        lastLog: '[GUARDIAN] Cryptographic audit chain verified: 4 blocks active, algorithm SHA-256.'
+      },
+      {
+        id: 'AGENT-GAP-SCANNER',
+        name: 'Traceability Gap & Defect Triage Scanner',
+        description: 'Tự động tính toán ma trận truy vết 5 tầng; cảnh báo Coverage Gaps (AC-08) và phát hiện các đợt chạy Test Run bị Fail để tự động liên kết Bug.',
+        role: 'Traceability & Coverage Assurance Daemon',
+        intervalSeconds: 30,
+        status: 'running',
+        pid: process.pid,
+        lastRun: new Date().toISOString().replace('T', ' ').slice(0, 16),
+        nextRun: new Date(Date.now() + 30000).toISOString().replace('T', ' ').slice(0, 16),
+        runsCount: 19,
+        lastLog: '[GAP-SCANNER] Recalculated matrix: 100% covered requirements, 1 active defect triaged.'
+      }
+    ];
+
+    const insertAgent = db.prepare(`
+      INSERT INTO background_agents (id, name, description, role, interval_seconds, status, pid, last_run, next_run, runs_count, last_log, config)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    for (const a of initialAgents) {
+      insertAgent.run(
+        a.id,
+        a.name,
+        a.description,
+        a.role,
+        a.intervalSeconds,
+        a.status,
+        a.pid || null,
+        a.lastRun || null,
+        a.nextRun || null,
+        a.runsCount,
+        a.lastLog || null,
+        a.config ? JSON.stringify(a.config) : null
+      );
+    }
+  }
+}
+
+seedBackgroundAgentsIfEmpty();
+
 /* -------------------------------------------------------------
  * REPOSITORY HELPERS FOR ALL ENTITIES
  * ----------------------------------------------------------- */
@@ -598,6 +699,88 @@ export const dbRepository = {
         result[row.key] = row.value;
       }
       return result;
+    }
+  },
+
+  backgroundAgents: {
+    getAll(): BackgroundAgentRecord[] {
+      const rows = db.prepare('SELECT * FROM background_agents ORDER BY id ASC').all() as any[];
+      return rows.map(r => ({
+        id: r.id,
+        name: r.name,
+        description: r.description,
+        role: r.role,
+        intervalSeconds: r.interval_seconds,
+        status: r.status,
+        pid: r.pid,
+        lastRun: r.last_run,
+        nextRun: r.next_run,
+        runsCount: r.runs_count || 0,
+        lastLog: r.last_log,
+        config: r.config ? JSON.parse(r.config) : undefined
+      }));
+    },
+    getById(id: string): BackgroundAgentRecord | null {
+      const r = db.prepare('SELECT * FROM background_agents WHERE id = ?').get(id) as any;
+      if (!r) return null;
+      return {
+        id: r.id,
+        name: r.name,
+        description: r.description,
+        role: r.role,
+        intervalSeconds: r.interval_seconds,
+        status: r.status,
+        pid: r.pid,
+        lastRun: r.last_run,
+        nextRun: r.next_run,
+        runsCount: r.runs_count || 0,
+        lastLog: r.last_log,
+        config: r.config ? JSON.parse(r.config) : undefined
+      };
+    },
+    updateStatus(id: string, status: 'running' | 'stopped' | 'error', pid?: number, lastLog?: string): void {
+      const stmt = db.prepare(`
+        UPDATE background_agents 
+        SET status = ?, pid = ?, last_log = COALESCE(?, last_log)
+        WHERE id = ?
+      `);
+      stmt.run(status, pid ?? null, lastLog ?? null, id);
+    },
+    recordExecution(id: string, logMessage: string, nextRunIso: string): void {
+      const now = new Date().toISOString().replace('T', ' ').slice(0, 16);
+      const stmt = db.prepare(`
+        UPDATE background_agents 
+        SET runs_count = runs_count + 1, last_run = ?, next_run = ?, last_log = ?
+        WHERE id = ?
+      `);
+      stmt.run(now, nextRunIso, logMessage, id);
+    },
+    upsert(agent: BackgroundAgentRecord): void {
+      const stmt = db.prepare(`
+        INSERT INTO background_agents (id, name, description, role, interval_seconds, status, pid, last_run, next_run, runs_count, last_log, config)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          name = excluded.name,
+          description = excluded.description,
+          role = excluded.role,
+          interval_seconds = excluded.interval_seconds,
+          status = excluded.status,
+          config = excluded.config
+      `);
+      stmt.run(
+        agent.id,
+        agent.name,
+        agent.description,
+        agent.role,
+        agent.intervalSeconds,
+        agent.status,
+        agent.pid || null,
+        agent.lastRun || null,
+        agent.nextRun || null,
+        agent.runsCount || 0,
+        agent.lastLog || null,
+        agent.config ? JSON.stringify(agent.config) : null
+      );
     }
   }
 };

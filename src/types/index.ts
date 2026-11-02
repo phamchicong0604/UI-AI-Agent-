@@ -240,3 +240,18 @@ export interface ClarificationQuestion {
   assignedTo: string;
   createdAt: string;
 }
+
+export interface BackgroundAgentRecord {
+  id: string;
+  name: string;
+  description: string;
+  role: string;
+  intervalSeconds: number;
+  status: 'running' | 'stopped' | 'error';
+  pid?: number;
+  lastRun?: string;
+  nextRun?: string;
+  runsCount: number;
+  lastLog?: string;
+  config?: Record<string, any>;
+}
