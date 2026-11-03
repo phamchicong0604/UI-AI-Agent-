@@ -245,6 +245,52 @@ export type AiProviderId = 'google' | 'anthropic' | 'openai' | 'custom';
 export type AiAuthMethod = 'api_key' | 'cli_subscription';
 export type AiConnectionStatus = 'connected' | 'disconnected' | 'auth_required' | 'error';
 
+export interface ModelOption {
+  id: string;
+  name: string;
+  description: string;
+  recommended?: boolean;
+  contextWindow: string;
+  maxOutput: string;
+  category: 'reasoning' | 'fast' | 'flagship' | 'local';
+  rateLimits: {
+    rpm: number;
+    tpm: number;
+    rpd?: number;
+  };
+  pricingType: 'token_billed' | 'subscription_included';
+  bestFor: string;
+}
+
+export interface AiQuotaInfo {
+  provider: AiProviderId;
+  authMethod: AiAuthMethod;
+  model: string;
+  planName: string;
+  status: 'healthy' | 'warning' | 'exhausted' | 'auth_required';
+  statusLabel: string;
+  rateLimits: {
+    rpm: number;
+    tpm: number;
+    rpd?: number;
+    contextWindow: string;
+    maxOutput: string;
+  };
+  usage: {
+    requestsToday: number;
+    estimatedTokensToday: number;
+    remainingQuotaPercent?: number;
+    resetTimeDescription: string;
+    billingModel: 'subscription_included' | 'pay_per_token';
+  };
+  accountDetails?: {
+    account?: string;
+    tier?: string;
+    subscriptionPeriod?: string;
+    rawLimits?: Record<string, any>;
+  };
+}
+
 export interface AiConnectionConfig {
   id: string;
   provider: AiProviderId;

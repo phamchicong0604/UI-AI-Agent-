@@ -300,6 +300,22 @@ export const aiConnectionApi = {
   },
   async getModels(): Promise<any> {
     return fetchJson<any>(`${API_BASE_URL}/ai/models`);
+  },
+  async getQuota(): Promise<any> {
+    return fetchJson<any>(`${API_BASE_URL}/ai/connection/quota`);
+  },
+  async checkQuota(data?: {
+    provider?: string;
+    authMethod?: string;
+    apiKey?: string;
+    baseUrl?: string;
+    model?: string;
+    cliBinary?: string;
+  }): Promise<any> {
+    return fetchJson<any>(`${API_BASE_URL}/ai/connection/check-quota`, {
+      method: 'POST',
+      body: JSON.stringify(data || {})
+    });
   }
 };
 
@@ -351,6 +367,8 @@ export const testAiConnection = aiConnectionApi.testConnection;
 export const detectCliTools = aiConnectionApi.detectCli;
 export const disconnectAiConnection = aiConnectionApi.disconnect;
 export const getAiModels = aiConnectionApi.getModels;
+export const getAiQuota = aiConnectionApi.getQuota;
+export const checkAiQuota = aiConnectionApi.checkQuota;
 
 export const getAgentConfig = agentApi.getConfig;
 export const saveAgentConfig = agentApi.saveConfig;

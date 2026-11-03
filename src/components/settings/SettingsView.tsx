@@ -18,7 +18,13 @@ import {
   Unplug,
   Check,
   Copy,
-  Info
+  Info,
+  Cpu,
+  Layers,
+  Gauge,
+  Activity,
+  Zap,
+  Clock
 } from 'lucide-react';
 import { Card, Badge, Button } from '../../common/components';
 import {
@@ -27,14 +33,18 @@ import {
   testAiConnection,
   detectCliTools,
   disconnectAiConnection,
-  getAiModels
+  getAiModels,
+  getAiQuota,
+  checkAiQuota
 } from '../../common/services/api';
 import { 
   AiConnectionConfig, 
   AiProviderId, 
   AiAuthMethod, 
   AiConnectionStatus, 
-  CliDetectionInfo 
+  CliDetectionInfo,
+  ModelOption,
+  AiQuotaInfo
 } from '../../types';
 
 export const SettingsView: React.FC = () => {
@@ -60,9 +70,13 @@ export const SettingsView: React.FC = () => {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   // Available models & detected CLIs
-  const [availableModels, setAvailableModels] = useState<Record<string, Array<{ id: string; name: string; description: string; recommended?: boolean }>>>({});
+  const [availableModels, setAvailableModels] = useState<Record<string, ModelOption[]>>({});
   const [detectedClis, setDetectedClis] = useState<CliDetectionInfo[]>([]);
   const [isDetectingClis, setIsDetectingClis] = useState<boolean>(false);
+
+  // Quota & Rate limits
+  const [quotaInfo, setQuotaInfo] = useState<AiQuotaInfo | null>(null);
+  const [isLoadingQuota, setIsLoadingQuota] = useState<boolean>(false);
 
   // Loading & notification states
   const [isSaving, setIsSaving] = useState<boolean>(false);
@@ -117,6 +131,12 @@ export const SettingsView: React.FC = () => {
             details: { account: 'connorpham' }
           });
         }
+        await handleCheckQuota({
+          provider: c.provider,
+          authMethod: c.authMethod,
+          model: c.model,
+          cliBinary: c.cliBinary
+        });
       }
     } catch (err: any) {
       console.warn('Could not load AI connection:', err.message);
@@ -150,20 +170,45 @@ export const SettingsView: React.FC = () => {
     }
   };
 
+  const handleCheckQuota = async (customParams?: { provider?: AiProviderId; authMethod?: AiAuthMethod; model?: string; cliBinary?: string }) => {
+    setIsLoadingQuota(true);
+    try {
+      const res = await checkAiQuota({
+        provider: customParams?.provider || provider,
+        authMethod: customParams?.authMethod || authMethod,
+        model: customParams?.model || model,
+        apiKey: apiKey ? apiKey.trim() : undefined,
+        baseUrl: baseUrl ? baseUrl.trim() : undefined,
+        cliBinary: customParams?.cliBinary || cliBinary
+      });
+      const data = res?.data !== undefined ? res.data : res;
+      if (data && data.planName) {
+        setQuotaInfo(data);
+      }
+    } catch (err: any) {
+      console.warn('Could not check quota:', err.message);
+    } finally {
+      setIsLoadingQuota(false);
+    }
+  };
+
   const handleProviderChange = (newProvider: AiProviderId) => {
     setProvider(newProvider);
     const models = availableModels[newProvider] || [];
     const recommended = models.find(m => m.recommended) || models[0];
-    if (recommended) {
-      setModel(recommended.id);
-    }
+    const newModel = recommended ? recommended.id : (newProvider === 'anthropic' ? 'claude-3-7-sonnet' : newProvider === 'openai' ? 'gpt-4o' : 'gemini-1.5-pro');
+    setModel(newModel);
+
     // Auto-map matching CLI for this provider
-    if (newProvider === 'anthropic') setCliBinary('claude');
-    else if (newProvider === 'openai') setCliBinary('gh');
-    else if (newProvider === 'google') setCliBinary('agy');
-    else if (newProvider === 'custom') setCliBinary('ollama');
+    let newCli = cliBinary;
+    if (newProvider === 'anthropic') newCli = 'claude';
+    else if (newProvider === 'openai') newCli = 'gh';
+    else if (newProvider === 'google') newCli = 'agy';
+    else if (newProvider === 'custom') newCli = 'ollama';
+    setCliBinary(newCli);
 
     setTestResult(null);
+    handleCheckQuota({ provider: newProvider, model: newModel, cliBinary: newCli });
   };
 
   const handleSaveConnection = async () => {
@@ -222,6 +267,7 @@ export const SettingsView: React.FC = () => {
       setErrorMessage(data.success ? null : data.message);
       await loadAiConnection();
       await handleScanClis();
+      await handleCheckQuota();
     } catch (err: any) {
       const msg = err.message || 'Lỗi kiểm tra kết nối';
       const isAuthErr = authMethod === 'cli_subscription' && (msg.includes('login') || msg.includes('OAuth') || msg.includes('authenticate'));
@@ -609,38 +655,18 @@ export const SettingsView: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* Model Selection Dropdown */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label className="text-xs font-semibold text-slate-300 block mb-1.5">
-                        {t('aiModelSelect')} *
-                      </label>
-                      <select
-                        value={model}
-                        onChange={(e) => setModel(e.target.value)}
-                        className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-purple-500"
-                      >
-                        {(availableModels[provider] || []).map((m) => (
-                          <option key={m.id} value={m.id}>
-                            {m.name} {m.recommended ? '(Khuyên dùng)' : ''}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    {/* Base URL (Optional) */}
-                    <div>
-                      <label className="text-xs font-semibold text-slate-300 block mb-1.5">
-                        {t('aiBaseUrlLabel')}
-                      </label>
-                      <input
-                        type="text"
-                        value={baseUrl}
-                        onChange={(e) => setBaseUrl(e.target.value)}
-                        placeholder={provider === 'custom' ? 'http://localhost:11434/v1' : 'https://api.openai.com/v1 (Tuỳ chọn)'}
-                        className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-purple-500 font-mono"
-                      />
-                    </div>
+                  {/* Base URL (Optional) */}
+                  <div>
+                    <label className="text-xs font-semibold text-slate-300 block mb-1.5">
+                      {t('aiBaseUrlLabel')}
+                    </label>
+                    <input
+                      type="text"
+                      value={baseUrl}
+                      onChange={(e) => setBaseUrl(e.target.value)}
+                      placeholder={provider === 'custom' ? 'http://localhost:11434/v1' : 'https://api.openai.com/v1 (Tuỳ chọn)'}
+                      className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-purple-500 font-mono"
+                    />
                   </div>
                 </div>
               )}
@@ -770,6 +796,218 @@ export const SettingsView: React.FC = () => {
                   )}
                 </div>
               )}
+
+              {/* 4. CHỌN LỰA MÔ HÌNH AI (SELECT AI MODEL) */}
+              <div className="space-y-3 pt-2">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-2">
+                      <Cpu className="w-4 h-4 text-purple-400" />
+                      <span>{t('aiModelSectionTitle')}</span>
+                    </h3>
+                    <p className="text-[11px] text-slate-400 mt-0.5">
+                      {t('aiModelSectionSubtitle')}
+                    </p>
+                  </div>
+                  <span className="text-[11px] px-2.5 py-1 rounded-full bg-slate-800 text-slate-300 border border-slate-700 font-mono shrink-0 self-start sm:self-auto">
+                    Đang chọn: <span className="text-purple-400 font-bold">{model}</span>
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {(availableModels[provider] || []).map((m) => {
+                    const isSelected = model === m.id;
+                    return (
+                      <div
+                        key={m.id}
+                        onClick={() => {
+                          setModel(m.id);
+                          handleCheckQuota({ model: m.id });
+                        }}
+                        className={`p-3.5 rounded-xl border cursor-pointer transition-all flex flex-col justify-between ${
+                          isSelected
+                            ? 'bg-purple-950/30 border-purple-500 shadow-md ring-1 ring-purple-500/40'
+                            : 'bg-slate-900/60 border-slate-800 hover:border-slate-700'
+                        }`}
+                      >
+                        <div>
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex items-center gap-1.5 font-bold text-white text-xs">
+                              <span>{m.name}</span>
+                              {m.recommended && (
+                                <span className="px-1.5 py-0.5 rounded text-[9px] bg-purple-500/20 text-purple-300 border border-purple-500/30 font-semibold">
+                                  Khuyên dùng
+                                </span>
+                              )}
+                            </div>
+                            <div className={`w-4 h-4 rounded-full border flex items-center justify-center shrink-0 ${
+                              isSelected ? 'border-purple-500 bg-purple-500' : 'border-slate-600'
+                            }`}>
+                              {isSelected && <Check className="w-2.5 h-2.5 text-white" />}
+                            </div>
+                          </div>
+
+                          <p className="text-[11px] text-slate-300 mt-2 leading-relaxed">
+                            {m.description}
+                          </p>
+                        </div>
+
+                        <div className="mt-3 pt-2.5 border-t border-slate-800/80 space-y-1.5 text-[10px]">
+                          <div className="flex items-center justify-between text-slate-400">
+                            <span className="flex items-center gap-1">
+                              <Layers className="w-3 h-3 text-indigo-400" />
+                              Context Window:
+                            </span>
+                            <span className="text-slate-200 font-mono font-medium">{m.contextWindow || '128K'}</span>
+                          </div>
+                          <div className="flex items-center justify-between text-slate-400">
+                            <span className="flex items-center gap-1">
+                              <Gauge className="w-3 h-3 text-cyan-400" />
+                              Tốc độ xử lý:
+                            </span>
+                            <span className="text-slate-200 font-mono">{m.rateLimits?.rpm || 500} RPM</span>
+                          </div>
+                          {m.bestFor && (
+                            <div className="text-[10px] text-slate-400 bg-slate-950/60 p-1.5 rounded border border-slate-800/60 truncate">
+                              <span className="text-purple-300 font-semibold">Tối ưu:</span> {m.bestFor}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* 5. THÔNG TIN HẠN MỨC & DUNG LƯỢNG (QUOTA & RATE LIMITS) */}
+              <div className="space-y-3 pt-2">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-2">
+                      <Gauge className="w-4 h-4 text-emerald-400" />
+                      <span>{t('aiQuotaSectionTitle')}</span>
+                    </h3>
+                    <p className="text-[11px] text-slate-400 mt-0.5">
+                      {t('aiQuotaSectionSubtitle')}
+                    </p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleCheckQuota()}
+                    disabled={isLoadingQuota}
+                    className="border-emerald-800/50 hover:bg-emerald-950/30 text-emerald-400 text-xs py-1 h-8 shrink-0 self-start sm:self-auto"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${isLoadingQuota ? 'animate-spin' : ''}`} />
+                    <span>{isLoadingQuota ? t('aiCheckingQuota') : t('aiCheckQuotaBtn')}</span>
+                  </Button>
+                </div>
+
+                {quotaInfo && (
+                  <div className="p-4 rounded-xl bg-slate-950/80 border border-slate-800/90 space-y-3.5">
+                    {/* Top Banner: Plan Name & Status */}
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3 rounded-lg bg-slate-900 border border-slate-800">
+                      <div>
+                        <div className="text-[10px] text-slate-400 uppercase font-semibold">
+                          {t('aiQuotaPlanLabel')}
+                        </div>
+                        <div className="text-sm font-bold text-white flex items-center gap-2 mt-0.5">
+                          <span>{quotaInfo.planName}</span>
+                          {quotaInfo.accountDetails?.account && (
+                            <span className="px-2 py-0.5 rounded text-[10px] bg-purple-500/20 text-purple-300 border border-purple-500/30 font-mono">
+                              @{quotaInfo.accountDetails.account}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <div className={`px-3 py-1.5 rounded-lg border text-xs font-semibold flex items-center gap-1.5 ${
+                        quotaInfo.status === 'healthy'
+                          ? 'bg-emerald-950/30 border-emerald-800/50 text-emerald-300'
+                          : quotaInfo.status === 'auth_required'
+                          ? 'bg-amber-950/30 border-amber-800/50 text-amber-300'
+                          : 'bg-rose-950/30 border-rose-800/50 text-rose-300'
+                      }`}>
+                        {quotaInfo.status === 'healthy' ? (
+                          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                        ) : (
+                          <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+                        )}
+                        <span>{quotaInfo.statusLabel}</span>
+                      </div>
+                    </div>
+
+                    {/* Grid 4 Stats Cards */}
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                      {/* RPM */}
+                      <div className="p-3 rounded-lg bg-slate-900/80 border border-slate-800">
+                        <div className="flex items-center gap-1.5 text-slate-400 text-[11px]">
+                          <Activity className="w-3.5 h-3.5 text-cyan-400" />
+                          <span>RPM (Yêu cầu/phút)</span>
+                        </div>
+                        <div className="text-base font-bold text-white mt-1 font-mono">
+                          {quotaInfo.rateLimits.rpm.toLocaleString()} <span className="text-[10px] text-slate-400 font-normal">req/m</span>
+                        </div>
+                      </div>
+
+                      {/* TPM */}
+                      <div className="p-3 rounded-lg bg-slate-900/80 border border-slate-800">
+                        <div className="flex items-center gap-1.5 text-slate-400 text-[11px]">
+                          <Zap className="w-3.5 h-3.5 text-amber-400" />
+                          <span>TPM (Tokens/phút)</span>
+                        </div>
+                        <div className="text-base font-bold text-white mt-1 font-mono">
+                          {quotaInfo.rateLimits.tpm.toLocaleString()} <span className="text-[10px] text-slate-400 font-normal">tok/m</span>
+                        </div>
+                      </div>
+
+                      {/* Context Window */}
+                      <div className="p-3 rounded-lg bg-slate-900/80 border border-slate-800">
+                        <div className="flex items-center gap-1.5 text-slate-400 text-[11px]">
+                          <Layers className="w-3.5 h-3.5 text-purple-400" />
+                          <span>Ngữ cảnh tối đa</span>
+                        </div>
+                        <div className="text-xs font-bold text-purple-300 mt-1.5 font-mono truncate">
+                          {quotaInfo.rateLimits.contextWindow}
+                        </div>
+                      </div>
+
+                      {/* Billing Model */}
+                      <div className="p-3 rounded-lg bg-slate-900/80 border border-slate-800">
+                        <div className="flex items-center gap-1.5 text-slate-400 text-[11px]">
+                          <Shield className="w-3.5 h-3.5 text-emerald-400" />
+                          <span>Cơ chế cước</span>
+                        </div>
+                        <div className="text-xs font-semibold text-emerald-400 mt-1.5 truncate">
+                          {quotaInfo.usage.billingModel === 'subscription_included' ? 'Subscription (0đ/token)' : 'Pay-per-token'}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Progress & Reset Schedule */}
+                    <div className="p-3 rounded-lg bg-slate-900/60 border border-slate-800 text-xs space-y-2">
+                      <div className="flex items-center justify-between text-[11px]">
+                        <span className="text-slate-400 flex items-center gap-1.5">
+                          <Clock className="w-3.5 h-3.5 text-indigo-400" />
+                          <span>{quotaInfo.usage.resetTimeDescription}</span>
+                        </span>
+                        {quotaInfo.usage.remainingQuotaPercent !== undefined && (
+                          <span className="text-emerald-400 font-bold font-mono">
+                            {quotaInfo.usage.remainingQuotaPercent}% hạn ngạch khả dụng
+                          </span>
+                        )}
+                      </div>
+                      {quotaInfo.usage.remainingQuotaPercent !== undefined && (
+                        <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
+                          <div
+                            className="bg-gradient-to-r from-emerald-500 to-cyan-500 h-full rounded-full transition-all duration-500"
+                            style={{ width: `${Math.min(100, Math.max(5, quotaInfo.usage.remainingQuotaPercent))}%` }}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
 
               {/* Test Connection Result Box */}
               {testResult && (

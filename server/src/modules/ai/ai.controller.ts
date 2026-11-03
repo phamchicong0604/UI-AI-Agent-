@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { AiService } from './ai.service.js';
 import { aiConnectionManager } from './ai.connection.manager.js';
 import { PROVIDER_MODELS } from './model.registry.js';
+import { quotaService } from './quota.service.js';
 import { sendSuccess, sendError } from '../../common/response.js';
 
 export const aiRouter = Router();
@@ -95,6 +96,40 @@ aiRouter.post('/connection/disconnect', (req: Request, res: Response) => {
  */
 aiRouter.get('/models', (req: Request, res: Response) => {
   sendSuccess(res, PROVIDER_MODELS);
+});
+
+/**
+ * GET /api/v1/ai/connection/quota
+ * Retrieves quota, rate limit, and subscription usage for the active connection
+ */
+aiRouter.get('/connection/quota', async (req: Request, res: Response) => {
+  try {
+    const quota = await quotaService.getQuotaInfo();
+    sendSuccess(res, quota, 'Quota information retrieved successfully');
+  } catch (err: any) {
+    sendError(res, `Failed to retrieve quota: ${err.message}`, 500);
+  }
+});
+
+/**
+ * POST /api/v1/ai/connection/check-quota
+ * Probes quota and limits on the fly for given provider, auth method, model, or credentials
+ */
+aiRouter.post('/connection/check-quota', async (req: Request, res: Response) => {
+  try {
+    const { provider, authMethod, model, apiKey, baseUrl, cliBinary } = req.body;
+    const quota = await quotaService.getQuotaInfo({
+      provider,
+      authMethod,
+      model,
+      apiKey,
+      baseUrl,
+      cliBinary
+    });
+    sendSuccess(res, quota, 'Live quota evaluated successfully');
+  } catch (err: any) {
+    sendError(res, `Quota check failed: ${err.message}`, 500);
+  }
 });
 
 /**
