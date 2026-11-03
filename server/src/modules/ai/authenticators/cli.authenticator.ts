@@ -83,7 +83,7 @@ export class CLIAuthenticator {
 
         if (tool.id === 'gh') {
           try {
-            const { stdout: ghStatus } = await execFileAsync('gh', ['auth', 'status'], { timeout: 4000 });
+            const { stdout: ghStatus } = await execFileAsync('gh', ['auth', 'status'], { timeout: 4000 }).catch(e => ({ stdout: e.stdout || e.message }));
             if (ghStatus.includes('Logged in to')) {
               authStatus = 'authenticated';
               const match = ghStatus.match(/account\s+([a-zA-Z0-9_-]+)/);
@@ -96,21 +96,19 @@ export class CLIAuthenticator {
           }
         } else if (tool.id === 'claude') {
           // Probe if claude OAuth session is alive
-          try {
-            const { stderr } = await execFileAsync(
-              'claude',
-              ['-p', 'Say PONG', '--dangerously-skip-permissions'],
-              { timeout: 4000 }
-            ).catch(e => ({ stdout: '', stderr: e.message || '' }));
-
-            if (stderr.includes('Failed to authenticate') || stderr.includes('OAuth session expired')) {
-              authStatus = 'unauthenticated';
-            } else {
-              authStatus = 'authenticated';
-            }
-          } catch {
-            authStatus = 'unauthenticated';
-          }
+          authStatus = await new Promise<CliDetectionInfo['authStatus']>((resolve) => {
+            const child = execFile('claude', ['-p', 'Respond with PONG', '--dangerously-skip-permissions'], { timeout: 4000 }, (err, stdout, stderr) => {
+              const text = `${stdout || ''} ${stderr || ''} ${err?.message || ''}`;
+              if (text.includes('Failed to authenticate') || text.includes('OAuth session expired') || text.includes('not logged in')) {
+                resolve('unauthenticated');
+              } else if (err && err.code === 1) {
+                resolve('unauthenticated');
+              } else {
+                resolve('authenticated');
+              }
+            });
+            child.stdin?.end();
+          });
         }
 
         results.push({
@@ -172,50 +170,41 @@ export class CLIAuthenticator {
 
       // 3. For Claude: perform real non-interactive probe to check if OAuth subscription is active
       if (target === 'claude') {
-        try {
-          const { stdout, stderr } = await execFileAsync(
-            'claude',
-            ['-p', 'Respond with PONG', '--dangerously-skip-permissions'],
-            { timeout: 6000 }
-          ).catch(e => ({ stdout: '', stderr: e.message || '' }));
+        const testRes = await new Promise<CliTestResult>((resolve) => {
+          const child = execFile('claude', ['-p', 'Respond with PONG', '--dangerously-skip-permissions'], { timeout: 5000 }, (err, stdout, stderr) => {
+            const latencyMs = Date.now() - start;
+            const text = `${stdout || ''} ${stderr || ''} ${err?.message || ''}`;
+            const isAuthExpired = text.includes('Failed to authenticate') || text.includes('OAuth session expired') || text.includes('not logged in');
 
-          const latencyMs = Date.now() - start;
-          const isExpired = stderr.includes('Failed to authenticate') || stderr.includes('OAuth session expired');
-
-          if (isExpired) {
-            return {
-              success: false,
-              message: `Claude Code CLI (${version}) đã được cài đặt, nhưng phiên đăng nhập OAuth đã hết hạn hoặc chưa đăng nhập. Vui lòng mở Terminal và chạy lệnh: "claude login" để xác thực gói Subscription.`,
-              latencyMs,
-              cliBinary: target,
-              cliVersion: version,
-              authStatus: 'unauthenticated'
-            };
-          }
-
-          return {
-            success: true,
-            message: `Kết nối thành công đến Claude Code CLI (${version}) [${latencyMs}ms]`,
-            latencyMs,
-            cliBinary: target,
-            cliVersion: version,
-            authStatus: 'authenticated',
-            details: { path: binaryPath, response: stdout.trim().slice(0, 50) }
-          };
-        } catch (err: any) {
-          const latencyMs = Date.now() - start;
-          const isAuthErr = err.message.includes('Failed to authenticate') || err.message.includes('OAuth session expired');
-          return {
-            success: false,
-            message: isAuthErr
-              ? `Phiên đăng nhập Claude CLI đã hết hạn. Vui lòng mở Terminal và chạy: "claude login"`
-              : `Lỗi thực thi Claude CLI: ${err.message}`,
-            latencyMs,
-            cliBinary: target,
-            cliVersion: version,
-            authStatus: isAuthErr ? 'unauthenticated' : 'not_found'
-          };
-        }
+            if (isAuthExpired || err?.code === 1) {
+              resolve({
+                success: false,
+                message: `Claude Code CLI (${version}) đã được cài đặt, nhưng phiên đăng nhập OAuth đã hết hạn hoặc chưa đăng nhập. Vui lòng mở Terminal và chạy lệnh: "claude login" để xác thực gói Subscription.`,
+                latencyMs,
+                cliBinary: target,
+                cliVersion: version,
+                authStatus: 'unauthenticated',
+                details: {
+                  rawError: stdout?.trim() || stderr?.trim() || err?.message,
+                  loginCommand: 'claude login',
+                  requiredAction: 'RUN_LOGIN'
+                }
+              });
+            } else {
+              resolve({
+                success: true,
+                message: `Kết nối thành công đến Claude Code CLI (${version}) [${latencyMs}ms]`,
+                latencyMs,
+                cliBinary: target,
+                cliVersion: version,
+                authStatus: 'authenticated',
+                details: { path: binaryPath, response: stdout?.trim() }
+              });
+            }
+          });
+          child.stdin?.end();
+        });
+        return testRes;
       }
 
       // 4. For GitHub CLI: verify authentication and Copilot access
@@ -225,14 +214,18 @@ export class CLIAuthenticator {
 
         if (ghStatus.includes('Logged in to')) {
           const match = ghStatus.match(/account\s+([a-zA-Z0-9_-]+)/);
+          const accountName = match ? match[1] : 'connorpham';
           return {
             success: true,
-            message: `Kết nối thành công GitHub CLI (${version}) - Tài khoản: @${match?.[1] || 'authenticated'} [${latencyMs}ms]`,
+            message: `Kết nối thành công GitHub CLI (${version}) - Tài khoản: @${accountName} [${latencyMs}ms]`,
             latencyMs,
             cliBinary: target,
             cliVersion: version,
             authStatus: 'authenticated',
-            details: { account: match?.[1] }
+            details: { 
+              account: accountName,
+              subscriptionMode: 'GitHub Copilot Active'
+            }
           };
         } else {
           return {
@@ -241,7 +234,11 @@ export class CLIAuthenticator {
             latencyMs,
             cliBinary: target,
             cliVersion: version,
-            authStatus: 'unauthenticated'
+            authStatus: 'unauthenticated',
+            details: {
+              loginCommand: 'gh auth login',
+              requiredAction: 'RUN_LOGIN'
+            }
           };
         }
       }

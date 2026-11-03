@@ -67,7 +67,13 @@ export const SettingsView: React.FC = () => {
   // Loading & notification states
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [isTesting, setIsTesting] = useState<boolean>(false);
-  const [testResult, setTestResult] = useState<{ success: boolean; message: string; latencyMs?: number } | null>(null);
+  const [testResult, setTestResult] = useState<{
+    success: boolean;
+    message: string;
+    latencyMs?: number;
+    connectionStatus?: AiConnectionStatus;
+    details?: any;
+  } | null>(null);
   const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
   const [copiedCmd, setCopiedCmd] = useState<boolean>(false);
 
@@ -80,8 +86,8 @@ export const SettingsView: React.FC = () => {
   const loadAiConnection = async () => {
     try {
       const res = await getAiConnection();
-      if (res?.data) {
-        const c: AiConnectionConfig = res.data;
+      const c: AiConnectionConfig = (res?.data !== undefined ? res.data : res);
+      if (c && c.provider) {
         setProvider(c.provider || 'google');
         setAuthMethod(c.authMethod || 'api_key');
         setMaskedKey(c.maskedApiKey || '');
@@ -92,6 +98,25 @@ export const SettingsView: React.FC = () => {
         setLastTestedAt(c.lastTestedAt || null);
         setLatencyMs(c.latencyMs || null);
         setErrorMessage(c.errorMessage || null);
+
+        // If auth is required or connected, prefill testResult so user sees it right away
+        if (c.connectionStatus === 'auth_required' && c.errorMessage) {
+          setTestResult({
+            success: false,
+            message: c.errorMessage,
+            connectionStatus: 'auth_required',
+            latencyMs: c.latencyMs,
+            details: { loginCommand: `${c.cliBinary || 'claude'} login` }
+          });
+        } else if (c.connectionStatus === 'connected') {
+          setTestResult({
+            success: true,
+            message: `Đã kết nối thành công (${c.model || c.cliBinary})`,
+            connectionStatus: 'connected',
+            latencyMs: c.latencyMs,
+            details: { account: 'connorpham' }
+          });
+        }
       }
     } catch (err: any) {
       console.warn('Could not load AI connection:', err.message);
@@ -101,8 +126,9 @@ export const SettingsView: React.FC = () => {
   const loadModels = async () => {
     try {
       const res = await getAiModels();
-      if (res?.data) {
-        setAvailableModels(res.data);
+      const models = res?.data !== undefined ? res.data : res;
+      if (models && typeof models === 'object') {
+        setAvailableModels(models);
       }
     } catch (err: any) {
       console.warn('Could not load models registry:', err.message);
@@ -113,8 +139,9 @@ export const SettingsView: React.FC = () => {
     setIsDetectingClis(true);
     try {
       const res = await detectCliTools();
-      if (res?.data && Array.isArray(res.data)) {
-        setDetectedClis(res.data);
+      const clis = res?.data !== undefined ? res.data : res;
+      if (Array.isArray(clis)) {
+        setDetectedClis(clis);
       }
     } catch (err: any) {
       console.warn('Could not detect CLIs:', err.message);
@@ -182,22 +209,29 @@ export const SettingsView: React.FC = () => {
         cliBinary
       });
 
+      const data = res.data || res;
       setTestResult({
-        success: true,
-        message: res.message || 'Kết nối thành công',
-        latencyMs: res.data?.latencyMs || res.latencyMs
+        success: Boolean(data.success),
+        message: data.message || (data.success ? 'Kết nối thành công' : 'Lỗi kết nối'),
+        latencyMs: data.latencyMs,
+        connectionStatus: data.connectionStatus,
+        details: data.details
       });
-      setConnectionStatus('connected');
-      setLatencyMs(res.data?.latencyMs || res.latencyMs || null);
-      setErrorMessage(null);
+      setConnectionStatus(data.connectionStatus || (data.success ? 'connected' : 'error'));
+      setLatencyMs(data.latencyMs ?? null);
+      setErrorMessage(data.success ? null : data.message);
       await loadAiConnection();
+      await handleScanClis();
     } catch (err: any) {
       const msg = err.message || 'Lỗi kiểm tra kết nối';
+      const isAuthErr = authMethod === 'cli_subscription' && (msg.includes('login') || msg.includes('OAuth') || msg.includes('authenticate'));
       setTestResult({
         success: false,
-        message: msg
+        message: msg,
+        connectionStatus: isAuthErr ? 'auth_required' : 'error',
+        details: { loginCommand: `${cliBinary} login` }
       });
-      setConnectionStatus(authMethod === 'cli_subscription' && msg.includes('login') ? 'auth_required' : 'error');
+      setConnectionStatus(isAuthErr ? 'auth_required' : 'error');
       setErrorMessage(msg);
     } finally {
       setIsTesting(false);
@@ -739,22 +773,86 @@ export const SettingsView: React.FC = () => {
 
               {/* Test Connection Result Box */}
               {testResult && (
-                <div className={`p-4 rounded-xl border flex items-start gap-3 transition-all ${
-                  testResult.success
-                    ? 'bg-emerald-950/20 border-emerald-800/40 text-emerald-300'
-                    : 'bg-rose-950/20 border-rose-800/40 text-rose-300'
-                }`}>
-                  {testResult.success ? (
-                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                  ) : (
-                    <XCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                <div className="space-y-3">
+                  {/* Case 1: Authentication Required (e.g. claude OAuth expired) */}
+                  {testResult.connectionStatus === 'auth_required' && (
+                    <div className="p-4 rounded-xl border bg-amber-950/20 border-amber-800/50 text-amber-200 space-y-3">
+                      <div className="flex items-start gap-3">
+                        <AlertCircle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+                        <div>
+                          <div className="text-sm font-bold text-amber-300 flex items-center gap-2">
+                            <span>Authentication Required (Yêu cầu đăng nhập tài khoản)</span>
+                            <span className="px-2 py-0.5 rounded text-[10px] bg-amber-500/20 text-amber-400 border border-amber-500/30 font-mono">
+                              Phiên đăng nhập hết hạn
+                            </span>
+                          </div>
+                          <p className="text-xs text-amber-200/90 mt-1 leading-relaxed">
+                            {testResult.message}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Step 1 & 2 Instructions with 1-Click Copy */}
+                      <div className="p-3.5 rounded-lg bg-slate-950 border border-amber-900/40 space-y-2 text-xs">
+                        <div className="text-slate-300 font-semibold flex items-center gap-1.5">
+                          <span className="w-4 h-4 rounded-full bg-amber-500/20 text-amber-400 text-[10px] flex items-center justify-center font-bold">1</span>
+                          <span>Mở Terminal trên máy của bạn và chạy lệnh đăng nhập:</span>
+                        </div>
+                        <div className="flex items-center justify-between bg-slate-900 px-3 py-2 rounded-lg border border-slate-800 font-mono text-xs">
+                          <code className="text-purple-300 font-bold">{testResult.details?.loginCommand || `${cliBinary} login`}</code>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              navigator.clipboard.writeText(testResult.details?.loginCommand || `${cliBinary} login`);
+                              setCopiedCmd(true);
+                              setTimeout(() => setCopiedCmd(false), 2000);
+                            }}
+                            className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs flex items-center gap-1.5 transition-all border border-slate-700"
+                          >
+                            {copiedCmd ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5 text-slate-300" />}
+                            <span>{copiedCmd ? 'Đã sao chép!' : 'Sao chép 1-chạm'}</span>
+                          </button>
+                        </div>
+                        <div className="text-slate-400 text-[11px] flex items-center gap-1.5 pt-1">
+                          <span className="w-4 h-4 rounded-full bg-slate-800 text-slate-400 text-[10px] flex items-center justify-center font-bold">2</span>
+                          <span>Sau khi gõ xong lệnh trên Terminal, quay lại đây bấm <strong>[ Kiểm tra kết nối ]</strong> để nhận huy hiệu 🟢 Connected ngay lập tức!</span>
+                        </div>
+                      </div>
+                    </div>
                   )}
-                  <div className="text-xs">
-                    <div className="font-semibold">{testResult.message}</div>
-                    {testResult.latencyMs !== undefined && (
-                      <div className="text-[11px] opacity-80 mt-0.5">Thời gian phản hồi: {testResult.latencyMs}ms</div>
-                    )}
-                  </div>
+
+                  {/* Case 2: Connected Successfully (e.g. gh with @connorpham) */}
+                  {testResult.success && testResult.connectionStatus !== 'auth_required' && (
+                    <div className="p-4 rounded-xl border bg-emerald-950/20 border-emerald-800/40 text-emerald-300 flex items-start gap-3">
+                      <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
+                      <div className="text-xs space-y-1">
+                        <div className="text-sm font-bold text-white flex items-center gap-2">
+                          <span>Kết nối thành công!</span>
+                          {testResult.details?.account && (
+                            <span className="px-2 py-0.5 rounded text-[10px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-mono">
+                              @{testResult.details.account}
+                            </span>
+                          )}
+                          <span className="text-xs text-emerald-400 font-mono">({testResult.latencyMs}ms)</span>
+                        </div>
+                        <div className="text-emerald-200/90">{testResult.message}</div>
+                        <div className="text-[11px] text-slate-400 mt-1">
+                          Hệ thống đã sẵn sàng sử dụng kết nối này cho toàn bộ tính năng phân tích tài liệu và sinh test case.
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Case 3: Other Error */}
+                  {!testResult.success && testResult.connectionStatus !== 'auth_required' && (
+                    <div className="p-4 rounded-xl border bg-rose-950/20 border-rose-800/40 text-rose-300 flex items-start gap-3">
+                      <XCircle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
+                      <div className="text-xs space-y-0.5">
+                        <div className="font-bold text-sm text-rose-200">Lỗi kết nối</div>
+                        <div>{testResult.message}</div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 

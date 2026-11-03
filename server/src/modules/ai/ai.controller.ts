@@ -57,11 +57,7 @@ aiRouter.post('/connection/test', async (req: Request, res: Response) => {
       cliBinary
     });
 
-    if (result.success) {
-      sendSuccess(res, result, result.message);
-    } else {
-      sendError(res, result.message, 400);
-    }
+    sendSuccess(res, result, result.message);
   } catch (err: any) {
     sendError(res, `Connection test failed: ${err.message}`, 500);
   }
