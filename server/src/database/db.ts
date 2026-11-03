@@ -13,9 +13,19 @@ import {
   AiConnectionConfig,
   AccountModelSnapshot,
   ModelOption,
-  Project
+  Project,
+  StoredFileRecord,
+  DocumentVersionRecord,
+  SkillRecord,
+  SkillVersionRecord,
+  PipelineRunRecord,
+  ReviewDecisionRecord,
+  DocumentRelationshipRecord
 } from '../common/types.js';
 import { computeSha256, computeAuditEventHash } from '../common/crypto.js';
+import { defaultFileStore } from '../common/fileStore.js';
+import { DatabaseMigrator } from './migrator.js';
+import { allMigrations } from './migrations/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -28,156 +38,13 @@ if (!fs.existsSync(dataDir)) {
 const dbPath = path.join(dataDir, 'docqa.sqlite');
 export const db = new Database(dbPath);
 
-// Enable WAL for performance and concurrent integrity
+// Enable WAL and busy timeout for concurrent testing and production resilience
 db.pragma('journal_mode = WAL');
+db.pragma('busy_timeout = 5000');
 
-// Initialize database schema
-db.exec(`
-  CREATE TABLE IF NOT EXISTS documents (
-    id TEXT PRIMARY KEY,
-    category TEXT,
-    status TEXT,
-    data TEXT NOT NULL,
-    updated_at TEXT
-  );
-
-  CREATE TABLE IF NOT EXISTS requirements (
-    id TEXT PRIMARY KEY,
-    type TEXT,
-    priority TEXT,
-    status TEXT,
-    data TEXT NOT NULL,
-    updated_at TEXT
-  );
-
-  CREATE TABLE IF NOT EXISTS evidence (
-    id TEXT PRIMARY KEY,
-    type TEXT,
-    environment TEXT,
-    status TEXT,
-    data TEXT NOT NULL,
-    created_at TEXT
-  );
-
-  CREATE TABLE IF NOT EXISTS test_cases (
-    id TEXT PRIMARY KEY,
-    requirement_id TEXT,
-    status TEXT,
-    type TEXT,
-    priority TEXT,
-    data TEXT NOT NULL,
-    updated_at TEXT
-  );
-
-  CREATE TABLE IF NOT EXISTS test_runs (
-    id TEXT PRIMARY KEY,
-    status TEXT,
-    environment TEXT,
-    data TEXT NOT NULL,
-    created_at TEXT
-  );
-
-  CREATE TABLE IF NOT EXISTS bugs (
-    id TEXT PRIMARY KEY,
-    status TEXT,
-    severity TEXT,
-    priority TEXT,
-    data TEXT NOT NULL,
-    updated_at TEXT
-  );
-
-  CREATE TABLE IF NOT EXISTS audit_events (
-    id TEXT PRIMARY KEY,
-    event_hash TEXT NOT NULL,
-    previous_event_hash TEXT,
-    timestamp TEXT NOT NULL,
-    data TEXT NOT NULL
-  );
-
-  CREATE TABLE IF NOT EXISTS settings (
-    key TEXT PRIMARY KEY,
-    value TEXT NOT NULL,
-    updated_at TEXT
-  );
-
-  CREATE TABLE IF NOT EXISTS ai_connections (
-    id TEXT PRIMARY KEY DEFAULT 'primary',
-    provider TEXT NOT NULL DEFAULT 'google',
-    auth_method TEXT NOT NULL DEFAULT 'api_key',
-    api_key TEXT,
-    base_url TEXT,
-    model TEXT NOT NULL DEFAULT 'gemini-4-argon-medium',
-    effort_level TEXT DEFAULT 'medium',
-    max_output_tokens INTEGER DEFAULT 32768,
-    cli_binary TEXT DEFAULT 'claude',
-    cli_version TEXT,
-    cli_auth_status TEXT,
-    connection_status TEXT NOT NULL DEFAULT 'disconnected',
-    last_tested_at TEXT,
-    latency_ms INTEGER,
-    error_message TEXT,
-    updated_at TEXT NOT NULL
-  );
-
-  -- Models available to a specific provider account (synced from CLI subscription or API key)
-  CREATE TABLE IF NOT EXISTS ai_models (
-    provider TEXT NOT NULL,
-    auth_method TEXT NOT NULL,
-    source TEXT NOT NULL,
-    model_id TEXT NOT NULL,
-    account TEXT,
-    name TEXT NOT NULL,
-    sort_order INTEGER NOT NULL DEFAULT 0,
-    data TEXT NOT NULL,
-    synced_at TEXT NOT NULL,
-    PRIMARY KEY (provider, auth_method, source, model_id)
-  );
-  CREATE INDEX IF NOT EXISTS idx_ai_models_lookup ON ai_models (provider, auth_method, source);
-
-  -- Per-model effort level settings stored separately in SQLite
-  CREATE TABLE IF NOT EXISTS ai_model_efforts (
-    provider TEXT NOT NULL,
-    model_id TEXT NOT NULL,
-    effort_level TEXT NOT NULL DEFAULT 'medium',
-    max_output_tokens INTEGER DEFAULT 32768,
-    resolved_variant TEXT,
-    updated_at TEXT NOT NULL,
-    PRIMARY KEY (provider, model_id)
-  );
-  CREATE INDEX IF NOT EXISTS idx_ai_model_efforts_lookup ON ai_model_efforts (provider, model_id);
-
-  -- Projects Workspace table
-  CREATE TABLE IF NOT EXISTS projects (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    key TEXT NOT NULL,
-    description TEXT,
-    version TEXT DEFAULT 'v1.0',
-    author TEXT,
-    members_count INTEGER DEFAULT 1,
-    data TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-  );
-  CREATE INDEX IF NOT EXISTS idx_projects_key ON projects (key);
-`);
-
-try {
-  db.exec("ALTER TABLE documents ADD COLUMN project_id TEXT DEFAULT 'PRJ-01'");
-} catch {}
-try {
-  db.exec("CREATE INDEX IF NOT EXISTS idx_documents_project_id ON documents (project_id)");
-} catch {}
-
-try {
-  db.exec("ALTER TABLE ai_connections ADD COLUMN effort_level TEXT DEFAULT 'medium'");
-} catch {}
-try {
-  db.exec("ALTER TABLE ai_connections ADD COLUMN max_output_tokens INTEGER DEFAULT 32768");
-} catch {}
-try {
-  db.exec("ALTER TABLE ai_connections ADD COLUMN base_model TEXT");
-} catch {}
+// Execute database schema migrations with transactional versioning (E1-T1)
+export const migrator = new DatabaseMigrator(db, allMigrations);
+migrator.runPendingMigrations();
 
 /* -------------------------------------------------------------
  * SEED BASELINE DATA IF TABLES ARE EMPTY
@@ -740,6 +607,52 @@ function seedAiConnectionIfEmpty() {
 
 seedAiConnectionIfEmpty();
 
+function ensureStoredFilesSynced() {
+  try {
+    const docs = db.prepare('SELECT id, data FROM documents').all() as { id: string; data: string }[];
+    for (const row of docs) {
+      try {
+        const doc = JSON.parse(row.data);
+        const versions = db.prepare('SELECT id, file_id FROM document_versions WHERE document_id = ?').all(doc.id) as any[];
+        if (versions.length === 0 || !versions[0].file_id) {
+          const content = doc.contentMarkdown || `# ${doc.title}
+
+> **Dự án**: ${doc.projectId || 'PRJ-01'} | **Mã**: \`${doc.id}\` | **Phiên bản**: \`${doc.currentVersion || 'v1.0'}\`  
+> **Tác giả**: ${doc.author || 'System'} | **Cập nhật**: ${doc.updatedAt || '2026-11-01'}
+
+---
+
+## 1. Tóm tắt Mục tiêu & Bối cảnh
+${doc.description || 'Đặc tả kỹ thuật chuẩn hệ thống.'}
+
+## 2. Quy tắc Nghiệp vụ & Toàn vẹn
+- Tất cả các văn bản đều được ký số bất biến SHA-256.
+- Mọi thay đổi đều được ghi vết kiểm toán chuỗi khối.
+`;
+          const buffer = Buffer.from(content, 'utf-8');
+          const fileSha256 = `sha256:${computeSha256(buffer)}`;
+          const fileId = `FILE-${fileSha256.slice(7, 17)}`;
+          const storageKey = `projects/${doc.projectId || 'PRJ-01'}/${doc.id}/${doc.id}.md`;
+
+          defaultFileStore.put(`${doc.id}.md`, buffer, storageKey);
+          db.prepare(`
+            INSERT OR REPLACE INTO stored_files (id, storage_key, original_name, mime_type, size_bytes, sha256, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+          `).run(fileId, storageKey, `${doc.id}.md`, 'text/markdown', buffer.length, fileSha256, doc.updatedAt || '2026-11-01');
+
+          const vId = `${doc.id}-v1_0`;
+          db.prepare(`
+            INSERT OR REPLACE INTO document_versions (id, document_id, version_no, file_id, extracted_content, status, change_summary, created_by, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(vId, doc.id, doc.currentVersion || 'v1.0', fileId, content, doc.status || 'Draft', 'Synchronized baseline version', doc.author || 'System', doc.updatedAt || '2026-11-01');
+        }
+      } catch {}
+    }
+  } catch {}
+}
+
+ensureStoredFilesSynced();
+
 /* -------------------------------------------------------------
  * REPOSITORY HELPERS FOR ALL ENTITIES
  * ----------------------------------------------------------- */
@@ -808,6 +721,134 @@ export const dbRepository = {
     delete(id: string): boolean {
       const result = db.prepare('DELETE FROM documents WHERE id = ?').run(id);
       return result.changes > 0;
+    }
+  },
+
+  storedFiles: {
+    getById(id: string): StoredFileRecord | null {
+      const row = db.prepare('SELECT id, storage_key as storageKey, original_name as originalName, mime_type as mimeType, size_bytes as sizeBytes, sha256, created_at as createdAt FROM stored_files WHERE id = ?').get(id) as StoredFileRecord | undefined;
+      return row || null;
+    },
+    getBySha256(sha256: string): StoredFileRecord | null {
+      const row = db.prepare('SELECT id, storage_key as storageKey, original_name as originalName, mime_type as mimeType, size_bytes as sizeBytes, sha256, created_at as createdAt FROM stored_files WHERE sha256 = ?').get(sha256) as StoredFileRecord | undefined;
+      return row || null;
+    },
+    upsert(file: StoredFileRecord): void {
+      const stmt = db.prepare(`
+        INSERT INTO stored_files (id, storage_key, original_name, mime_type, size_bytes, sha256, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          storage_key = excluded.storage_key,
+          original_name = excluded.original_name,
+          mime_type = excluded.mime_type,
+          size_bytes = excluded.size_bytes,
+          sha256 = excluded.sha256,
+          created_at = excluded.created_at
+      `);
+      stmt.run(file.id, file.storageKey, file.originalName, file.mimeType, file.sizeBytes, file.sha256, file.createdAt);
+    }
+  },
+
+  documentVersions: {
+    getByDocumentId(docId: string): DocumentVersionRecord[] {
+      const rows = db.prepare('SELECT id, document_id as documentId, version_no as versionNo, file_id as fileId, extracted_content as extractedContent, status, change_summary as changeSummary, created_by as createdBy, created_at as createdAt FROM document_versions WHERE document_id = ? ORDER BY version_no ASC').all(docId) as DocumentVersionRecord[];
+      return rows;
+    },
+    getById(id: string): DocumentVersionRecord | null {
+      const row = db.prepare('SELECT id, document_id as documentId, version_no as versionNo, file_id as fileId, extracted_content as extractedContent, status, change_summary as changeSummary, created_by as createdBy, created_at as createdAt FROM document_versions WHERE id = ?').get(id) as DocumentVersionRecord | undefined;
+      return row || null;
+    },
+    upsert(v: DocumentVersionRecord): void {
+      const stmt = db.prepare(`
+        INSERT INTO document_versions (id, document_id, version_no, file_id, extracted_content, status, change_summary, created_by, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          version_no = excluded.version_no,
+          file_id = excluded.file_id,
+          extracted_content = excluded.extracted_content,
+          status = excluded.status,
+          change_summary = excluded.change_summary,
+          created_by = excluded.created_by,
+          created_at = excluded.created_at
+      `);
+      stmt.run(v.id, v.documentId, v.versionNo, v.fileId, v.extractedContent, v.status, v.changeSummary, v.createdBy, v.createdAt);
+    }
+  },
+
+  skills: {
+    getAll(): SkillRecord[] {
+      return db.prepare('SELECT id, name, description, created_at as createdAt FROM skills ORDER BY name ASC').all() as SkillRecord[];
+    },
+    getById(id: string): SkillRecord | null {
+      const row = db.prepare('SELECT id, name, description, created_at as createdAt FROM skills WHERE id = ?').get(id) as SkillRecord | undefined;
+      return row || null;
+    },
+    getVersions(skillId: string): SkillVersionRecord[] {
+      return db.prepare('SELECT id, skill_id as skillId, version, prompt_template as promptTemplate, prompt_hash as promptHash, input_schema as inputSchema, output_schema as outputSchema, model_recommended as modelRecommended, created_at as createdAt FROM skill_versions WHERE skill_id = ? ORDER BY version DESC').all(skillId) as SkillVersionRecord[];
+    },
+    upsertVersion(v: SkillVersionRecord): void {
+      const stmt = db.prepare(`
+        INSERT INTO skill_versions (id, skill_id, version, prompt_template, prompt_hash, input_schema, output_schema, model_recommended, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(skill_id, version) DO UPDATE SET
+          prompt_template = excluded.prompt_template,
+          prompt_hash = excluded.prompt_hash,
+          input_schema = excluded.input_schema,
+          output_schema = excluded.output_schema,
+          model_recommended = excluded.model_recommended
+      `);
+      stmt.run(v.id, v.skillId, v.version, v.promptTemplate, v.promptHash, v.inputSchema, v.outputSchema, v.modelRecommended, v.createdAt);
+    }
+  },
+
+  pipelineRuns: {
+    getByDocumentVersion(docVersionId: string): PipelineRunRecord[] {
+      return db.prepare('SELECT id, document_version_id as documentVersionId, skill_version_id as skillVersionId, model_id as modelId, provider, status, input_payload as inputPayload, output_payload as outputPayload, tokens_prompt as tokensPrompt, tokens_completion as tokensCompletion, latency_ms as latencyMs, error_message as errorMessage, created_at as createdAt FROM pipeline_runs WHERE document_version_id = ? ORDER BY created_at DESC').all(docVersionId) as PipelineRunRecord[];
+    },
+    getById(id: string): PipelineRunRecord | null {
+      const row = db.prepare('SELECT id, document_version_id as documentVersionId, skill_version_id as skillVersionId, model_id as modelId, provider, status, input_payload as inputPayload, output_payload as outputPayload, tokens_prompt as tokensPrompt, tokens_completion as tokensCompletion, latency_ms as latencyMs, error_message as errorMessage, created_at as createdAt FROM pipeline_runs WHERE id = ?').get(id) as PipelineRunRecord | undefined;
+      return row || null;
+    },
+    upsert(run: PipelineRunRecord): void {
+      const stmt = db.prepare(`
+        INSERT INTO pipeline_runs (id, document_version_id, skill_version_id, model_id, provider, status, input_payload, output_payload, tokens_prompt, tokens_completion, latency_ms, error_message, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          status = excluded.status,
+          output_payload = excluded.output_payload,
+          tokens_prompt = excluded.tokens_prompt,
+          tokens_completion = excluded.tokens_completion,
+          latency_ms = excluded.latency_ms,
+          error_message = excluded.error_message
+      `);
+      stmt.run(run.id, run.documentVersionId, run.skillVersionId, run.modelId, run.provider, run.status, run.inputPayload, run.outputPayload, run.tokensPrompt, run.tokensCompletion, run.latencyMs, run.errorMessage, run.createdAt);
+    }
+  },
+
+  reviewDecisions: {
+    getByTarget(targetType: string, targetId: string): ReviewDecisionRecord[] {
+      return db.prepare('SELECT id, target_type as targetType, target_id as targetId, decision, reviewer, comment, created_at as createdAt FROM review_decisions WHERE target_type = ? AND target_id = ? ORDER BY created_at DESC').all(targetType, targetId) as ReviewDecisionRecord[];
+    },
+    create(decision: ReviewDecisionRecord): void {
+      db.prepare(`
+        INSERT OR REPLACE INTO review_decisions (id, target_type, target_id, decision, reviewer, comment, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(decision.id, decision.targetType, decision.targetId, decision.decision, decision.reviewer, decision.comment, decision.createdAt);
+    }
+  },
+
+  documentRelationships: {
+    getByDocument(docId: string): DocumentRelationshipRecord[] {
+      return db.prepare('SELECT id, source_doc_id as sourceDocId, target_doc_id as targetDocId, relationship_type as relationshipType, confidence_score as confidenceScore, created_at as createdAt FROM document_relationships WHERE source_doc_id = ? OR target_doc_id = ?').all(docId, docId) as DocumentRelationshipRecord[];
+    },
+    upsert(rel: DocumentRelationshipRecord): void {
+      db.prepare(`
+        INSERT INTO document_relationships (id, source_doc_id, target_doc_id, relationship_type, confidence_score, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          relationship_type = excluded.relationship_type,
+          confidence_score = excluded.confidence_score
+      `).run(rel.id, rel.sourceDocId, rel.targetDocId, rel.relationshipType, rel.confidenceScore, rel.createdAt);
     }
   },
 

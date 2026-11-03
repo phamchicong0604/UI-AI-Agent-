@@ -20,6 +20,82 @@ export interface Project {
   updatedAt?: string;
 }
 
+export interface StoredFileRecord {
+  id: string;
+  storageKey: string;
+  originalName: string;
+  mimeType: string;
+  sizeBytes: number;
+  sha256: string;
+  createdAt: string;
+}
+
+export interface DocumentVersionRecord {
+  id: string;
+  documentId: string;
+  versionNo: string;
+  fileId: string | null;
+  extractedContent: string | null;
+  status: StatusLifecycle;
+  changeSummary: string | null;
+  createdBy: string;
+  createdAt: string;
+}
+
+export interface SkillRecord {
+  id: string;
+  name: string;
+  description: string | null;
+  createdAt: string;
+}
+
+export interface SkillVersionRecord {
+  id: string;
+  skillId: string;
+  version: string;
+  promptTemplate: string;
+  promptHash: string;
+  inputSchema: string;
+  outputSchema: string;
+  modelRecommended: string | null;
+  createdAt: string;
+}
+
+export interface PipelineRunRecord {
+  id: string;
+  documentVersionId: string;
+  skillVersionId: string;
+  modelId: string;
+  provider: string;
+  status: 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED';
+  inputPayload: string | null;
+  outputPayload: string | null;
+  tokensPrompt: number;
+  tokensCompletion: number;
+  latencyMs: number;
+  errorMessage: string | null;
+  createdAt: string;
+}
+
+export interface ReviewDecisionRecord {
+  id: string;
+  targetType: 'document_version' | 'knowledge_unit' | 'conflict';
+  targetId: string;
+  decision: 'Approve' | 'Reject' | 'Request_Changes';
+  reviewer: string;
+  comment: string | null;
+  createdAt: string;
+}
+
+export interface DocumentRelationshipRecord {
+  id: string;
+  sourceDocId: string;
+  targetDocId: string;
+  relationshipType: 'duplicate_of' | 'version_of' | 'references' | 'supersedes';
+  confidenceScore: number;
+  createdAt: string;
+}
+
 export interface DocumentVersion {
   version: string;
   updatedAt: string;

@@ -1,8 +1,10 @@
 import { Router, Request, Response } from 'express';
 import multer from 'multer';
 import AdmZip from 'adm-zip';
+import path from 'path';
 import { sendSuccess, sendError } from '../../common/response.js';
 import { computeSha256 } from '../../common/crypto.js';
+import { defaultFileStore } from '../../common/fileStore.js';
 import { DocumentCategory, DocumentItem } from '../../common/types.js';
 import { dbRepository } from '../../database/db.js';
 
@@ -122,6 +124,40 @@ documentsRouter.get('/:id', (req: Request, res: Response) => {
 });
 
 /**
+ * GET /api/v1/documents/:id/file
+ * Download/retrieve byte-for-byte original stored file (E1-T3)
+ */
+documentsRouter.get('/:id/file', async (req: Request, res: Response) => {
+  const doc = dbRepository.documents.getById(req.params.id);
+  if (!doc) return sendError(res, 'Document not found', 404);
+
+  const versions = dbRepository.documentVersions.getByDocumentId(doc.id);
+  const latestVersion = versions[versions.length - 1];
+  
+  if (latestVersion && latestVersion.fileId) {
+    const stored = dbRepository.storedFiles.getById(latestVersion.fileId);
+    if (stored) {
+      try {
+        const buffer = await defaultFileStore.get(stored.storageKey);
+        res.setHeader('Content-Type', stored.mimeType || 'text/markdown; charset=utf-8');
+        res.setHeader('Content-Disposition', `attachment; filename="${stored.originalName}"`);
+        res.setHeader('X-Checksum-SHA256', stored.sha256);
+        return res.send(buffer);
+      } catch {}
+    }
+  }
+
+  // Fallback if raw stored file missing
+  if (doc.contentMarkdown) {
+    res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${doc.id}.md"`);
+    return res.send(doc.contentMarkdown);
+  }
+
+  return sendError(res, 'Stored file not available for this document', 404);
+});
+
+/**
  * POST /api/v1/documents
  * Manual creation of a single document
  */
@@ -173,7 +209,7 @@ documentsRouter.post('/', (req: Request, res: Response) => {
  * POST /api/v1/documents/upload
  * Bulk / single document upload supporting .md, .zip, .txt, .json, etc.
  */
-documentsRouter.post('/upload', upload.array('files'), (req: Request, res: Response) => {
+documentsRouter.post('/upload', upload.array('files'), async (req: Request, res: Response) => {
   try {
     const files = req.files as Express.Multer.File[] | undefined;
     if (!files || files.length === 0) {
@@ -214,7 +250,36 @@ documentsRouter.post('/upload', upload.array('files'), (req: Request, res: Respo
           const detectedCat = detectCategory(entryName, categoryOverride);
           const { title, description } = parseMarkdownContent(entry.name || entryName, rawText);
           const docId = generateDocId();
-          const checksum = `sha256:${computeSha256(rawText)}`;
+          const buffer = Buffer.from(rawText, 'utf-8');
+          const fileSha256 = `sha256:${computeSha256(buffer)}`;
+
+          // 1. Store original file in FileStore (E1-T3)
+          const fileId = `FILE-${fileSha256.slice(7, 17)}`;
+          const storageKey = `projects/${projectId}/${docId}/${path.basename(entryName || 'extracted.md')}`;
+          await defaultFileStore.put(entryName || `${docId}.md`, buffer, storageKey);
+
+          dbRepository.storedFiles.upsert({
+            id: fileId,
+            storageKey,
+            originalName: entry.name || entryName,
+            mimeType: entryLower.endsWith('.md') ? 'text/markdown' : 'text/plain',
+            sizeBytes: buffer.length,
+            sha256: fileSha256,
+            createdAt: timestamp
+          });
+
+          // 2. Insert document_version (E1-T3)
+          dbRepository.documentVersions.upsert({
+            id: `${docId}-v1.0`,
+            documentId: docId,
+            versionNo: 'v1.0',
+            fileId,
+            extractedContent: rawText,
+            status: 'Draft',
+            changeSummary: `Trích xuất từ file nén ${originalName} (${entryName})`,
+            createdBy: author,
+            createdAt: timestamp
+          });
 
           const doc: DocumentItem = {
             id: docId,
@@ -237,7 +302,7 @@ documentsRouter.post('/upload', upload.array('files'), (req: Request, res: Respo
                 status: 'Draft',
                 changeSummary: `Trích xuất từ file nén ${originalName} (${entryName})`,
                 fileSize: formatBytes(entry.header.size),
-                checksum
+                checksum: fileSha256
               }
             ]
           };
@@ -252,7 +317,35 @@ documentsRouter.post('/upload', upload.array('files'), (req: Request, res: Respo
         const detectedCat = detectCategory(originalName, categoryOverride);
         const { title, description } = parseMarkdownContent(originalName, rawText);
         const docId = generateDocId();
-        const checksum = `sha256:${computeSha256(rawText)}`;
+        const fileSha256 = `sha256:${computeSha256(file.buffer)}`;
+
+        // 1. Store original file in FileStore (E1-T3)
+        const fileId = `FILE-${fileSha256.slice(7, 17)}`;
+        const storageKey = `projects/${projectId}/${docId}/${originalName}`;
+        await defaultFileStore.put(originalName, file.buffer, storageKey);
+
+        dbRepository.storedFiles.upsert({
+          id: fileId,
+          storageKey,
+          originalName,
+          mimeType: lowerName.endsWith('.md') ? 'text/markdown' : 'text/plain',
+          sizeBytes: file.buffer.length,
+          sha256: fileSha256,
+          createdAt: timestamp
+        });
+
+        // 2. Insert document_version (E1-T3)
+        dbRepository.documentVersions.upsert({
+          id: `${docId}-v1.0`,
+          documentId: docId,
+          versionNo: 'v1.0',
+          fileId,
+          extractedContent: rawText,
+          status: 'Draft',
+          changeSummary: `Tải lên trực tiếp từ ${originalName}`,
+          createdBy: author,
+          createdAt: timestamp
+        });
 
         const doc: DocumentItem = {
           id: docId,
@@ -275,7 +368,7 @@ documentsRouter.post('/upload', upload.array('files'), (req: Request, res: Respo
               status: 'Draft',
               changeSummary: `Tải lên trực tiếp từ ${originalName}`,
               fileSize: formatBytes(file.size),
-              checksum
+              checksum: fileSha256
             }
           ]
         };
