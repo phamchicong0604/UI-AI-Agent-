@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useApp } from '../../context/AppContext';
 import { useI18n } from '../../common/i18n/I18nContext';
 import {
@@ -25,9 +25,12 @@ import {
   Activity,
   Zap,
   Clock,
-  Sliders
+  Sliders,
+  ChevronDown,
+  Search
 } from 'lucide-react';
 import { Card, Badge, Button } from '../../common/components';
+import { DEFAULT_PROVIDER_MODELS } from '../../common/constants/modelRegistry';
 import {
   getAiConnection,
   saveAiConnection,
@@ -75,12 +78,15 @@ export const SettingsView: React.FC = () => {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   // Available models & detected CLIs
-  const [availableModels, setAvailableModels] = useState<Record<string, ModelOption[]>>({});
+  const [availableModels, setAvailableModels] = useState<Record<string, ModelOption[]>>(DEFAULT_PROVIDER_MODELS);
   const [detectedClis, setDetectedClis] = useState<CliDetectionInfo[]>([]);
   const [isDetectingClis, setIsDetectingClis] = useState<boolean>(false);
   const [isFetchingModels, setIsFetchingModels] = useState<boolean>(false);
   const [modelsSyncStatus, setModelsSyncStatus] = useState<string | null>(null);
   const [modelSearch, setModelSearch] = useState<string>('');
+  const [isModelDropdownOpen, setIsModelDropdownOpen] = useState<boolean>(false);
+  const [modelCategoryFilter, setModelCategoryFilter] = useState<'all' | 'recommended' | 'reasoning' | 'fast'>('all');
+  const modelDropdownRef = useRef<HTMLDivElement>(null);
 
   // Quota & Rate limits
   const [quotaInfo, setQuotaInfo] = useState<AiQuotaInfo | null>(null);
@@ -103,6 +109,14 @@ export const SettingsView: React.FC = () => {
     loadAiConnection();
     loadModels();
     handleScanClis();
+
+    const handleClickOutside = (event: MouseEvent) => {
+      if (modelDropdownRef.current && !modelDropdownRef.current.contains(event.target as Node)) {
+        setIsModelDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
   const loadAiConnection = async () => {
@@ -163,8 +177,11 @@ export const SettingsView: React.FC = () => {
     try {
       const res = await getAiModels();
       const models = res?.data !== undefined ? res.data : res;
-      if (models && typeof models === 'object') {
-        setAvailableModels(models);
+      if (models && typeof models === 'object' && Object.keys(models).length > 0) {
+        setAvailableModels(prev => ({
+          ...prev,
+          ...models
+        }));
       }
     } catch (err: any) {
       console.warn('Could not load models registry:', err.message);
@@ -190,10 +207,13 @@ export const SettingsView: React.FC = () => {
           [targetProvider]: data.models
         }));
         setModelsSyncStatus(data.message || 'Đã đồng bộ model thực tế thành công');
-        const recommended = data.models.find((m: any) => m.recommended) || data.models[0];
-        if (recommended && !data.models.some((m: any) => m.id === model)) {
-          setModel(recommended.id);
-        }
+        setModel(prevModel => {
+          if (prevModel && data.models.some((m: any) => m.id === prevModel)) {
+            return prevModel;
+          }
+          const recommended = data.models.find((m: any) => m.recommended) || data.models[0];
+          return recommended ? recommended.id : prevModel;
+        });
       }
     } catch (err: any) {
       setModelsSyncStatus(`Không thể quét trực tiếp: ${err.message}`);
@@ -241,10 +261,15 @@ export const SettingsView: React.FC = () => {
 
   const handleProviderChange = (newProvider: AiProviderId) => {
     setProvider(newProvider);
-    const models = availableModels[newProvider] || [];
+    const models = availableModels[newProvider] || DEFAULT_PROVIDER_MODELS[newProvider] || [];
     const recommended = models.find(m => m.recommended) || models[0];
-    const newModel = recommended ? recommended.id : (newProvider === 'anthropic' ? 'claude-3-7-sonnet' : newProvider === 'openai' ? 'gpt-4o' : 'gemini-1.5-pro');
+    const newModel = recommended ? recommended.id : (models[0]?.id || 'gemini-4-argon-medium');
     setModel(newModel);
+
+    // Sync effort level if model has a reasoning effort suffix
+    if (newModel.endsWith('-low')) setEffortLevel('low');
+    else if (newModel.endsWith('-medium')) setEffortLevel('medium');
+    else if (newModel.endsWith('-high')) setEffortLevel('high');
 
     // Auto-map matching CLI for this provider
     let newCli = cliBinary;
@@ -897,10 +922,19 @@ export const SettingsView: React.FC = () => {
 
                 {/* FULL MODEL SELECT DROPDOWN & SEARCH PICKER */}
                 {(() => {
-                  const providerModels = availableModels[provider] || [];
-                  const filteredModels = modelSearch
+                  const providerModels = availableModels[provider] || DEFAULT_PROVIDER_MODELS[provider] || [];
+                  let filteredModels = modelSearch
                     ? providerModels.filter(m => m.id.toLowerCase().includes(modelSearch.toLowerCase()) || m.name.toLowerCase().includes(modelSearch.toLowerCase()))
                     : providerModels;
+
+                  if (modelCategoryFilter === 'recommended') {
+                    filteredModels = filteredModels.filter(m => m.recommended);
+                  } else if (modelCategoryFilter === 'reasoning') {
+                    filteredModels = filteredModels.filter(m => m.category === 'reasoning');
+                  } else if (modelCategoryFilter === 'fast') {
+                    filteredModels = filteredModels.filter(m => m.category === 'fast');
+                  }
+
                   const selectedModelMeta = providerModels.find(m => m.id === model) || {
                     id: model,
                     name: model,
@@ -926,52 +960,178 @@ export const SettingsView: React.FC = () => {
                             </span>
                           </label>
 
-                          {/* Quick Search Filter */}
-                          <div className="relative w-full sm:w-72">
-                            <input
-                              type="text"
-                              value={modelSearch}
-                              onChange={(e) => setModelSearch(e.target.value)}
-                              placeholder={t('aiModelSearchPlaceholder')}
-                              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-purple-500"
-                            />
-                            {modelSearch && (
-                              <button
-                                type="button"
-                                onClick={() => setModelSearch('')}
-                                className="absolute right-2.5 top-1.5 text-slate-500 hover:text-slate-300 text-xs"
-                              >
-                                ✕
-                              </button>
-                            )}
-                          </div>
+                          <span className="text-[11px] text-slate-400">
+                            Bấm vào khung bên dưới để mở toàn bộ danh sách & chọn model
+                          </span>
                         </div>
 
-                        {/* Full Native Select Element */}
-                        <select
-                          value={model}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            setModel(val);
-                            handleCheckQuota({ model: val });
-                          }}
-                          className="w-full bg-slate-950 border border-purple-500/50 rounded-xl px-4 py-3 text-xs text-white font-medium focus:outline-none focus:ring-2 focus:ring-purple-500/40 cursor-pointer shadow-inner"
-                        >
-                          <optgroup label="⭐ Mô hình Khuyên dùng (Recommended)">
-                            {providerModels.filter(m => m.recommended).map((m) => (
-                              <option key={`rec-${m.id}`} value={m.id}>
-                                ⭐ {m.name} ({m.id}) • Ngữ cảnh: {m.contextWindow} • {m.rateLimits?.rpm || 500} RPM
-                              </option>
-                            ))}
-                          </optgroup>
-                          <optgroup label={`📋 Toàn bộ danh sách (${filteredModels.length} models)`}>
-                            {filteredModels.map((m) => (
-                              <option key={`all-${m.id}`} value={m.id}>
-                                {m.isLive ? '🟢' : '⚪'} {m.name} ({m.id}) — Ngữ cảnh: {m.contextWindow || '128K'} • {m.rateLimits?.rpm || 500} RPM
-                              </option>
-                            ))}
-                          </optgroup>
-                        </select>
+                        {/* Interactive Custom Model Selector */}
+                        <div className="relative" ref={modelDropdownRef}>
+                          {/* Main Trigger Button */}
+                          <button
+                            type="button"
+                            onClick={() => setIsModelDropdownOpen(!isModelDropdownOpen)}
+                            className="w-full bg-slate-950 border border-purple-500/50 hover:border-purple-400 rounded-xl px-4 py-3 text-left transition-all flex items-center justify-between gap-3 shadow-inner group"
+                          >
+                            <div className="flex items-center gap-3 min-w-0">
+                              <div className="w-8 h-8 rounded-lg bg-purple-900/40 border border-purple-600/40 flex items-center justify-center shrink-0">
+                                <Cpu className="w-4 h-4 text-purple-400" />
+                              </div>
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-bold text-white text-xs truncate">
+                                    {selectedModelMeta?.name || model}
+                                  </span>
+                                  {selectedModelMeta?.recommended && (
+                                    <span className="px-1.5 py-0.2 rounded text-[9px] bg-purple-500/20 text-purple-300 border border-purple-500/30 font-semibold">
+                                      Khuyên dùng
+                                    </span>
+                                  )}
+                                  {selectedModelMeta?.isLive && (
+                                    <span className="px-1.5 py-0.2 rounded text-[9px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-mono flex items-center gap-1">
+                                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                                      Live
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="flex items-center gap-2 text-[10px] text-slate-400 font-mono mt-0.5">
+                                  <span>ID: {selectedModelMeta?.id || model}</span>
+                                  <span>•</span>
+                                  <span>Context: {selectedModelMeta?.contextWindow || '128K'}</span>
+                                  <span>•</span>
+                                  <span className="text-cyan-400">{selectedModelMeta?.rateLimits?.rpm || 500} RPM</span>
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-2 shrink-0">
+                              <span className="text-[11px] text-purple-300 font-medium hidden sm:inline">Thay đổi</span>
+                              <ChevronDown className={`w-4 h-4 text-purple-400 transition-transform duration-200 ${isModelDropdownOpen ? 'rotate-180' : ''}`} />
+                            </div>
+                          </button>
+
+                          {/* Floating Dropdown Menu */}
+                          {isModelDropdownOpen && (
+                            <div className="absolute left-0 right-0 top-full mt-1.5 z-50 bg-slate-950 border border-purple-500/50 rounded-xl shadow-2xl overflow-hidden backdrop-blur-2xl animate-in fade-in slide-in-from-top-2 duration-150">
+                              {/* Search Header */}
+                              <div className="p-3 border-b border-slate-800 bg-slate-900/90 space-y-2">
+                                <div className="relative">
+                                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
+                                  <input
+                                    type="text"
+                                    value={modelSearch}
+                                    onChange={(e) => setModelSearch(e.target.value)}
+                                    placeholder={t('aiModelSearchPlaceholder')}
+                                    autoFocus
+                                    className="w-full bg-slate-950 border border-slate-700 rounded-lg pl-8 pr-8 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-purple-500 font-mono"
+                                  />
+                                  {modelSearch && (
+                                    <button
+                                      type="button"
+                                      onClick={() => setModelSearch('')}
+                                      className="absolute right-2.5 top-1.5 text-slate-400 hover:text-slate-200 text-xs px-1"
+                                    >
+                                      ✕
+                                    </button>
+                                  )}
+                                </div>
+
+                                {/* Category Filter Tabs */}
+                                <div className="flex items-center gap-1.5 text-[10px] overflow-x-auto pb-0.5">
+                                  {[
+                                    { id: 'all', label: `Tất cả (${providerModels.length})` },
+                                    { id: 'recommended', label: `⭐ Khuyên dùng (${providerModels.filter(m => m.recommended).length})` },
+                                    { id: 'reasoning', label: `🧠 Suy luận (${providerModels.filter(m => m.category === 'reasoning').length})` },
+                                    { id: 'fast', label: `⚡ Tốc độ cao (${providerModels.filter(m => m.category === 'fast').length})` }
+                                  ].map(tab => (
+                                    <button
+                                      key={tab.id}
+                                      type="button"
+                                      onClick={() => setModelCategoryFilter(tab.id as any)}
+                                      className={`px-2 py-0.5 rounded-full transition-all whitespace-nowrap ${
+                                        modelCategoryFilter === tab.id
+                                          ? 'bg-purple-600 text-white font-semibold'
+                                          : 'bg-slate-900 text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                                      }`}
+                                    >
+                                      {tab.label}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+
+                              {/* Models List */}
+                              <div className="max-h-80 overflow-y-auto divide-y divide-slate-800/60 p-1.5 space-y-1">
+                                {filteredModels.length === 0 ? (
+                                  <div className="p-4 text-center text-xs text-slate-400">
+                                    Không tìm thấy model nào phù hợp từ khóa "{modelSearch}"
+                                  </div>
+                                ) : (
+                                  filteredModels.map((m) => {
+                                    const isSelected = model === m.id;
+                                    return (
+                                      <div
+                                        key={m.id}
+                                        onClick={() => {
+                                          setModel(m.id);
+                                          if (m.id.endsWith('-low')) setEffortLevel('low');
+                                          else if (m.id.endsWith('-medium')) setEffortLevel('medium');
+                                          else if (m.id.endsWith('-high')) setEffortLevel('high');
+                                          setIsModelDropdownOpen(false);
+                                          handleCheckQuota({ model: m.id });
+                                        }}
+                                        className={`p-2.5 rounded-lg cursor-pointer transition-all flex items-center justify-between gap-3 ${
+                                          isSelected
+                                            ? 'bg-purple-950/70 text-white border border-purple-500/60 shadow-sm'
+                                            : 'hover:bg-slate-900/90 text-slate-300'
+                                        }`}
+                                      >
+                                        <div className="min-w-0 space-y-0.5">
+                                          <div className="flex items-center gap-2">
+                                            <span className="font-bold text-xs text-white">
+                                              {m.name}
+                                            </span>
+                                            <code className="text-[10px] font-mono text-purple-300 px-1.5 py-0.2 rounded bg-purple-950/60 border border-purple-800/40">
+                                              {m.id}
+                                            </code>
+                                            {m.recommended && (
+                                              <span className="px-1.5 py-0.2 rounded text-[9px] bg-purple-500/20 text-purple-300 font-semibold">
+                                                Khuyên dùng
+                                              </span>
+                                            )}
+                                            {m.isLive && (
+                                              <span className="px-1.5 py-0.2 rounded text-[9px] bg-emerald-500/20 text-emerald-400 font-mono">
+                                                Live
+                                              </span>
+                                            )}
+                                          </div>
+                                          <p className="text-[10px] text-slate-400 line-clamp-1">
+                                            {m.description}
+                                          </p>
+                                          <div className="flex items-center gap-3 text-[9px] text-slate-400 font-mono">
+                                            <span>Context: <strong className="text-slate-300">{m.contextWindow}</strong></span>
+                                            <span>Max Output: <strong className="text-slate-300">{m.maxOutput || '32,768'}</strong></span>
+                                            <span>Tốc độ: <strong className="text-cyan-400">{m.rateLimits?.rpm || 500} RPM</strong></span>
+                                          </div>
+                                        </div>
+
+                                        <div className="shrink-0">
+                                          {isSelected ? (
+                                            <div className="w-5 h-5 rounded-full bg-purple-600 flex items-center justify-center">
+                                              <Check className="w-3 h-3 text-white" />
+                                            </div>
+                                          ) : (
+                                            <div className="w-5 h-5 rounded-full border border-slate-700 hover:border-slate-500" />
+                                          )}
+                                        </div>
+                                      </div>
+                                    );
+                                  })
+                                )}
+                              </div>
+                            </div>
+                          )}
+                        </div>
 
                         {/* Selected Model Detailed Inspector */}
                         {selectedModelMeta && (
@@ -1031,13 +1191,16 @@ export const SettingsView: React.FC = () => {
                           Chọn nhanh 1-chạm hoặc bấm thẻ bên dưới:
                         </div>
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                          {filteredModels.slice(0, 6).map((m) => {
+                          {providerModels.slice(0, 6).map((m) => {
                             const isSelected = model === m.id;
                             return (
                               <div
                                 key={m.id}
                                 onClick={() => {
                                   setModel(m.id);
+                                  if (m.id.endsWith('-low')) setEffortLevel('low');
+                                  else if (m.id.endsWith('-medium')) setEffortLevel('medium');
+                                  else if (m.id.endsWith('-high')) setEffortLevel('high');
                                   handleCheckQuota({ model: m.id });
                                 }}
                                 className={`p-3.5 rounded-xl border cursor-pointer transition-all flex flex-col justify-between ${
