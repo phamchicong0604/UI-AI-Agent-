@@ -113,33 +113,59 @@ export class SemanticValidator {
 
     const conflicts: DetectedConflict[] = [];
 
-    // Also leverage FTS5 if candidate subject is available
-    const searchSubject = candidate.subject.replace(/[^\w\s]/g, ' ').trim();
+    const STOP_WORDS = new Set([
+      'hệ', 'thống', 'của', 'và', 'các', 'cho', 'trong', 'với', 'khi', 'được', 'là',
+      'tại', 'về', 'này', 'đó', 'thì', 'theo', 'như', 'những', 'một', 'hai', 'ba',
+      'the', 'a', 'an', 'of', 'in', 'on', 'to', 'for', 'with', 'by', 'at', 'and', 'or', 'is', 'are'
+    ]);
+
+    const extractSignificantTokens = (text: string): string[] => {
+      return text
+        .toLowerCase()
+        .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+        .split(/\s+/)
+        .filter(t => t.length >= 3 && !STOP_WORDS.has(t));
+    };
+
+    // Subject matching tokens
+    const searchSubject = candidate.subject.trim();
+    const candidateSubjectNorm = candidate.subject.toLowerCase().trim();
+    const candidateContentNorm = candidate.content.toLowerCase().trim();
+    const candidateSigTokens = extractSignificantTokens(candidateSubjectNorm);
+
+    // Also leverage FTS5 with AND of significant tokens if >= 2 available (BUG-015, BUG-024)
     let ftsMatches: Array<{ unit_id: string; subject: string; content: string }> = [];
-    if (searchSubject) {
+    if (candidateSigTokens.length >= 2) {
       try {
+        const ftsQuery = candidateSigTokens.slice(0, 4).map(t => `"${t.replace(/"/g, '""')}"`).join(' AND ');
         ftsMatches = db.prepare(`
           SELECT unit_id, subject, content
           FROM approved_knowledge_fts
           WHERE project_id = ? AND approved_knowledge_fts MATCH ?
-        `).all(candidate.project_id, `"${searchSubject}"`) as Array<{ unit_id: string; subject: string; content: string }>;
+        `).all(candidate.project_id, ftsQuery) as Array<{ unit_id: string; subject: string; content: string }>;
       } catch {
         // Fallback gracefully on query token error
       }
     }
 
-    const candidateSubjectNorm = candidate.subject.toLowerCase().trim();
-    const candidateContentNorm = candidate.content.toLowerCase().trim();
-
     for (const approved of approvedUnits) {
       const approvedSubjectNorm = approved.subject.toLowerCase().trim();
       const approvedContentNorm = approved.content.toLowerCase().trim();
+      const approvedSigTokens = extractSignificantTokens(approvedSubjectNorm);
 
-      const isSubjectMatch =
-        candidateSubjectNorm === approvedSubjectNorm ||
-        candidateSubjectNorm.includes(approvedSubjectNorm) ||
-        approvedSubjectNorm.includes(candidateSubjectNorm) ||
-        ftsMatches.some(m => m.unit_id === approved.id);
+      let isSubjectMatch = false;
+      if (candidateSubjectNorm === approvedSubjectNorm) {
+        isSubjectMatch = true;
+      } else if (ftsMatches.some(m => m.unit_id === approved.id)) {
+        isSubjectMatch = true;
+      } else if (candidateSigTokens.length > 0 && approvedSigTokens.length > 0) {
+        const commonTokens = candidateSigTokens.filter(t => approvedSigTokens.includes(t));
+        if (candidateSigTokens.length === 1 && approvedSigTokens.length === 1) {
+          isSubjectMatch = candidateSigTokens[0] === approvedSigTokens[0] && candidateSigTokens[0].length >= 4;
+        } else {
+          isSubjectMatch = commonTokens.length >= 2;
+        }
+      }
 
       if (!isSubjectMatch) {
         continue;
@@ -159,35 +185,65 @@ export class SemanticValidator {
         continue;
       }
 
-      // Check Numerical / Value Contradiction (e.g. 15m vs 30m, 50MB vs 100MB, 10000 vs 5000)
-      const candidateNumbers: string[] = candidateContentNorm.match(/\d+[\w%]+/g) || [];
-      const approvedNumbers: string[] = approvedContentNorm.match(/\d+[\w%]+/g) || [];
+      // Check Numerical / Value Contradiction with STRICT UNIT MATCHING (BUG-015 Regression Fix)
+      // Never compare bare unitless numbers like "bước 1" vs "bước 2". Only compare matching physical/logical units!
+      interface UnitValue {
+        raw: string;
+        value: number;
+        unit: string;
+      }
+
+      const extractNumbersWithUnits = (text: string): UnitValue[] => {
+        const regex = /\b(\d+(?:\.\d+)?)\s*(phút|giây|giờ|ngày|tháng|năm|lần|ms|s|m|h|mb|gb|kb|tb|ccu|user|users|người|%|vnd|usd|px)\b/gi;
+        const results: UnitValue[] = [];
+        let match: RegExpExecArray | null;
+        while ((match = regex.exec(text)) !== null) {
+          const val = parseFloat(match[1]);
+          let u = match[2].toLowerCase();
+          if (u === 's') u = 'giây';
+          else if (u === 'm') u = 'phút';
+          else if (u === 'h') u = 'giờ';
+          else if (u === 'users' || u === 'user') u = 'người';
+          results.push({ raw: match[0].trim(), value: val, unit: u });
+        }
+        return results;
+      };
+
+      const candidateUnits = extractNumbersWithUnits(candidateContentNorm);
+      const approvedUnitsList = extractNumbersWithUnits(approvedContentNorm);
 
       let hasNumberConflict = false;
-      if (candidateNumbers.length > 0 && approvedNumbers.length > 0) {
-        const hasDifferingNumber = candidateNumbers.some(cn => !approvedNumbers.includes(cn));
-        if (hasDifferingNumber) {
-          hasNumberConflict = true;
-          conflicts.push({
-            id: randomUUID(),
-            projectId: candidate.project_id,
-            unitAId: candidate.id,
-            unitBId: approved.id,
-            conflictType: 'Contradiction',
-            severity: 'Critical',
-            description: `Contradiction detected on subject "${candidate.subject}": new value [${candidateNumbers.join(', ')}] conflicts with approved specification [${approvedNumbers.join(', ')}].`
-          });
+      if (candidateUnits.length > 0 && approvedUnitsList.length > 0) {
+        for (const cu of candidateUnits) {
+          const matchingApproved = approvedUnitsList.filter(au => au.unit === cu.unit);
+          for (const au of matchingApproved) {
+            if (au.value !== cu.value) {
+              hasNumberConflict = true;
+              conflicts.push({
+                id: randomUUID(),
+                projectId: candidate.project_id,
+                unitAId: candidate.id,
+                unitBId: approved.id,
+                conflictType: 'Contradiction',
+                severity: 'Critical',
+                description: `Contradiction detected on subject "${candidate.subject}": new value [${cu.raw}] conflicts with approved specification [${au.raw}].`
+              });
+              break;
+            }
+          }
+          if (hasNumberConflict) break;
         }
       }
 
-      // Check Affirmative vs Negative Contradiction (e.g. required vs optional / không bắt buộc)
-      const affirmativeTerms = ['bắt buộc', 'required', 'mandatory', 'phải'];
-      const negativeTerms = ['không bắt buộc', 'optional', 'tùy chọn', 'không yêu cầu'];
+      // Check Affirmative vs Negative Contradiction (BUG-015: Only strict obligation terms, never common words like "yêu cầu" or "phải")
+      const negativeTerms = ['không bắt buộc', 'không yêu cầu', 'không cần', 'chưa bắt buộc', 'optional', 'tùy chọn', 'not required'];
+      const affirmativeTerms = ['bắt buộc', 'bắt buộc phải', 'mandatory', 'strictly required'];
 
-      const candHasAffirmative = affirmativeTerms.some(t => candidateContentNorm.includes(t));
       const candHasNegative = negativeTerms.some(t => candidateContentNorm.includes(t));
-      const apprHasAffirmative = affirmativeTerms.some(t => approvedContentNorm.includes(t));
+      const candHasAffirmative = !candHasNegative && affirmativeTerms.some(t => candidateContentNorm.includes(t));
+
       const apprHasNegative = negativeTerms.some(t => approvedContentNorm.includes(t));
+      const apprHasAffirmative = !apprHasNegative && affirmativeTerms.some(t => approvedContentNorm.includes(t));
 
       if (!hasNumberConflict && ((candHasAffirmative && apprHasNegative) || (candHasNegative && apprHasAffirmative))) {
         conflicts.push({

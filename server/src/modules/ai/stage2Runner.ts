@@ -1,10 +1,10 @@
 import { PipelineRunRecord } from '../../common/types.js';
+import { db } from '../../database/db.js';
 import { defaultSkillRegistry } from './skillRegistry.js';
 import { defaultDataPolicyService } from './dataPolicyService.js';
 import { 
   Stage2CombinedOutputSchema, 
-  Stage2CombinedOutput, 
-  canAutoApproveUnit 
+  Stage2CombinedOutput 
 } from './skills/schemas.js';
 
 export interface Stage2RunOptions {
@@ -31,13 +31,27 @@ Hãy phân tích tài liệu sau đây và trả về kết quả dưới địn
    * Execute Stage 2 combined Understanding + Extraction + Classification with caching, policy checks & schema validation
    */
   public async execute(options: Stage2RunOptions): Promise<{ output: Stage2CombinedOutput; fromCache: boolean; runId: string; securityFlags?: string[] }> {
-    const projectId = options.projectId || 'PRJ-01';
+    let projectId = options.projectId;
+    if (!projectId && options.documentVersionId) {
+      try {
+        const row = db.prepare(`
+          SELECT d.project_id
+          FROM document_versions dv
+          JOIN documents d ON d.id = dv.document_id
+          WHERE dv.id = ?
+        `).get(options.documentVersionId) as { project_id: string } | undefined;
+        if (row?.project_id) {
+          projectId = row.project_id;
+        }
+      } catch {}
+    }
+
     let modelId = options.modelId || 'gemini-1.5-flash';
     let provider = options.provider || 'google';
 
-    // 1. Data Policy & Offline Enforcement (E5-T2)
+    // 1. Data Policy & Offline Enforcement (E5-T2, fail-closed)
     const projectPolicy = defaultDataPolicyService.getProjectPolicy(projectId);
-    const isOfflineOnly = projectPolicy === 'OFFLINE_ONLY';
+    const isOfflineOnly = projectPolicy !== 'ALLOW_EXTERNAL';
     if (isOfflineOnly) {
       provider = 'offline-grounded-engine';
       modelId = 'grounded-local-parser';
@@ -79,11 +93,16 @@ Hãy phân tích tài liệu sau đây và trả về kết quả dưới địn
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
+        let currentPrompt = fullPrompt;
+        if (attempt > 1 && lastError) {
+          currentPrompt = `${fullPrompt}\n\n[LỖI VALIDATION LẦN TRƯỚC]: ${lastError.message}\nYêu cầu điều chỉnh lại cấu trúc JSON phản hồi cho chuẩn xác theo schema.`;
+        }
+
         if (isOfflineOnly) {
           // Zero external request: use Grounded Engine deterministic parser (E5-T2)
           rawOutputStr = this.generateFallbackResponse(options.documentVersionId, options.documentTitle, redactionResult.text);
         } else if (options.llmCaller) {
-          rawOutputStr = await options.llmCaller(fullPrompt);
+          rawOutputStr = await options.llmCaller(currentPrompt);
         } else {
           // Default deterministic mock response when no caller passed
           rawOutputStr = this.generateFallbackResponse(options.documentVersionId, options.documentTitle, redactionResult.text);
@@ -158,10 +177,42 @@ Hãy phân tích tài liệu sau đây và trả về kết quả dưới địn
   }
 
   /**
-   * Deterministic grounded fallback generator matching Stage 2 Combined Schema
+   * Deterministic grounded fallback generator matching Stage 2 Combined Schema.
+   * BUG-017: Verbatim exact quotes from document text, strictly valid offsets.
    */
   private generateFallbackResponse(versionId: string, title: string, text: string): string {
-    const isRequirement = text.toLowerCase().includes('yêu cầu') || text.toLowerCase().includes('phải') || text.toLowerCase().includes('requirement');
+    const trimmed = text.trim();
+    if (!trimmed) {
+      return JSON.stringify({
+        understanding: {
+          document_intent: `Tài liệu rỗng hoặc chưa có nội dung văn bản: ${title}`,
+          executive_summary: `Không tìm thấy nội dung để phân tích cho tài liệu ${title}`,
+          target_audience: ['Reviewers'],
+          key_domains: ['General']
+        },
+        extraction: {
+          extracted_units: []
+        },
+        classification: {
+          recommended_category: '01_Project_Overview',
+          confidence_score: 0.1,
+          reasoning: 'Tài liệu không có nội dung văn bản'
+        }
+      });
+    }
+
+    // Extract actual sentences or non-empty lines from the document text
+    const sentences = trimmed
+      .split(/(?<=[.!?\n])\s+/)
+      .map(s => s.trim())
+      .filter(s => s.length >= 10);
+
+    const firstSentence = sentences[0] || trimmed.slice(0, Math.min(trimmed.length, 120));
+    const startOffset = Math.max(0, text.indexOf(firstSentence));
+    const endOffset = startOffset >= 0 ? startOffset + firstSentence.length : Math.min(text.length, firstSentence.length);
+    const exactQuote = firstSentence;
+
+    const isRequirement = /(?:yêu cầu|phải|bắt buộc|requirement|shall|must)/i.test(firstSentence);
 
     return JSON.stringify({
       understanding: {
@@ -174,24 +225,24 @@ Hãy phân tích tài liệu sau đây và trả về kết quả dưới địn
         extracted_units: [
           {
             unit_type: isRequirement ? 'Requirement' : 'Definition',
-            subject: 'Người dùng hệ thống',
-            action: 'thực hiện thao tác tra cứu tài liệu và quy chuẩn',
-            condition: 'khi đã đăng nhập vào phiên làm việc hợp lệ',
+            subject: title,
+            action: isRequirement ? 'tuân thủ đặc tả nghiệp vụ' : 'định nghĩa các nội dung cốt lõi',
+            condition: undefined,
             evidence_level: 'Explicit',
             source_anchor: {
               document_version_id: versionId,
               heading_path: ['1. Giới thiệu tổng quan'],
-              char_offset_start: 0,
-              char_offset_end: Math.min(text.length, 120),
-              exact_quote: text.slice(0, Math.min(text.length, 80)) || 'Nội dung trích dẫn'
+              char_offset_start: startOffset,
+              char_offset_end: endOffset,
+              exact_quote: exactQuote
             }
           }
         ]
       },
       classification: {
-        recommended_category: '02_Business_Requirements',
-        confidence_score: 0.92,
-        reasoning: 'Tài liệu chứa các từ khóa đặc tả nghiệp vụ và tiêu chuẩn chấp thuận'
+        recommended_category: isRequirement ? '02_Business_Requirements' : '01_Project_Overview',
+        confidence_score: 0.88,
+        reasoning: 'Trích xuất trực tiếp nguyên văn dựa trên câu thực tế trong văn bản tài liệu'
       }
     });
   }

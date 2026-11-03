@@ -378,5 +378,28 @@ export const en = {
   agentRunCommandPlaceholder: 'Type a CLI command (e.g. status, generate REQ-001, impact DOC-02, verify)...',
   agentExecuteBtn: 'Run Command',
   agentQuickActions: 'Quick Commands:',
-  agentSaveConfigSuccess: 'Agent profile updated successfully!'
+  agentSaveConfigSuccess: 'Agent profile updated successfully!',
+
+  // Review Queue & Knowledge Governance (BUG-034)
+  reviewQueueTitle: 'Knowledge Review Queue & Risk Assessment',
+  reviewQueueSubtitle: 'Review extracted knowledge units and resolve conflicts before advancing to ORGANIZED.',
+  reviewQueueEmpty: 'No documents currently pending review',
+  reviewQueueNeedingReview: 'Queue Needing Review',
+  reviewQueueHighRisk: 'High Risk',
+  reviewQueueCriticalConflicts: 'Critical Conflicts',
+  reviewQueueTotalUnits: 'Total Knowledge Units',
+  reviewQueueBulkApproveExplicit: 'Bulk Approve Explicit',
+  reviewQueueReviewKnowledgeBtn: 'Review Knowledge',
+  reviewQueueConflictsBtn: 'Conflicts',
+  conflictModalTitle: 'Resolve Knowledge Conflict',
+  conflictOptionSupersede: 'Keep new, supersede old (KEEP_NEW_SUPERSEDE_OLD)',
+  conflictOptionReject: 'Preserve old, reject new (REJECT_NEW_PRESERVE_OLD)',
+  conflictOptionCoexist: 'Coexist / Differentiate context (COEXIST / MERGE_SPECIFICATION)',
+  knowledgeModalEvidenceExplicit: 'Explicit',
+  knowledgeModalEvidenceInferred: 'Inferred',
+  knowledgeModalEvidenceAssumed: 'Assumed',
+  knowledgeModalEvidenceConflict: 'Conflict',
+  knowledgeModalApproveBtn: 'Approve',
+  knowledgeModalRejectBtn: 'Reject',
+  knowledgeModalConfirmReject: 'Confirm Rejection'
 };

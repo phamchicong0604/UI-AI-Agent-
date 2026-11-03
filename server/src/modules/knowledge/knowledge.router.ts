@@ -1,7 +1,9 @@
 import { Router, Request, Response } from 'express';
 import { sendSuccess, sendError } from '../../common/response.js';
-import { dbRepository } from '../../database/db.js';
+import { db, dbRepository } from '../../database/db.js';
 import { defaultKnowledgeService } from './knowledgeService.js';
+import { authenticateUser, requireRole } from '../../common/auth.js';
+import { ConflictRecord } from '../../common/types.js';
 
 export const knowledgeRouter = Router();
 
@@ -35,29 +37,40 @@ knowledgeRouter.get('/knowledge-units/:id', (req: Request, res: Response) => {
 
 /**
  * POST /api/v1/knowledge-units/:id/decision
- * Review decision on knowledge unit: Approve (promotes to Requirement/Rule) or Reject (E6-T2, E6-T3)
+ * Review decision on knowledge unit: Approve (promotes to Requirement/Rule) or Reject (E6-T2, E6-T3, BUG-003, BUG-004)
  */
-knowledgeRouter.post('/knowledge-units/:id/decision', async (req: Request, res: Response) => {
-  const { decision, reviewer } = req.body;
-  if (!decision || !['Approve', 'Reject'].includes(decision)) {
-    return sendError(res, 'decision phải là "Approve" hoặc "Reject"', 400);
-  }
-
-  const unit = dbRepository.knowledgeUnits.getById(req.params.id);
-  if (!unit) return sendError(res, 'Knowledge Unit không tồn tại', 404);
-
-  try {
-    if (decision === 'Approve') {
-      const promoteResult = await defaultKnowledgeService.promoteUnitToRequirementOrRule(unit.id, reviewer || 'Reviewer');
-      return sendSuccess(res, promoteResult, 'Đã phê duyệt tri thức và tự động thăng hạng sang Requirement');
-    } else {
-      dbRepository.knowledgeUnits.updateStatus(unit.id, 'Rejected');
-      return sendSuccess(res, { id: unit.id, status: 'Rejected' }, 'Đã từ chối đơn vị tri thức');
+knowledgeRouter.post(
+  '/knowledge-units/:id/decision',
+  authenticateUser,
+  requireRole(['Project Admin', 'Reviewer / Approver', 'PM / Project Lead', 'BA', 'Lead BA', 'QA Lead']),
+  async (req: Request, res: Response) => {
+    const { decision, reason, overrideExplicit } = req.body;
+    if (!decision || !['Approve', 'Reject'].includes(decision)) {
+      return sendError(res, 'decision phải là "Approve" hoặc "Reject"', 400);
     }
-  } catch (err: any) {
-    sendError(res, err.message, 500);
+
+    const unit = dbRepository.knowledgeUnits.getById(req.params.id);
+    if (!unit) return sendError(res, 'Knowledge Unit không tồn tại', 404);
+
+    const reviewerName = req.user?.name || req.user?.id || 'Reviewer';
+
+    try {
+      if (decision === 'Approve') {
+        const promoteResult = await defaultKnowledgeService.promoteUnitToRequirementOrRule(
+          unit.id, 
+          reviewerName,
+          { overrideExplicit, reason }
+        );
+        return sendSuccess(res, promoteResult, 'Đã phê duyệt tri thức và tự động thăng hạng sang Requirement');
+      } else {
+        const rejected = await defaultKnowledgeService.rejectUnit(unit.id, reviewerName, reason);
+        return sendSuccess(res, { id: rejected.id, status: rejected.status }, 'Đã từ chối đơn vị tri thức');
+      }
+    } catch (err: any) {
+      sendError(res, err.message, 400);
+    }
   }
-});
+);
 
 /**
  * GET /api/v1/conflicts
@@ -73,18 +86,71 @@ knowledgeRouter.get('/conflicts', (req: Request, res: Response) => {
 
 /**
  * POST /api/v1/conflicts/:id/resolve
- * Resolve a knowledge conflict (E6-T4)
+ * Resolve a knowledge conflict (E6-T4, BUG-003, BUG-026, BUG-027)
  */
-knowledgeRouter.post('/conflicts/:id/resolve', (req: Request, res: Response) => {
-  const { resolution, resolvedBy } = req.body;
-  if (!resolution || !['KEEP_NEW_SUPERSEDE_OLD', 'REJECT_NEW_PRESERVE_OLD', 'MERGE_SPECIFICATION'].includes(resolution)) {
-    return sendError(res, 'Phương án hòa giải resolution không hợp lệ', 400);
-  }
+knowledgeRouter.post(
+  '/conflicts/:id/resolve',
+  authenticateUser,
+  requireRole(['Project Admin', 'Reviewer / Approver', 'PM / Project Lead', 'BA', 'Lead BA', 'QA Lead']),
+  (req: Request, res: Response) => {
+    let { resolution, notes } = req.body;
+    if (!resolution) {
+      return sendError(res, 'Thiếu phương án hòa giải resolution', 400);
+    }
 
-  const success = dbRepository.conflicts.resolve(req.params.id, resolution, resolvedBy || 'Reviewer / Approver');
-  if (!success) {
-    return sendError(res, 'Không tìm thấy xung đột hoặc xung đột đã được giải quyết', 404);
-  }
+    // Normalize resolution variants
+    if (resolution === 'SUPERSEDE') resolution = 'KEEP_NEW_SUPERSEDE_OLD';
+    else if (resolution === 'REJECT') resolution = 'REJECT_NEW_PRESERVE_OLD';
+    else if (resolution === 'COEXIST' || resolution === 'MERGE') resolution = 'MERGE_SPECIFICATION';
 
-  sendSuccess(res, { id: req.params.id, resolution }, 'Đã giải quyết xung đột tri thức thành công');
-});
+    if (!['KEEP_NEW_SUPERSEDE_OLD', 'REJECT_NEW_PRESERVE_OLD', 'MERGE_SPECIFICATION'].includes(resolution)) {
+      return sendError(res, 'Phương án hòa giải resolution không hợp lệ', 400);
+    }
+
+    // Guard: MERGE_SPECIFICATION / COEXIST requires confirmation notes (BUG-027)
+    if (resolution === 'MERGE_SPECIFICATION' && (!notes || notes.trim().length < 5)) {
+      return sendError(res, 'Phương án MERGE_SPECIFICATION / COEXIST bắt buộc phải có ghi chú xác nhận từ BA/Reviewer tối thiểu 5 ký tự', 400);
+    }
+
+    const conflict = db.prepare('SELECT * FROM conflicts WHERE id = ?').get(req.params.id) as any;
+    if (!conflict) {
+      return sendError(res, 'Không tìm thấy xung đột tri thức', 404);
+    }
+    if (conflict.resolution && conflict.resolution !== 'UNRESOLVED') {
+      return sendError(res, 'Xung đột này đã được giải quyết trước đó (không thể giải quyết lại)', 409);
+    }
+
+    const resolvedByName = req.user?.name || req.user?.id || 'Reviewer / Approver';
+
+    // BUG-027: Apply resolution impact on affected knowledge units in an atomic transaction
+    const tx = db.transaction(() => {
+      const success = dbRepository.conflicts.resolve(req.params.id, resolution, resolvedByName, notes?.trim());
+      if (!success) {
+        throw new Error('CONFLICT_ALREADY_RESOLVED');
+      }
+
+      if (resolution === 'KEEP_NEW_SUPERSEDE_OLD') {
+        // Older unit (unit_a_id) transitions to Superseded
+        if (conflict.unit_a_id) {
+          dbRepository.knowledgeUnits.updateStatus(conflict.unit_a_id, 'Superseded');
+        }
+      } else if (resolution === 'REJECT_NEW_PRESERVE_OLD') {
+        // Newer unit (unit_b_id) transitions to Rejected
+        if (conflict.unit_b_id) {
+          dbRepository.knowledgeUnits.updateStatus(conflict.unit_b_id, 'Rejected');
+        }
+      }
+    });
+
+    try {
+      tx.immediate();
+    } catch (err: any) {
+      if (err.message === 'CONFLICT_ALREADY_RESOLVED') {
+        return sendError(res, 'Không thể giải quyết xung đột (có thể đã được cập nhật bởi phiên làm việc khác)', 409);
+      }
+      return sendError(res, `Lỗi khi giải quyết xung đột: ${err.message}`, 500);
+    }
+
+    sendSuccess(res, { id: req.params.id, resolution, resolvedBy: resolvedByName, notes: notes?.trim() }, 'Đã giải quyết xung đột tri thức thành công');
+  }
+);

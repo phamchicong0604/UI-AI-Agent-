@@ -9,6 +9,7 @@
     "build": "tsc",
     "start": "node dist/main.js",
     "test": "vitest run",
+    "eval:update-baseline": "tsx src/tests/eval/updateBaseline.ts",
     "agent": "tsx src/cli/agent.ts"
   },
   "dependencies": {

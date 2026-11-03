@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import crypto, { randomUUID } from 'crypto';
 import multer from 'multer';
 import AdmZip from 'adm-zip';
 import path from 'path';
@@ -10,12 +11,16 @@ import {
   DocumentItem, 
   UploadBatchRecord, 
   UploadBatchItemDetail, 
-  UploadBatchStatus 
+  UploadBatchStatus,
+  StatusLifecycle
 } from '../../common/types.js';
 import { db, dbRepository } from '../../database/db.js';
 import { validateFileContent, validateZipArchive } from './uploadSecurity.js';
 import { documentParserManager } from './parsers/index.js';
 import { SemanticRiskScorer } from '../knowledge/semanticValidator.js';
+import { authenticateUser, requireRole } from '../../common/auth.js';
+import { defaultJobQueue } from '../workflow/jobQueue.js';
+import { defaultWorkflowEngine } from '../workflow/workflowEngine.js';
 
 export const documentsRouter = Router();
 
@@ -300,25 +305,44 @@ documentsRouter.get('/:id/file', async (req: Request, res: Response) => {
 
 /**
  * POST /api/v1/documents
- * Manual creation of a single document
+ * Manual creation of a single document (BUG-030: Byte-for-byte SHA-256 and stored file integration)
  */
-documentsRouter.post('/', (req: Request, res: Response) => {
+documentsRouter.post('/', async (req: Request, res: Response) => {
   const { title, category, currentVersion, description, tags, author, content, contentMarkdown, projectId } = req.body;
   if (!title || !category) {
     return sendError(res, 'Title and category are required', 400);
   }
 
+  const projId = projectId || 'PRJ-01';
+  // Validate project existence
+  const proj = dbRepository.projects.getById(projId);
+  if (!proj) {
+    return sendError(res, `Project "${projId}" does not exist`, 400);
+  }
+
   const id = generateDocId();
   const timestamp = new Date().toISOString().replace('T', ' ').slice(0, 16);
+  const isoNow = new Date().toISOString();
   const version = currentVersion || 'v1.0';
   const mdContent = contentMarkdown || content || description || '';
+  const contentBuf = Buffer.from(mdContent, 'utf-8');
 
-  // Compute real SHA-256 Checksum for document integrity
-  const checksum = `sha256:${computeSha256(`${id}|${title}|${version}|${mdContent}|${timestamp}`)}`;
+  // Compute real SHA-256 Checksum on content bytes (BUG-030)
+  const fileSha256 = crypto.createHash('sha256').update(contentBuf).digest('hex');
+  const checksum = `sha256:${fileSha256}`;
+  const fileId = `file-${randomUUID()}`;
+  const fileName = `${id}.md`;
+  const storageKey = `projects/${projId}/${id}/${fileName}`;
+
+  try {
+    await defaultFileStore.put(fileName, contentBuf, storageKey);
+  } catch (storeErr: any) {
+    return sendError(res, `Lỗi lưu trữ tệp tin: ${storeErr.message}`, 500);
+  }
 
   const newDoc: DocumentItem = {
     id,
-    projectId: projectId || 'PRJ-01',
+    projectId: projId,
     title,
     category,
     currentVersion: version,
@@ -336,14 +360,57 @@ documentsRouter.post('/', (req: Request, res: Response) => {
         author: author || 'System User',
         status: 'Draft',
         changeSummary: 'Initial document upload with SHA-256 verification',
-        fileSize: formatBytes(Buffer.byteLength(mdContent, 'utf-8')),
+        fileSize: formatBytes(contentBuf.length),
         checksum
       }
     ]
   };
 
-  dbRepository.documents.upsert(newDoc);
-  sendSuccess(res, newDoc, 'Document created and persisted to SQLite with SHA-256 signature', 201);
+  try {
+    const tx = db.transaction(() => {
+      dbRepository.storedFiles.upsert({
+        id: fileId,
+        storageKey,
+        originalName: fileName,
+        mimeType: 'text/markdown',
+        sizeBytes: contentBuf.length,
+        sha256: checksum,
+        createdAt: isoNow
+      });
+
+      dbRepository.documents.upsert(newDoc);
+
+      dbRepository.documentVersions.upsert({
+        id: `${id}-${version}`,
+        documentId: id,
+        versionNo: version,
+        fileId,
+        extractedContent: mdContent,
+        status: 'UPLOADED',
+        changeSummary: 'Manual document creation with byte-accurate SHA-256',
+        createdBy: author || 'System User',
+        createdAt: isoNow
+      });
+
+      // Enqueue pipeline worker inside atomic transaction (NEW-08, NEW-12)
+      defaultJobQueue.enqueue('PIPELINE_RUN', {
+        documentId: id,
+        documentVersionId: `${id}-${version}`,
+        projectId: projId,
+        documentTitle: title
+      });
+    });
+
+    tx.immediate();
+
+    // Supersede previous versions through state machine (BUG-018)
+    await defaultWorkflowEngine.supersedePreviousVersions(id, version, author || 'System User').catch(() => {});
+
+    sendSuccess(res, newDoc, 'Document created and persisted to SQLite with SHA-256 signature', 201);
+  } catch (dbErr: any) {
+    await defaultFileStore.delete(storageKey).catch(() => {});
+    return sendError(res, `Lỗi ghi cơ sở dữ liệu: ${dbErr.message}`, 500);
+  }
 });
 
 /**
@@ -358,6 +425,11 @@ documentsRouter.post('/upload', upload.array('files'), async (req: Request, res:
     }
 
     const projectId = (req.body.projectId as string) || 'PRJ-01';
+    // Validate project existence immediately (BUG-021)
+    const projectRow = db.prepare('SELECT id FROM projects WHERE id = ?').get(projectId) as { id: string } | undefined;
+    if (!projectRow) {
+      return sendError(res, `Dự án "${projectId}" không tồn tại. Vui lòng chọn một dự án hợp lệ trước khi tải lên.`, 400);
+    }
     const categoryOverride = (req.body.category as string) || 'AUTO';
     const author = (req.body.author as string) || 'System User';
     const timestamp = new Date().toISOString().replace('T', ' ').slice(0, 16);
@@ -420,16 +492,6 @@ documentsRouter.post('/upload', upload.array('files'), async (req: Request, res:
       const storageKey = `projects/${projectId}/${docId}/${Date.now()}-${path.basename(name)}`;
       await defaultFileStore.put(name, buffer, storageKey);
 
-      dbRepository.storedFiles.upsert({
-        id: fileId,
-        storageKey,
-        originalName: name,
-        mimeType: mimeType || (name.toLowerCase().endsWith('.md') ? 'text/markdown' : 'text/plain'),
-        sizeBytes: buffer.length,
-        sha256: fileSha256,
-        createdAt: timestamp
-      });
-
       // 5. Build tags including warnings like NEEDS_OCR
       const extTag = path.extname(name).replace('.', '').toUpperCase() || 'DOC';
       const docTags = [extTag, detectedCat.split('_')[1] || 'Doc'];
@@ -441,7 +503,7 @@ documentsRouter.post('/upload', upload.array('files'), async (req: Request, res:
         ? `Trích xuất từ file nén (${name})`
         : `Tải lên trực tiếp từ ${name}`;
 
-      // 6. Insert Document record first (to satisfy document_versions foreign key)
+      // 6. Build document item
       const doc: DocumentItem = {
         id: docId,
         projectId,
@@ -468,20 +530,51 @@ documentsRouter.post('/upload', upload.array('files'), async (req: Request, res:
         ]
       };
 
-      dbRepository.documents.upsert(doc);
+      // 7. Atomic database transaction for stored file, document and version (BUG-021)
+      try {
+        const itemTx = db.transaction(() => {
+          dbRepository.storedFiles.upsert({
+            id: fileId,
+            storageKey,
+            originalName: name,
+            mimeType: mimeType || (name.toLowerCase().endsWith('.md') ? 'text/markdown' : 'text/plain'),
+            sizeBytes: buffer.length,
+            sha256: fileSha256,
+            createdAt: timestamp
+          });
 
-      // 7. Insert Document Version (E1-T3)
-      dbRepository.documentVersions.upsert({
-        id: `${docId}-v1.0`,
-        documentId: docId,
-        versionNo: 'v1.0',
-        fileId,
-        extractedContent: rawText,
-        status: 'Draft',
-        changeSummary: versionChangeSummary,
-        createdBy: author,
-        createdAt: timestamp
-      });
+          dbRepository.documents.upsert(doc);
+
+          dbRepository.documentVersions.upsert({
+            id: `${docId}-v1.0`,
+            documentId: docId,
+            versionNo: 'v1.0',
+            fileId,
+            extractedContent: rawText,
+            status: 'UPLOADED',
+            changeSummary: versionChangeSummary,
+            createdBy: author,
+            createdAt: timestamp
+          });
+
+          // Enqueue background processing job atomically (BUG-010, NEW-08, NEW-12)
+          defaultJobQueue.enqueue('PIPELINE_RUN', {
+            documentId: doc.id,
+            documentVersionId: `${docId}-v1.0`,
+            projectId,
+            documentTitle: doc.title
+          });
+        });
+
+        itemTx.immediate();
+
+        // Supersede previous versions if updating an existing document (BUG-018)
+        await defaultWorkflowEngine.supersedePreviousVersions(doc.id, 'v1.0', author).catch(() => {});
+      } catch (dbErr: any) {
+        await defaultFileStore.delete(storageKey).catch(() => {});
+        return { success: false, error: `Lỗi lưu trữ tài liệu: ${dbErr.message}`, statusCode: 500 };
+      }
+
       return { success: true, document: doc };
     };
 
@@ -680,32 +773,122 @@ documentsRouter.post('/upload', upload.array('files'), async (req: Request, res:
 
 /**
  * DELETE /api/v1/documents/:id
- * Remove a document
+ * Remove a document, cleans up child records and disk files (BUG-023)
  */
-documentsRouter.delete('/:id', (req: Request, res: Response) => {
-  const doc = dbRepository.documents.getById(req.params.id);
-  if (!doc) return sendError(res, 'Document not found', 404);
+documentsRouter.delete(
+  '/:id',
+  authenticateUser,
+  requireRole(['Project Admin', 'PM / Project Lead']),
+  async (req: Request, res: Response) => {
+    const docId = req.params.id;
+    const doc = dbRepository.documents.getById(docId);
+    if (!doc) return sendError(res, 'Document not found', 404);
 
-  const deleted = dbRepository.documents.delete(req.params.id);
-  if (deleted) {
-    sendSuccess(res, { id: req.params.id }, 'Tài liệu đã được xóa thành công');
-  } else {
-    sendError(res, 'Could not delete document', 500);
+    // Track stored file keys to clean up from disk
+    const versionRows = db.prepare(`
+      SELECT dv.id as version_id, dv.file_id, sf.storage_key
+      FROM document_versions dv
+      LEFT JOIN stored_files sf ON sf.id = dv.file_id
+      WHERE dv.document_id = ?
+    `).all(docId) as Array<{ version_id: string; file_id: string | null; storage_key: string | null }>;
+
+    const fileKeysToClean: string[] = [];
+
+    // Atomic database transaction for document, versions, relationships and stored_files (BUG-023)
+    const deleteTx = db.transaction(() => {
+      // 1. Delete review_decisions
+      db.prepare(`
+        DELETE FROM review_decisions
+        WHERE target_id IN (SELECT id FROM document_versions WHERE document_id = ?)
+      `).run(docId);
+
+      // 2. Delete document_relationships
+      db.prepare(`
+        DELETE FROM document_relationships
+        WHERE source_doc_id = ? OR target_doc_id = ?
+      `).run(docId, docId);
+
+      // 3. Delete document_versions
+      db.prepare('DELETE FROM document_versions WHERE document_id = ?').run(docId);
+
+      // 4. Delete stored_files if no other version references it
+      for (const v of versionRows) {
+        if (v.file_id) {
+          const ref = db.prepare('SELECT COUNT(*) as count FROM document_versions WHERE file_id = ?').get(v.file_id) as { count: number };
+          if (ref.count === 0) {
+            db.prepare('DELETE FROM stored_files WHERE id = ?').run(v.file_id);
+            if (v.storage_key) {
+              fileKeysToClean.push(v.storage_key);
+            }
+          }
+        }
+      }
+
+      // 5. Delete documents
+      return dbRepository.documents.delete(docId);
+    });
+
+    const deleted = deleteTx.immediate();
+    if (deleted) {
+      // Physically delete from disk only after DB commit, and only if no other stored_files row references the key (BUG-020, BUG-022)
+      for (const storageKey of fileKeysToClean) {
+        const remaining = db.prepare('SELECT COUNT(*) as count FROM stored_files WHERE storage_key = ?').get(storageKey) as { count: number };
+        if (remaining.count === 0) {
+          await defaultFileStore.delete(storageKey).catch(() => {});
+        }
+      }
+      sendSuccess(res, { id: docId }, 'Tài liệu đã được xóa thành công');
+    } else {
+      sendError(res, 'Could not delete document', 500);
+    }
   }
-});
+);
+
+const VALID_LIFECYCLE_STATUSES: StatusLifecycle[] = ['Draft', 'In Review', 'Approved', 'Rejected', 'Deprecated'];
 
 /**
  * PATCH /api/v1/documents/:id/status
  * Transition document lifecycle status (Draft -> In Review -> Approved, etc.)
+ * Strictly validates status and checks approver permissions (BUG-006)
  */
-documentsRouter.patch('/:id/status', (req: Request, res: Response) => {
-  const { status, userRole } = req.body;
+documentsRouter.patch('/:id/status', authenticateUser, (req: Request, res: Response) => {
+  const { status } = req.body;
+  if (!status || !VALID_LIFECYCLE_STATUSES.includes(status)) {
+    return sendError(
+      res,
+      `Trạng thái tài liệu không hợp lệ. Cho phép: ${VALID_LIFECYCLE_STATUSES.join(', ')}`,
+      400
+    );
+  }
+
   const doc = dbRepository.documents.getById(req.params.id);
   if (!doc) return sendError(res, 'Document not found', 404);
 
-  // Enforce rule BR-AUTH-01: Approver role required
-  if (status === 'Approved' && userRole && !['Project Admin', 'Reviewer / Approver', 'PM / Project Lead'].includes(userRole)) {
-    return sendError(res, 'Permission denied: Approver or Admin role required to approve document', 403);
+  // Enforce rule BR-AUTH-01: Approver/Admin role required for terminal/governed transitions (BUG-006)
+  if (['Approved', 'Rejected', 'Deprecated'].includes(status)) {
+    const userRole = req.user?.role;
+    if (!userRole) {
+      return sendError(res, `Authentication required: User role must be specified to transition document to ${status}`, 401);
+    }
+    if (!['Project Admin', 'Reviewer / Approver', 'PM / Project Lead'].includes(userRole)) {
+      return sendError(res, `Permission denied: Approver or Admin role required to transition document to ${status}`, 403);
+    }
+  }
+
+  // Enforce valid lifecycle sequence (BUG-006)
+  const currentStatus = doc.status;
+  if (currentStatus !== status) {
+    const validMoves: Record<string, string[]> = {
+      'Draft': ['In Review', 'Rejected', 'Deprecated'],
+      'In Review': ['Approved', 'Rejected', 'Draft'],
+      'Approved': ['Deprecated', 'In Review'],
+      'Rejected': ['Draft', 'In Review'],
+      'Deprecated': ['In Review']
+    };
+    const allowed = validMoves[currentStatus] || [];
+    if (!allowed.includes(status)) {
+      return sendError(res, `Không thể chuyển trạng thái từ "${currentStatus}" sang "${status}". Thứ tự vòng đời không hợp lệ.`, 400);
+    }
   }
 
   doc.status = status;

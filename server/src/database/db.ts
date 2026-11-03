@@ -40,7 +40,8 @@ if (!fs.existsSync(dataDir)) {
   fs.mkdirSync(dataDir, { recursive: true });
 }
 
-const dbPath = path.join(dataDir, 'docqa.sqlite');
+// BUG-029: Allow tests to specify an isolated DB path via DOCQA_DB_PATH env var
+const dbPath = process.env.DOCQA_DB_PATH || path.join(dataDir, 'docqa.sqlite');
 export const db = new Database(dbPath);
 
 // Enable WAL and busy timeout for concurrent testing and production resilience
@@ -636,12 +637,12 @@ ${doc.description || 'Đặc tả kỹ thuật chuẩn hệ thống.'}
 `;
           const buffer = Buffer.from(content, 'utf-8');
           const fileSha256 = `sha256:${computeSha256(buffer)}`;
-          const fileId = `FILE-${fileSha256.slice(7, 17)}`;
           const storageKey = `projects/${doc.projectId || 'PRJ-01'}/${doc.id}/${doc.id}.md`;
+          const fileId = `FILE-${computeSha256(Buffer.from(storageKey)).slice(0, 16)}`;
 
           defaultFileStore.put(`${doc.id}.md`, buffer, storageKey);
           db.prepare(`
-            INSERT OR REPLACE INTO stored_files (id, storage_key, original_name, mime_type, size_bytes, sha256, created_at)
+            INSERT OR IGNORE INTO stored_files (id, storage_key, original_name, mime_type, size_bytes, sha256, created_at)
             VALUES (?, ?, ?, ?, ?, ?, ?)
           `).run(fileId, storageKey, `${doc.id}.md`, 'text/markdown', buffer.length, fileSha256, doc.updatedAt || '2026-11-01');
 
@@ -672,10 +673,11 @@ export const dbRepository = {
       const row = db.prepare('SELECT data FROM projects WHERE id = ?').get(id) as { data: string } | undefined;
       return row ? JSON.parse(row.data) : null;
     },
-    upsert(p: Project): Project {
+    upsert(p: Project & { aiPolicy?: string; ai_policy?: string }): Project {
+      const policy = p.aiPolicy || p.ai_policy || 'OFFLINE_ONLY';
       const stmt = db.prepare(`
-        INSERT INTO projects (id, name, key, description, version, author, members_count, data, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO projects (id, name, key, description, version, author, members_count, ai_policy, data, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           name = excluded.name,
           key = excluded.key,
@@ -683,10 +685,11 @@ export const dbRepository = {
           version = excluded.version,
           author = excluded.author,
           members_count = excluded.members_count,
+          ai_policy = coalesce(excluded.ai_policy, projects.ai_policy, 'OFFLINE_ONLY'),
           data = excluded.data,
           updated_at = excluded.updated_at
       `);
-      stmt.run(p.id, p.name, p.key, p.description, p.version, p.author, p.membersCount, JSON.stringify(p), p.createdAt, p.updatedAt || p.createdAt);
+      stmt.run(p.id, p.name, p.key, p.description, p.version, p.author, p.membersCount, policy, JSON.stringify(p), p.createdAt, p.updatedAt || p.createdAt);
       return p;
     },
     delete(id: string): boolean {
@@ -969,19 +972,46 @@ export const dbRepository = {
 
       return lockTx.immediate();
     },
-    complete(id: string, result?: any): void {
+    resetForRetry(id: string): boolean {
+      const now = new Date().toISOString();
+      const res = db.prepare(`
+        UPDATE jobs
+        SET status = 'PENDING', attempts = 0, locked_by = NULL, locked_at = NULL, next_run_at = ?, last_error = NULL, updated_at = ?
+        WHERE id = ? AND status = 'FAILED'
+      `).run(now, now, id);
+      return res.changes > 0;
+    },
+    heartbeat(id: string, workerId: string): boolean {
+      const now = new Date().toISOString();
+      const res = db.prepare(`
+        UPDATE jobs
+        SET locked_at = ?, updated_at = ?
+        WHERE id = ? AND status = 'RUNNING' AND locked_by = ?
+      `).run(now, now, id, workerId);
+      return res.changes > 0;
+    },
+    complete(id: string, result?: any, workerId?: string): boolean {
       const now = new Date().toISOString();
       const resultStr = result ? (typeof result === 'string' ? result : JSON.stringify(result)) : null;
-      db.prepare(`
+      let query = `
         UPDATE jobs
         SET status = 'COMPLETED', result = ?, locked_by = NULL, locked_at = NULL, updated_at = ?
-        WHERE id = ?
-      `).run(resultStr, now, id);
+        WHERE id = ? AND status = 'RUNNING'
+      `;
+      const params: any[] = [resultStr, now, id];
+      if (workerId) {
+        query += ` AND locked_by = ?`;
+        params.push(workerId);
+      }
+      const res = db.prepare(query).run(...params);
+      return res.changes > 0;
     },
-    failWithRetry(id: string, error: string, backoffSeconds?: number): void {
+    failWithRetry(id: string, error: string, backoffSeconds?: number, workerId?: string): boolean {
       const now = new Date();
       const job = this.getById(id);
-      if (!job) return;
+      if (!job) return false;
+      if (job.status !== 'RUNNING') return false;
+      if (workerId && job.lockedBy && job.lockedBy !== workerId) return false;
 
       const newAttempts = job.attempts + 1;
       const timestamp = now.toISOString();
@@ -990,17 +1020,19 @@ export const dbRepository = {
         // Exponential backoff or custom backoff: default = 2^(attempts) * 5 seconds
         const delay = backoffSeconds !== undefined ? backoffSeconds : Math.pow(2, newAttempts) * 5;
         const nextRun = new Date(now.getTime() + delay * 1000).toISOString();
-        db.prepare(`
+        const res = db.prepare(`
           UPDATE jobs
           SET status = 'PENDING', attempts = ?, locked_by = NULL, locked_at = NULL, next_run_at = ?, last_error = ?, updated_at = ?
-          WHERE id = ?
+          WHERE id = ? AND status = 'RUNNING'
         `).run(newAttempts, nextRun, error, timestamp, id);
+        return res.changes > 0;
       } else {
-        db.prepare(`
+        const res = db.prepare(`
           UPDATE jobs
           SET status = 'FAILED', attempts = ?, locked_by = NULL, locked_at = NULL, last_error = ?, updated_at = ?
-          WHERE id = ?
+          WHERE id = ? AND status = 'RUNNING'
         `).run(newAttempts, error, timestamp, id);
+        return res.changes > 0;
       }
     },
     cancel(id: string, reason?: string): boolean {
@@ -1015,12 +1047,31 @@ export const dbRepository = {
     resetStaleLocks(staleSeconds = 300): number {
       const cutoff = new Date(Date.now() - staleSeconds * 1000).toISOString();
       const now = new Date().toISOString();
-      const res = db.prepare(`
-        UPDATE jobs
-        SET status = 'PENDING', locked_by = NULL, locked_at = NULL, updated_at = ?
+
+      const staleJobs = db.prepare(`
+        SELECT id, attempts, max_attempts FROM jobs
         WHERE status = 'RUNNING' AND (locked_at IS NULL OR locked_at < ?)
-      `).run(now, cutoff);
-      return res.changes;
+      `).all(cutoff) as Array<{ id: string; attempts: number; max_attempts: number }>;
+
+      let recovered = 0;
+      for (const job of staleJobs) {
+        const nextAttempts = job.attempts + 1;
+        if (nextAttempts >= job.max_attempts) {
+          db.prepare(`
+            UPDATE jobs
+            SET status = 'FAILED', attempts = ?, locked_by = NULL, locked_at = NULL, last_error = 'Stale lock timeout exceeded max attempts', updated_at = ?
+            WHERE id = ? AND status = 'RUNNING'
+          `).run(nextAttempts, now, job.id);
+        } else {
+          db.prepare(`
+            UPDATE jobs
+            SET status = 'PENDING', attempts = ?, locked_by = NULL, locked_at = NULL, last_error = 'Stale lock recovered', updated_at = ?
+            WHERE id = ? AND status = 'RUNNING'
+          `).run(nextAttempts, now, job.id);
+        }
+        recovered++;
+      }
+      return recovered;
     }
   },
 
@@ -1102,7 +1153,7 @@ export const dbRepository = {
   knowledgeSources: {
     create(src: KnowledgeSourceRecord): void {
       db.prepare(`
-        INSERT INTO knowledge_sources (id, unit_id, document_version_id, heading_path, char_offset_start, char_offset_end, page_number, exact_quote, created_at)
+        INSERT OR REPLACE INTO knowledge_sources (id, unit_id, document_version_id, heading_path, char_offset_start, char_offset_end, page_number, exact_quote, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(src.id, src.unitId, src.documentVersionId, src.headingPath, src.charOffsetStart, src.charOffsetEnd, src.pageNumber || null, src.exactQuote, src.createdAt);
     },
@@ -1139,13 +1190,13 @@ export const dbRepository = {
       }
       return db.prepare(query).all(...params) as ConflictRecord[];
     },
-    resolve(id: string, resolution: string, resolvedBy: string): boolean {
+    resolve(id: string, resolution: string, resolvedBy: string, notes?: string): boolean {
       const now = new Date().toISOString();
       const res = db.prepare(`
         UPDATE conflicts
-        SET resolution = ?, resolved_by = ?, resolved_at = ?
-        WHERE id = ?
-      `).run(resolution, resolvedBy, now, id);
+        SET resolution = ?, resolved_by = ?, resolved_at = ?, resolution_notes = coalesce(?, resolution_notes)
+        WHERE id = ? AND resolution = 'UNRESOLVED'
+      `).run(resolution, resolvedBy, now, notes || null, id);
       return res.changes > 0;
     }
   },

@@ -19,6 +19,11 @@ export class DocxParser implements IDocumentParser {
       throw new Error('Invalid DOCX package: word/document.xml not found.');
     }
 
+    // Safety guard against massive XML expansion (BUG-009)
+    if (docEntry.header.size > 100 * 1024 * 1024) {
+      throw new Error('DOCX document.xml exceeds maximum safe uncompressed size (100MB).');
+    }
+
     const xml = zip.readAsText(docEntry);
 
     // Extract all paragraphs <w:p>...</w:p>

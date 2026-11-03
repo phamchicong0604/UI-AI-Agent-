@@ -39,7 +39,7 @@ export interface DocumentVersionRecord {
   versionNo: string;
   fileId: string | null;
   extractedContent: string | null;
-  status: StatusLifecycle;
+  status: StatusLifecycle | WorkflowState;
   changeSummary: string | null;
   createdBy: string;
   createdAt: string;

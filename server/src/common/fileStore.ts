@@ -28,7 +28,8 @@ export class LocalDiskFileStore implements IFileStore {
   private baseDir: string;
 
   constructor(customBaseDir?: string) {
-    this.baseDir = customBaseDir || path.resolve(__dirname, '../../data/files');
+    // BUG-029: Allow tests to specify an isolated file storage directory
+    this.baseDir = customBaseDir || process.env.DOCQA_FILES_DIR || path.resolve(__dirname, '../../data/files');
     if (!fs.existsSync(this.baseDir)) {
       fs.mkdirSync(this.baseDir, { recursive: true });
     }

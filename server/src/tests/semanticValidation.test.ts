@@ -232,5 +232,55 @@ describe('Semantic Validation & Risk Scoring (Epic E7-T3, E7-T4)', () => {
       expect(conflicts[0].conflictType).toBe('Redundancy');
       expect(conflicts[0].severity).toBe('Minor');
     });
+
+    it('does NOT flag false numeric conflicts for bare step numbers or generic words (BUG-015 Regression)', () => {
+      const now = new Date().toISOString();
+
+      const approvedUnitId = 'ku-appr-steps';
+      db.prepare(`
+        INSERT INTO knowledge_units (id, project_id, unit_type, content, subject, action, evidence_level, status, created_at, updated_at)
+        VALUES (?, ?, 'Constraint', 'Thực hiện quy trình theo Bước 1: Khởi động hệ thống.', 'Quy trình khởi động', 'Khởi động', 'Explicit', 'Approved', ?, ?)
+      `).run(approvedUnitId, projectId, now, now);
+
+      // Candidate with step 2 - bare numbers must NOT trigger numeric conflict
+      const candidate: CandidateKnowledgeUnit = {
+        id: 'cand-step-2',
+        project_id: projectId,
+        unit_type: 'Constraint',
+        subject: 'Quy trình khởi động',
+        action: 'Khởi động',
+        content: 'Thực hiện quy trình theo Bước 2: Kiểm tra kết nối cơ sở dữ liệu.',
+        evidence_level: 'Explicit'
+      };
+
+      const { conflicts } = SemanticValidator.validateAgainstApproved(db, candidate);
+      const numericConflicts = conflicts.filter(c => c.conflictType === 'Contradiction' && c.description.includes('conflicts with approved specification'));
+      expect(numericConflicts.length).toBe(0);
+    });
+
+    it('does NOT treat common word "yêu cầu" as affirmative modality contradiction (BUG-015 Regression)', () => {
+      const now = new Date().toISOString();
+
+      const approvedUnitId = 'ku-appr-reqword';
+      db.prepare(`
+        INSERT INTO knowledge_units (id, project_id, unit_type, content, subject, action, evidence_level, status, created_at, updated_at)
+        VALUES (?, ?, 'Requirement', 'Tài liệu đưa ra yêu cầu về tính năng đăng nhập SSO.', 'Tính năng SSO', 'Hỗ trợ SSO', 'Explicit', 'Approved', ?, ?)
+      `).run(approvedUnitId, projectId, now, now);
+
+      // Candidate mentioning optional feature without contradicting mandatory policy
+      const candidate: CandidateKnowledgeUnit = {
+        id: 'cand-req-optional',
+        project_id: projectId,
+        unit_type: 'Requirement',
+        subject: 'Tính năng SSO',
+        action: 'Hỗ trợ SSO',
+        content: 'Tính năng SSO cho phép đăng nhập qua Google hoặc tùy chọn qua tài khoản nội bộ.',
+        evidence_level: 'Explicit'
+      };
+
+      const { conflicts } = SemanticValidator.validateAgainstApproved(db, candidate);
+      const policyConflicts = conflicts.filter(c => c.conflictType === 'Contradiction' && c.description.includes('policy contradiction'));
+      expect(policyConflicts.length).toBe(0);
+    });
   });
 });

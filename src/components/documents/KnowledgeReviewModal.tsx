@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   ShieldCheck,
   AlertTriangle,
@@ -63,15 +63,16 @@ export const KnowledgeReviewModal: React.FC<KnowledgeReviewModalProps> = ({
   onConflictResolved
 }) => {
   const [selectedUnitId, setSelectedUnitId] = useState<string | null>(units[0]?.id || null);
+  const [modalError, setModalError] = useState<string | null>(null);
   const [rejectModalUnitId, setRejectModalUnitId] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState<string>('');
   const [rejectError, setRejectError] = useState<string>('');
   const [activeConflict, setActiveConflict] = useState<ConflictData | null>(null);
   const [filterType, setFilterType] = useState<string>('ALL');
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
+  const highlightRef = useRef<HTMLElement | null>(null);
 
-  if (!isOpen) return null;
-
+  // BUG-034: Hooks must be called unconditionally above any early return (Rules of Hooks)
   const selectedUnit = useMemo(() => {
     return units.find(u => u.id === selectedUnitId) || units[0] || null;
   }, [units, selectedUnitId]);
@@ -85,10 +86,22 @@ export const KnowledgeReviewModal: React.FC<KnowledgeReviewModalProps> = ({
   const nonExplicitCount = units.length - explicitCount;
   const approvedCount = units.filter(u => u.status === 'Approved').length;
 
+  // BUG-028: Auto-scroll to highlighted mark when active unit changes
+  useEffect(() => {
+    if (highlightRef.current && typeof highlightRef.current.scrollIntoView === 'function') {
+      highlightRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [selectedUnitId]);
+
+  if (!isOpen) return null;
+
   const handleApprove = async (unitId: string) => {
     setIsProcessing(true);
+    setModalError(null);
     try {
       await onUnitDecision(unitId, 'Approve');
+    } catch (err: any) {
+      setModalError(err.message || 'Lỗi khi phê duyệt đơn vị tri thức');
     } finally {
       setIsProcessing(false);
     }
@@ -107,6 +120,8 @@ export const KnowledgeReviewModal: React.FC<KnowledgeReviewModalProps> = ({
       setRejectModalUnitId(null);
       setRejectReason('');
       setRejectError('');
+    } catch (err: any) {
+      setRejectError(err.message || 'Lỗi khi từ chối đơn vị tri thức');
     } finally {
       setIsProcessing(false);
     }
@@ -147,7 +162,7 @@ export const KnowledgeReviewModal: React.FC<KnowledgeReviewModalProps> = ({
     }
   };
 
-  // Render left-pane text with active unit highlight
+  // Render left-pane text with active unit highlight (BUG-028: Prioritize char offset over quote string)
   const renderHighlightedContent = () => {
     if (!documentContent) {
       return (
@@ -157,7 +172,7 @@ export const KnowledgeReviewModal: React.FC<KnowledgeReviewModalProps> = ({
       );
     }
 
-    if (!selectedUnit || (!selectedUnit.exactQuote && selectedUnit.charOffsetStart === undefined)) {
+    if (!selectedUnit) {
       return (
         <pre className="font-mono text-xs text-slate-300 whitespace-pre-wrap leading-relaxed select-text">
           {documentContent}
@@ -165,16 +180,43 @@ export const KnowledgeReviewModal: React.FC<KnowledgeReviewModalProps> = ({
       );
     }
 
-    const quote = selectedUnit.exactQuote;
-    if (quote && documentContent.includes(quote)) {
-      const parts = documentContent.split(quote);
+    // 1. Prioritize Character Offsets
+    const start = selectedUnit.charOffsetStart;
+    const end = selectedUnit.charOffsetEnd;
+    if (typeof start === 'number' && typeof end === 'number' && start >= 0 && end > start && end <= documentContent.length) {
+      const before = documentContent.slice(0, start);
+      const highlighted = documentContent.slice(start, end);
+      const after = documentContent.slice(end);
       return (
         <pre className="font-mono text-xs text-slate-300 whitespace-pre-wrap leading-relaxed select-text">
-          {parts[0]}
-          <mark className="bg-amber-400/30 text-amber-200 border-b-2 border-amber-400 px-1 py-0.5 rounded font-semibold transition-all">
+          {before}
+          <mark
+            ref={highlightRef}
+            className="bg-amber-400/35 text-amber-200 border-b-2 border-amber-400 px-1 py-0.5 rounded font-semibold transition-all shadow-sm"
+          >
+            {highlighted}
+          </mark>
+          {after}
+        </pre>
+      );
+    }
+
+    // 2. Fallback to exact quote
+    const quote = selectedUnit.exactQuote;
+    if (quote && documentContent.includes(quote)) {
+      const idx = documentContent.indexOf(quote);
+      const before = documentContent.slice(0, idx);
+      const after = documentContent.slice(idx + quote.length);
+      return (
+        <pre className="font-mono text-xs text-slate-300 whitespace-pre-wrap leading-relaxed select-text">
+          {before}
+          <mark
+            ref={highlightRef}
+            className="bg-amber-400/35 text-amber-200 border-b-2 border-amber-400 px-1 py-0.5 rounded font-semibold transition-all shadow-sm"
+          >
             {quote}
           </mark>
-          {parts.slice(1).join(quote)}
+          {after}
         </pre>
       );
     }
@@ -242,6 +284,22 @@ export const KnowledgeReviewModal: React.FC<KnowledgeReviewModalProps> = ({
             </button>
           </div>
         </div>
+
+        {/* Modal-level Error Banner (NEW-15) */}
+        {modalError && (
+          <div className="px-6 py-2.5 bg-rose-950/60 border-b border-rose-500/40 flex items-center justify-between text-xs text-rose-200 animate-in fade-in duration-150">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+              <span>{modalError}</span>
+            </div>
+            <button
+              onClick={() => setModalError(null)}
+              className="text-rose-400 hover:text-white font-bold ml-2 px-1 rounded hover:bg-rose-900/50"
+            >
+              ×
+            </button>
+          </div>
+        )}
 
         {/* Conflict Alert Banner if any */}
         {conflicts.length > 0 && (

@@ -378,5 +378,28 @@ export const vi = {
   agentRunCommandPlaceholder: 'Nhập lệnh (vd: status, generate REQ-001, impact DOC-02, verify)...',
   agentExecuteBtn: 'Chạy lệnh',
   agentQuickActions: 'Lệnh nhanh:',
-  agentSaveConfigSuccess: 'Đã cập nhật cấu hình Agent thành công!'
+  agentSaveConfigSuccess: 'Đã cập nhật cấu hình Agent thành công!',
+
+  // Review Queue & Knowledge Governance (BUG-034)
+  reviewQueueTitle: 'Hàng đợi Phê duyệt Tri thức & Đánh giá Rủi ro',
+  reviewQueueSubtitle: 'Thẩm định các đơn vị tri thức trích xuất tự động và phân giải xung đột trước khi chuyển sang ORGANIZED.',
+  reviewQueueEmpty: 'Không có tài liệu nào đang chờ duyệt',
+  reviewQueueNeedingReview: 'Hàng đợi cần duyệt',
+  reviewQueueHighRisk: 'Nguy cơ cao (High Risk)',
+  reviewQueueCriticalConflicts: 'Xung đột nghiêm trọng',
+  reviewQueueTotalUnits: 'Tổng đơn vị tri thức',
+  reviewQueueBulkApproveExplicit: 'Duyệt tất cả Rõ ràng (Bulk Approve Explicit)',
+  reviewQueueReviewKnowledgeBtn: 'Duyệt tri thức',
+  reviewQueueConflictsBtn: 'Xung đột',
+  conflictModalTitle: 'Phân giải Xung đột Tri thức',
+  conflictOptionSupersede: 'Phê duyệt mới, lưu trữ bản cũ (KEEP_NEW_SUPERSEDE_OLD)',
+  conflictOptionReject: 'Giữ nguyên cũ, từ chối đề xuất mới (REJECT_NEW_PRESERVE_OLD)',
+  conflictOptionCoexist: 'Cùng tồn tại / Phân định ngữ cảnh áp dụng (COEXIST / MERGE_SPECIFICATION)',
+  knowledgeModalEvidenceExplicit: 'Rõ ràng (Explicit)',
+  knowledgeModalEvidenceInferred: 'Suy luận (Inferred)',
+  knowledgeModalEvidenceAssumed: 'Giả định (Assumed)',
+  knowledgeModalEvidenceConflict: 'Mâu thuẫn (Conflict)',
+  knowledgeModalApproveBtn: 'Phê duyệt',
+  knowledgeModalRejectBtn: 'Từ chối',
+  knowledgeModalConfirmReject: 'Xác nhận từ chối'
 };

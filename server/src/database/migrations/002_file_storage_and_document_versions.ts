@@ -73,8 +73,8 @@ ${doc.description || 'Đặc tả kỹ thuật chuẩn hệ thống.'}
         const buffer = Buffer.from(content, 'utf-8');
         const fileSha256 = `sha256:${computeSha256(buffer)}`;
 
-        const primaryFileId = `FILE-${fileSha256.slice(7, 17)}`;
         const storageKey = `projects/${doc.projectId || 'PRJ-01'}/${doc.id}/${doc.id}.md`;
+        const primaryFileId = `FILE-${computeSha256(Buffer.from(storageKey)).slice(0, 16)}`;
 
         // Put file into FileStore
         try {

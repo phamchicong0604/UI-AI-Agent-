@@ -3,9 +3,9 @@
     "id": "DOC-EVAL-01",
     "title": "Yêu cầu Nghiệp vụ Cổng Thanh toán Nội địa v2.0",
     "language": "vi",
-    "filePath": "02_Business_Requirements/BRD_Payment_Gateway_v2.md",
+    "filePath": "uploads/BRD_Payment_Gateway_v2.md",
     "headings": ["# BRD Payment Gateway", "## Quy tắc nghiệp vụ thanh toán", "## Chính sách hoàn tiền giao dịch"],
-    "content": "Tài liệu business requirement đặc tả quy tắc nghiệp vụ cổng thanh toán nội địa. Hạn mức giao dịch qua mã QR tối đa 50,000,000 VND trên mỗi giao dịch. Thời gian timeout phiên thanh toán là 15m. Trong trường hợp giao dịch lỗi, hệ thống tự động hoàn tiền trong vòng 24 giờ.",
+    "content": "Tài liệu business requirement đặc tả quy tắc nghiệp vụ cổng thanh toán nội địa. Hạn mức giao dịch qua mã QR tối đa 50,000,000 VND trên mỗi giao dịch. Thời gian timeout phiên thanh toán là 15m. Trong trường hợp giao dịch lỗi, hệ thống tự động hoàn tiền trong vòng 24 giờ. Thời gian xử lý giao dịch là 5 phút.",
     "groundTruth": {
       "primaryCategory": "02_Business_Requirements",
       "extractedUnits": [
@@ -37,7 +37,7 @@
     "id": "DOC-EVAL-02",
     "title": "Software Requirements Specification - Realtime Processing Engine",
     "language": "en",
-    "filePath": "03_System_Requirements/SRS_Realtime_Engine_v1.0.md",
+    "filePath": "uploads/SRS_Realtime_Engine_v1.0.md",
     "headings": ["# Software Requirements Specification", "## Non-Functional Requirements", "## Latency and Concurrency"],
     "content": "This SRS defines system requirements and non-functional performance specs. The system shall support a peak concurrency of 10,000 CCU with CPU utilization under 70%. Read API endpoint response latency shall maintain P99 latency under 200ms. Recovery Time Objective (RTO) shall be less than 60 seconds.",
     "groundTruth": {
@@ -64,7 +64,7 @@
     "id": "DOC-EVAL-03",
     "title": "UI/UX Mobile Design Guidelines & Figma Design Tokens",
     "language": "bilingual",
-    "filePath": "04_UI_UX/Figma_Design_Tokens_and_Guidelines.md",
+    "filePath": "uploads/Figma_Design_Tokens_and_Guidelines.md",
     "headings": ["# UI/UX Guidelines", "## Design Tokens & Typography", "## Mobile Touch Targets"],
     "content": "Đặc tả giao diện người dùng Figma mockup và responsive design guidelines. Primary brand color mã màu chuẩn là #4F46E5. Mọi interactive touch target buttons trên giao diện di động phải có kích thước tối thiểu 44x44px. Độ tương phản chữ Dark Mode tuân thủ tiêu chuẩn WCAG AA tỷ lệ 4.5:1.",
     "groundTruth": {
@@ -91,7 +91,7 @@
     "id": "DOC-EVAL-04",
     "title": "Technical Architecture & Database Schema DDL",
     "language": "bilingual",
-    "filePath": "05_Technical_Documents/Architecture_and_Database_DDL.md",
+    "filePath": "uploads/Architecture_and_Database_DDL.md",
     "headings": ["# Technical Architecture", "## SQLite WAL Mode", "## Cryptographic Integrity"],
     "content": "Tài liệu kiến trúc technical architecture và database schema specs. Cơ sở dữ liệu SQLite phải luôn chạy ở chế độ journal_mode = WAL để tối ưu hóa đọc đồng thời. Mọi file tài liệu lưu trữ bắt buộc băm SHA-256 để kiểm chứng toàn vẹn.",
     "groundTruth": {
@@ -118,7 +118,7 @@
     "id": "DOC-EVAL-05",
     "title": "Master Test Plan & QA Release Strategy",
     "language": "vi",
-    "filePath": "06_QA/Master_Test_Plan_DocQA.md",
+    "filePath": "uploads/Master_Test_Plan_DocQA.md",
     "headings": ["# Master Test Plan", "## Chiến lược QA & Môi trường", "## Tiêu chí nghiệm thu Release"],
     "content": "Kế hoạch kiểm thử Master Test Plan và ma trận truy vết RTM cho sprint release. Môi trường kiểm thử STG phải đồng nhất cấu hình với Production. Tiêu chí xuất xưởng bắt buộc 100% test case P0 đạt kết quả Pass và 0 defect nghiêm trọng còn mở.",
     "groundTruth": {
@@ -145,7 +145,7 @@
     "id": "DOC-EVAL-06",
     "title": "UAT Sign-off Report & Bằng chứng Nghiệm thu",
     "language": "vi",
-    "filePath": "07_EVD_Evidence/UAT_Signoff_Sprint_3.md",
+    "filePath": "uploads/UAT_Signoff_Sprint_3.md",
     "headings": ["# UAT Sign-off Report", "## Biên bản nghiệm thu người dùng", "## Kết quả thực thi Automated Test"],
     "content": "Biên bản nghiệm thu minh chứng evidence và audit trail kết quả kiểm thử. Đại diện Product Owner đã ký duyệt nghiệm thu tính năng tải lên tệp nén. Nhật ký test execution log ghi nhận 45/45 automated tests chạy thành công trên STG.",
     "groundTruth": {
@@ -165,7 +165,7 @@
     "id": "DOC-EVAL-07",
     "title": "Credit Score Feature Spec & API Schema Payload",
     "language": "bilingual",
-    "filePath": "02_Business_Requirements/Feature_Credit_Scoring_and_API_Spec.md",
+    "filePath": "uploads/Feature_Credit_Scoring_and_API_Spec.md",
     "headings": ["# Business Requirements Credit", "## Technical Architecture & Database DDL", "## API Endpoint Schema"],
     "content": "Tài liệu kết hợp business requirement quy định cấp tín dụng cho khách hàng có điểm tín dụng từ 650 trở lên, cùng với thiết kế technical architecture, database schema và endpoint POST /api/credit với request body json.",
     "groundTruth": {
@@ -186,7 +186,7 @@
     "id": "DOC-EVAL-08",
     "title": "Chính sách Cổng Thanh toán Mới Đề xuất (Conflict Document)",
     "language": "vi",
-    "filePath": "02_Business_Requirements/BRD_Payment_Gateway_Contradiction.md",
+    "filePath": "uploads/BRD_Payment_Gateway_Contradiction.md",
     "headings": ["# Quy tắc thanh toán sửa đổi", "## Thời gian chờ phiên", "## Chính sách bảo mật"],
     "content": "Tài liệu đề xuất thay đổi chính sách thanh toán. Thời gian timeout phiên thanh toán là 30m. Xác thực đa nhân tố MFA là tùy chọn không bắt buộc.",
     "groundTruth": {
@@ -205,6 +205,58 @@
           "condition": "Khi khách hàng mở cổng thanh toán",
           "evidenceLevel": "Explicit",
           "exactQuote": "Thời gian timeout phiên thanh toán là 30m."
+        }
+      ]
+    }
+  },
+  {
+    "id": "DOC-EVAL-09",
+    "title": "Chính sách Xác thực Bảo mật Hệ thống 2FA",
+    "language": "vi",
+    "filePath": "uploads/Admin_2FA_Security_Policy.md",
+    "headings": ["# Security Architecture Specification", "## Xác thực đăng nhập hai lớp", "## Quy chuẩn bảo mật kỹ thuật"],
+    "content": "Tài liệu đặc tả kiến trúc bảo mật technical architecture và quy chuẩn phân quyền. Xác thực 2FA là bắt buộc khi đăng nhập tài khoản quản trị hệ thống.",
+    "groundTruth": {
+      "primaryCategory": "05_Technical_Documents",
+      "extractedUnits": [
+        {
+          "subject": "Xác thực 2FA quản trị",
+          "action": "Yêu cầu xác thực hai lớp",
+          "condition": "Khi đăng nhập tài khoản quản trị",
+          "evidenceLevel": "Explicit",
+          "exactQuote": "Xác thực 2FA là bắt buộc khi đăng nhập tài khoản quản trị hệ thống."
+        }
+      ]
+    }
+  },
+  {
+    "id": "DOC-EVAL-10",
+    "title": "Đề xuất Miễn trừ Quy trình Xác thực Bảo mật (Conflict Document)",
+    "language": "vi",
+    "filePath": "uploads/Admin_2FA_Exemption_Proposal.md",
+    "headings": ["# Technical Architecture Đề xuất Sửa đổi", "## Quy chuẩn bảo mật kỹ thuật", "## Thời gian xử lý giao dịch"],
+    "content": "Tài liệu đề xuất điều chỉnh technical architecture. Xác thực 2FA là không bắt buộc khi đăng nhập tài khoản quản trị hệ thống. Thời gian xử lý giao dịch là 7 phút.",
+    "groundTruth": {
+      "primaryCategory": "05_Technical_Documents",
+      "expectedConflicts": [
+        {
+          "conflictType": "Contradiction",
+          "severity": "Critical",
+          "conflictingWithSubject": "Xác thực 2FA quản trị"
+        },
+        {
+          "conflictType": "Contradiction",
+          "severity": "Critical",
+          "conflictingWithSubject": "Thời gian xử lý giao dịch"
+        }
+      ],
+      "extractedUnits": [
+        {
+          "subject": "Xác thực 2FA quản trị",
+          "action": "Miễn trừ xác thực hai lớp",
+          "condition": "Nội bộ",
+          "evidenceLevel": "Explicit",
+          "exactQuote": "Xác thực 2FA là không bắt buộc khi đăng nhập tài khoản quản trị hệ thống."
         }
       ]
     }

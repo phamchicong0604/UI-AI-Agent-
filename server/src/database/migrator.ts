@@ -55,18 +55,29 @@ export class DatabaseMigrator {
   public runPendingMigrations(): { appliedCount: number; appliedVersions: string[] } {
     this.initMigrationTable();
 
-    const applied = new Set(this.getAppliedMigrations().map(m => m.version));
+    const appliedList = this.getAppliedMigrations();
+    const appliedMap = new Map(appliedList.map(m => [m.version, m]));
     const sorted = [...this.migrations].sort((a, b) => a.version.localeCompare(b.version));
 
     const appliedVersions: string[] = [];
 
     for (const migration of sorted) {
-      if (applied.has(migration.version)) {
+      const existing = appliedMap.get(migration.version);
+      const checksum = `sha256:${computeSha256(`${migration.version}|${migration.name}|${migration.up.toString()}`)}`;
+
+      if (existing) {
+        // BUG-033: Compare migration checksum against recorded hash to detect modified applied migrations
+        if (existing.checksum && existing.checksum !== checksum) {
+          console.warn(
+            `[DatabaseMigrator] WARNING: Migration ${migration.version} (${migration.name}) checksum mismatch!\n` +
+            `  Recorded: ${existing.checksum}\n` +
+            `  Current:  ${checksum}`
+          );
+        }
         continue;
       }
 
       const timestamp = new Date().toISOString();
-      const checksum = computeSha256(`${migration.version}|${migration.name}|${migration.up.toString()}`);
 
       console.log(`[DatabaseMigrator] Applying migration: ${migration.version} - ${migration.name}...`);
 
@@ -81,7 +92,7 @@ export class DatabaseMigrator {
         this.db.prepare(`
           INSERT OR IGNORE INTO schema_migrations (version, name, applied_at, checksum)
           VALUES (?, ?, ?, ?)
-        `).run(migration.version, migration.name, timestamp, `sha256:${checksum}`);
+        `).run(migration.version, migration.name, timestamp, checksum);
         appliedVersions.push(migration.version);
       });
 

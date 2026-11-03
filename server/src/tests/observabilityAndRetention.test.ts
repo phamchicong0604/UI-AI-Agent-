@@ -167,6 +167,16 @@ describe('Observability & Retention (Epic E10)', () => {
       // Verify project is deleted from DB
       const projectRow = db.prepare('SELECT * FROM projects WHERE id = ?').get(testProjectId);
       expect(projectRow).toBeUndefined();
+
+      // Verify child records are deleted without orphan records (BUG-008)
+      const docRow = db.prepare('SELECT * FROM documents WHERE id = ?').get('doc-cascade');
+      expect(docRow).toBeUndefined();
+
+      const verRow = db.prepare('SELECT * FROM document_versions WHERE id = ?').get('dv-cascade');
+      expect(verRow).toBeUndefined();
+
+      const sfRow = db.prepare('SELECT * FROM stored_files WHERE id = ?').get(fileId);
+      expect(sfRow).toBeUndefined();
     });
   });
 });

@@ -4,8 +4,8 @@ import { SqliteJobQueue } from '../modules/workflow/jobQueue.js';
 
 describe('Job Queue on SQLite (E3-T2)', () => {
   beforeEach(() => {
-    // Clear jobs table for test isolation
-    db.exec("DELETE FROM jobs WHERE id LIKE 'JOB-TEST-%'");
+    // Clear only test-scoped jobs (NEW-03)
+    db.prepare("DELETE FROM jobs WHERE id LIKE 'JOB-TEST-%'").run();
   });
 
   it('should enqueue, poll, lock and complete a job successfully', async () => {
@@ -56,8 +56,9 @@ describe('Job Queue on SQLite (E3-T2)', () => {
     expect(job?.lastError).toContain('HTTP 429');
     expect(job?.lockedBy).toBeNull();
 
-    // Fast-forward next_run_at to now for test
-    db.prepare("UPDATE jobs SET next_run_at = datetime('now', '-1 minute') WHERE id = ?").run(jobId);
+    // Fast-forward next_run_at to now for test (BUG-029: Use standard ISO 8601 string for SQLite compatibility)
+    const pastTime = new Date(Date.now() - 60000).toISOString();
+    db.prepare('UPDATE jobs SET next_run_at = ? WHERE id = ?').run(pastTime, jobId);
 
     // Attempt 2 -> Fails and exhausts maxAttempts (2)
     await queue.processNext();

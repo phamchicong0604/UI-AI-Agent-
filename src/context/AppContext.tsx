@@ -36,7 +36,8 @@ import {
   testRunsApi,
   bugsApi,
   auditApi,
-  getAiConnection
+  getAiConnection,
+  authenticateRoleSession
 } from '../common/services/api';
 
 export type NavigationTab = 
@@ -164,6 +165,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const [currentRole, setCurrentRole] = useState<UserRole>('QA');
   const [currentUser] = useState<string>('Duc Pham');
+
+  // Authenticate session whenever active role or user switches (NEW-01, NEW-02)
+  useEffect(() => {
+    authenticateRoleSession(currentRole, currentUser);
+  }, [currentRole, currentUser]);
 
   // Backend Sync State
   const [backendConnected, setBackendConnected] = useState<boolean>(false);
@@ -464,7 +470,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     if (backendConnected) {
       try {
-        await documentsApi.updateStatus(id, status, currentRole);
+        await documentsApi.updateStatus(id, status);
       } catch (err) {
         console.warn('[DocQA] Document status sync notice:', err);
       }

@@ -1,7 +1,7 @@
 import { JobRecord, JobType } from '../../common/types.js';
 import { dbRepository } from '../../database/db.js';
 
-export type JobHandler<T = any> = (payload: T, job: JobRecord) => Promise<any>;
+export type JobHandler<T = any> = (payload: T, job: JobRecord, signal?: AbortSignal) => Promise<any>;
 
 export interface EnqueueOptions {
   maxAttempts?: number;
@@ -133,20 +133,54 @@ export class SqliteJobQueue {
       parsedPayload = job.payload;
     }
 
+    const abortController = new AbortController();
+    let timeoutHandle: NodeJS.Timeout | null = null;
+    let heartbeatHandle: NodeJS.Timeout | null = null;
+
     try {
-      // Execute with stage timeout
+      // 1. Start heartbeat to periodically refresh locked_at (BUG-013)
+      heartbeatHandle = setInterval(() => {
+        dbRepository.jobs.heartbeat(job.id, this.workerId);
+      }, Math.min(10000, Math.max(1000, Math.floor(this.stageTimeoutMs / 4))));
+
+      // 2. Execute with stage timeout and ensure timer is properly cleared (BUG-034, NEW-04)
+      const timeoutPromise = new Promise((_, reject) => {
+        timeoutHandle = setTimeout(() => {
+          abortController.abort(new Error(`Job stage timeout after ${this.stageTimeoutMs}ms`));
+          reject(new Error(`Job stage timeout after ${this.stageTimeoutMs}ms`));
+        }, this.stageTimeoutMs);
+      });
+
       const result = await Promise.race([
-        handler(parsedPayload, job),
-        new Promise((_, reject) => 
-          setTimeout(() => reject(new Error(`Job stage timeout after ${this.stageTimeoutMs}ms`)), this.stageTimeoutMs)
-        )
+        handler(parsedPayload, job, abortController.signal),
+        timeoutPromise
       ]);
 
-      dbRepository.jobs.complete(job.id, result);
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+        timeoutHandle = null;
+      }
+      if (heartbeatHandle) {
+        clearInterval(heartbeatHandle);
+        heartbeatHandle = null;
+      }
+
+      // 3. Mark completed with worker ownership verification (BUG-012)
+      dbRepository.jobs.complete(job.id, result, this.workerId);
     } catch (err: any) {
+      abortController.abort();
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+        timeoutHandle = null;
+      }
+      if (heartbeatHandle) {
+        clearInterval(heartbeatHandle);
+        heartbeatHandle = null;
+      }
+
       const errorMessage = err?.message || String(err);
       // Fail with exponential backoff: attempts 1 -> 5s, 2 -> 10s, 3 -> 20s
-      dbRepository.jobs.failWithRetry(job.id, errorMessage);
+      dbRepository.jobs.failWithRetry(job.id, errorMessage, undefined, this.workerId);
     }
   }
 }

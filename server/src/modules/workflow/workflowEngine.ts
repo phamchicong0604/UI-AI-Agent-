@@ -21,15 +21,15 @@ export interface TransitionRequest {
 }
 
 export const ALLOWED_TRANSITIONS: Record<WorkflowState, readonly WorkflowState[]> = {
-  UPLOADED: ['FILE_PROCESSING', 'CANCELLED'],
-  FILE_PROCESSING: ['AI_ANALYSIS', 'REVIEW_REQUIRED', 'FAILED'],
-  AI_ANALYSIS: ['VALIDATION', 'FAILED', 'CANCELLED'],
-  VALIDATION: ['REVIEW_REQUIRED', 'ORGANIZED', 'FAILED'],
+  UPLOADED: ['FILE_PROCESSING', 'CANCELLED', 'SUPERSEDED'],
+  FILE_PROCESSING: ['AI_ANALYSIS', 'REVIEW_REQUIRED', 'FAILED', 'SUPERSEDED'],
+  AI_ANALYSIS: ['VALIDATION', 'FAILED', 'CANCELLED', 'SUPERSEDED'],
+  VALIDATION: ['REVIEW_REQUIRED', 'ORGANIZED', 'FAILED', 'SUPERSEDED'],
   REVIEW_REQUIRED: ['ORGANIZED', 'FEEDBACK_REQUIRED', 'REANALYSIS', 'CANCELLED', 'SUPERSEDED'],
-  FEEDBACK_REQUIRED: ['REANALYSIS', 'CANCELLED'],
-  REANALYSIS: ['VALIDATION', 'FAILED'],
+  FEEDBACK_REQUIRED: ['REANALYSIS', 'CANCELLED', 'SUPERSEDED'],
+  REANALYSIS: ['VALIDATION', 'FAILED', 'SUPERSEDED'],
   ORGANIZED: ['SUPERSEDED'],
-  FAILED: ['FILE_PROCESSING', 'AI_ANALYSIS', 'CANCELLED'],
+  FAILED: ['FILE_PROCESSING', 'AI_ANALYSIS', 'CANCELLED', 'SUPERSEDED'],
   CANCELLED: [],
   SUPERSEDED: []
 } as const;
@@ -49,17 +49,25 @@ export class WorkflowEngine {
   public checkRolePermission(toState: WorkflowState, role: string): boolean {
     if (['Project Admin', 'Admin'].includes(role)) return true;
 
+    // Internal system stages cannot be triggered by human reviewer/PM roles (NEW-09)
+    if (toState === 'FILE_PROCESSING' || toState === 'AI_ANALYSIS' || toState === 'VALIDATION') {
+      return ['System Worker', 'Project Admin'].includes(role);
+    }
+
     if (toState === 'ORGANIZED') {
       return ['Reviewer / Approver', 'PM / Project Lead', 'System Worker'].includes(role);
     }
     if (toState === 'FEEDBACK_REQUIRED') {
-      return ['Reviewer / Approver', 'PM / Project Lead'].includes(role);
+      return ['Reviewer / Approver', 'PM / Project Lead', 'Project Admin'].includes(role);
+    }
+    if (toState === 'SUPERSEDED') {
+      return ['Document Author', 'Project Admin', 'PM / Project Lead', 'Reviewer / Approver', 'System Worker'].includes(role);
     }
     if (toState === 'CANCELLED') {
-      return ['Document Author', 'Project Admin', 'PM / Project Lead'].includes(role);
+      return ['Document Author', 'Project Admin', 'PM / Project Lead', 'Reviewer / Approver'].includes(role);
     }
     if (toState === 'REANALYSIS') {
-      return ['Reviewer / Approver', 'Document Author', 'System Worker', 'Project Admin'].includes(role);
+      return ['Reviewer / Approver', 'Document Author', 'System Worker', 'Project Admin', 'PM / Project Lead'].includes(role);
     }
 
     // Default system-driven pipeline transitions
@@ -68,29 +76,60 @@ export class WorkflowEngine {
 
   /**
    * Execute state transition with audit logging and stage idempotency
+   * BUG-005, NEW-06: Read actual state from DB, verify against compare-and-set, enforce authenticated role
    */
   public async transition(req: TransitionRequest): Promise<void> {
-    const { documentId, fromState, toState, actor, role, reason, metadata } = req;
+    const { documentId, toState, actor, role, reason, metadata } = req;
+
+    const doc = dbRepository.documents.getById(documentId);
+    if (!doc) {
+      throw new WorkflowTransitionError(req.fromState || 'UPLOADED', toState, `Không tìm thấy tài liệu "${documentId}"`);
+    }
+
+    const versionNo = req.versionNo || doc.currentVersion || 'v1.0';
+    const versionRow = db.prepare(`
+      SELECT status, version_no FROM document_versions
+      WHERE document_id = ? AND version_no = ?
+    `).get(documentId, versionNo) as { status: string; version_no: string } | undefined;
+
+    if (!versionRow) {
+      throw new WorkflowTransitionError(
+        req.fromState || 'UPLOADED',
+        toState,
+        `Không tìm thấy phiên bản "${versionNo}" của tài liệu "${documentId}" trong CSDL`
+      );
+    }
+
+    // Actual current state in DB
+    const actualCurrentState = versionRow.status as WorkflowState;
+
+    // Guard: Verify client fromState matches real DB state (BUG-005)
+    if (req.fromState && req.fromState !== actualCurrentState) {
+      throw new WorkflowTransitionError(
+        req.fromState,
+        toState,
+        `Trạng thái thực tế trong CSDL là "${actualCurrentState}", không khớp với fromState "${req.fromState}" của client`
+      );
+    }
 
     // 1. Verify state transition is valid according to state machine
-    if (!this.canTransition(fromState, toState)) {
-      throw new WorkflowTransitionError(fromState, toState, 'Trạng thái chuyển tiếp không nằm trong danh mục cho phép của State Machine');
+    if (!this.canTransition(actualCurrentState, toState)) {
+      throw new WorkflowTransitionError(actualCurrentState, toState, 'Trạng thái chuyển tiếp không nằm trong danh mục cho phép của State Machine');
     }
 
     // 2. Verify role permission
     if (!this.checkRolePermission(toState, role)) {
-      throw new WorkflowTransitionError(fromState, toState, `Role "${role}" không có quyền chuyển trạng thái sang "${toState}"`);
+      throw new WorkflowTransitionError(actualCurrentState, toState, `Role "${role}" không có quyền chuyển trạng thái sang "${toState}"`);
     }
 
-    const doc = dbRepository.documents.getById(documentId);
-    const projectId = doc?.projectId || 'PRJ-01';
+    const projectId = doc.projectId || 'PRJ-01';
 
     // 2.5 Critical Conflict Guard (E6-T4 AC): Critical conflict always blocks ORGANIZED
     if (toState === 'ORGANIZED') {
       const unresolvedCritical = dbRepository.conflicts.getUnresolvedByProject(projectId, 'Critical');
       if (unresolvedCritical.length > 0) {
         throw new WorkflowTransitionError(
-          fromState,
+          actualCurrentState,
           toState,
           `Dự án còn ${unresolvedCritical.length} xung đột nghiêm trọng (Critical Conflicts) chưa được giải quyết. Bắt buộc phải giải quyết trước khi chuyển sang ORGANIZED.`
         );
@@ -99,72 +138,97 @@ export class WorkflowEngine {
 
     const timestamp = new Date().toISOString();
 
-    // 3. Update document and document_versions in SQLite
-    if (doc) {
-      // Map workflow states to UI status lifecycle
-      let mappedStatus = doc.status;
-      if (toState === 'ORGANIZED') mappedStatus = 'Approved';
-      else if (toState === 'REVIEW_REQUIRED' || toState === 'FEEDBACK_REQUIRED') mappedStatus = 'In Review';
-      else if (toState === 'FAILED') mappedStatus = 'Draft';
+    // 3. Update document and document_versions in SQLite with atomic compare-and-set inside transaction (NEW-06, BUG-005)
+    let mappedStatus = doc.status;
+    if (toState === 'ORGANIZED') mappedStatus = 'Approved';
+    else if (toState === 'REVIEW_REQUIRED' || toState === 'FEEDBACK_REQUIRED') mappedStatus = 'In Review';
+    else if (toState === 'FAILED') mappedStatus = 'Draft';
+
+    const tx = db.transaction(() => {
+      const updateRes = db.prepare(`
+        UPDATE document_versions
+        SET status = ?, change_summary = coalesce(?, change_summary)
+        WHERE document_id = ? AND version_no = ? AND status = ?
+      `).run(toState, reason || null, documentId, versionNo, actualCurrentState);
+
+      if (updateRes.changes === 0) {
+        return false;
+      }
 
       doc.status = mappedStatus;
       doc.updatedAt = timestamp.replace('T', ' ').slice(0, 16);
       dbRepository.documents.upsert(doc);
-    }
 
-    // Update document_versions status
-    const versionNo = req.versionNo || doc?.currentVersion || 'v1.0';
-    db.prepare(`
-      UPDATE document_versions
-      SET status = ?, change_summary = coalesce(?, change_summary)
-      WHERE document_id = ? AND version_no = ?
-    `).run(toState, reason || null, documentId, versionNo);
-
-    // 4. Log chained immutable AuditEvent (E3-T3.4)
-    this.recordAuditEvent({
-      entityType: 'Document',
-      entityId: documentId,
-      action: 'WORKFLOW_TRANSITION',
-      actor,
-      role: (role as any) || 'Reviewer / Approver',
-      details: {
-        fromState,
-        toState,
-        role,
-        reason: reason || 'Chuyển trạng thái workflow',
-        metadata: metadata || {}
-      },
-      timestamp
-    });
-  }
-
-  /**
-   * Mark older pending version as SUPERSEDED when a new version is submitted (E3-T3.3)
-   */
-  public async supersedePreviousVersions(documentId: string, currentVersionNo: string, actor: string): Promise<number> {
-    const timestamp = new Date().toISOString();
-    const result = db.prepare(`
-      UPDATE document_versions
-      SET status = 'SUPERSEDED', change_summary = 'Được thay thế bởi phiên bản ' || ?
-      WHERE document_id = ? AND version_no != ? AND status IN ('UPLOADED', 'FILE_PROCESSING', 'AI_ANALYSIS', 'VALIDATION', 'REVIEW_REQUIRED', 'FEEDBACK_REQUIRED')
-    `).run(currentVersionNo, documentId, currentVersionNo);
-
-    if (result.changes > 0) {
+      // Log chained immutable AuditEvent inside same transaction
       this.recordAuditEvent({
         entityType: 'Document',
         entityId: documentId,
-        action: 'VERSION_SUPERSEDED',
+        action: 'WORKFLOW_TRANSITION',
         actor,
+        role: (role as any) || 'Reviewer / Approver',
         details: {
-          currentVersionNo,
-          supersededCount: result.changes,
-          reason: `Tải lên phiên bản mới ${currentVersionNo}`
+          fromState: actualCurrentState,
+          toState,
+          role,
+          reason: reason || 'Chuyển trạng thái workflow',
+          metadata: metadata || {}
         },
         timestamp
       });
+
+      return true;
+    });
+
+    const casSuccess = tx.immediate();
+    if (!casSuccess) {
+      throw new WorkflowTransitionError(
+        actualCurrentState,
+        toState,
+        `Xung đột đồng thời: Phiên bản "${versionNo}" đã bị thay đổi trạng thái bởi tiến trình khác (CAS failed)`
+      );
+    }
+  }
+
+  /**
+   * Mark older pending version as SUPERSEDED when a new version is submitted (E3-T3.3, BUG-018)
+   * Enforces state machine transitions and closes pending review decisions.
+   */
+  public async supersedePreviousVersions(documentId: string, currentVersionNo: string, actor: string): Promise<number> {
+    const timestamp = new Date().toISOString();
+
+    // Query pending versions (do not supersede active in-flight worker stages: FILE_PROCESSING, AI_ANALYSIS, VALIDATION)
+    const olderVersions = db.prepare(`
+      SELECT id, version_no, status FROM document_versions
+      WHERE document_id = ? AND version_no != ? AND status IN ('UPLOADED', 'REVIEW_REQUIRED', 'FEEDBACK_REQUIRED', 'ORGANIZED')
+    `).all(documentId, currentVersionNo) as Array<{ id: string; version_no: string; status: WorkflowState }>;
+
+    let supersededCount = 0;
+    for (const oldVer of olderVersions) {
+      try {
+        await this.transition({
+          documentId,
+          versionNo: oldVer.version_no,
+          fromState: oldVer.status,
+          toState: 'SUPERSEDED',
+          actor,
+          role: 'System Worker',
+          reason: `Được thay thế bởi phiên bản mới ${currentVersionNo}`
+        });
+        supersededCount++;
+
+        // Close pending knowledge units belonging to older version
+        db.prepare(`
+          UPDATE knowledge_units
+          SET status = 'Superseded', updated_at = ?
+          WHERE id IN (SELECT unit_id FROM knowledge_sources WHERE document_version_id = ?)
+            AND status IN ('Draft', 'In Review')
+        `).run(timestamp, oldVer.id);
+      } catch (err: any) {
+        console.warn(`[WorkflowEngine] Could not supersede version ${oldVer.version_no}:`, err.message);
+      }
     }
 
-    return result.changes;
+    return supersededCount;
   }
 
   /**

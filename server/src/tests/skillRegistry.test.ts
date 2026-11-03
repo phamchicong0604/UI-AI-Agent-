@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { db, dbRepository } from '../database/db.js';
 import { SkillRegistry } from '../modules/ai/skillRegistry.js';
 import { 
-  Stage2CombinedOutputSchema, 
-  canAutoApproveUnit 
+  Stage2CombinedOutputSchema,
+  EvidenceLevelEnum
 } from '../modules/ai/skills/schemas.js';
 import { Stage2CombinedRunner } from '../modules/ai/stage2Runner.js';
 
@@ -104,13 +104,17 @@ describe('AI Skill Contracts & Versioned Registry (Epic E4)', () => {
       expect(Stage2CombinedOutputSchema.safeParse(invalidEnum).success).toBe(false);
     });
 
-    it('should block non-Explicit items from being auto-approved (BR-AI-01 / E4-T3.3)', () => {
-      expect(canAutoApproveUnit('Explicit')).toBe(true);
-      expect(canAutoApproveUnit('Inferred')).toBe(false);
-      expect(canAutoApproveUnit('Assumed')).toBe(false);
-      expect(canAutoApproveUnit('Not Specified')).toBe(false);
-      expect(canAutoApproveUnit('Conflict')).toBe(false);
-      expect(canAutoApproveUnit('Unknown')).toBe(false);
+    it('should mandate EvidenceLevel enum adherence (BR-AI-01 / E4-T3.3)', () => {
+      const validLevels = ['Explicit', 'Inferred', 'Assumed', 'Not Specified', 'Conflict', 'Unknown'];
+      for (const level of validLevels) {
+        expect(EvidenceLevelEnum.safeParse(level).success).toBe(true);
+      }
+
+      // Invalid levels must be strictly rejected
+      const invalidLevels = ['Guessed', 'Fabricated', 'Hallucinated', 'Custom', '', 'EXPLICIT'];
+      for (const invalid of invalidLevels) {
+        expect(EvidenceLevelEnum.safeParse(invalid).success).toBe(false);
+      }
     });
   });
 
@@ -206,6 +210,7 @@ describe('AI Skill Contracts & Versioned Registry (Epic E4)', () => {
 
       // Run 1: First execution -> Calls LLM, saves to cache
       const run1 = await runner.execute({
+        projectId: 'PRJ-01',
         documentVersionId: docVersionId,
         documentTitle: 'Database Specs',
         documentText: 'Tài liệu cấu hình database. Chỉ chấp nhận kết nối qua SSL.',
@@ -218,6 +223,7 @@ describe('AI Skill Contracts & Versioned Registry (Epic E4)', () => {
 
       // Run 2: Second execution with identical input and model -> Retrieved from cache
       const run2 = await runner.execute({
+        projectId: 'PRJ-01',
         documentVersionId: docVersionId,
         documentTitle: 'Database Specs',
         documentText: 'Tài liệu cấu hình database. Chỉ chấp nhận kết nối qua SSL.',
@@ -247,6 +253,7 @@ describe('AI Skill Contracts & Versioned Registry (Epic E4)', () => {
       `).run(docVersionId, docId);
 
       const result = await runner.execute({
+        projectId: 'PRJ-01',
         documentVersionId: docVersionId,
         documentTitle: 'QA Plan MVP',
         documentText: '# Kế hoạch kiểm thử\nYêu cầu hệ thống phải hỗ trợ chạy 500 test cases đồng thời.'

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { AlertTriangle, CheckCircle2, XCircle, Shuffle, ShieldAlert, X } from 'lucide-react';
 import { Button, Badge } from '../../common/components';
+import { getAuthToken } from '../../common/services/api';
 
 export interface ConflictData {
   id: string;
@@ -42,19 +43,23 @@ export const ConflictResolutionModal: React.FC<ConflictResolutionModalProps> = (
     setIsSubmitting(true);
     setErrorMsg('');
     try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      const token = getAuthToken();
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
       const res = await fetch(`/api/v1/conflicts/${conflict.id}/resolve`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
           resolution: resolutionChoice,
           resolvedBy: 'Lead QA / Reviewer',
-          notes: resolutionChoice === 'MERGE_SPECIFICATION' ? mergeNotes : undefined
+          notes: mergeNotes.trim() || undefined
         })
       });
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error(data.message || 'Không thể giải quyết xung đột');
+        throw new Error(data.error || data.message || 'Không thể giải quyết xung đột');
       }
 
       onResolved(conflict.id, resolutionChoice);
@@ -238,9 +243,9 @@ export const ConflictResolutionModal: React.FC<ConflictResolutionModalProps> = (
                 className="mt-1 accent-amber-500"
               />
               <div className="text-xs">
-                <div className="font-semibold text-amber-300">3. MERGE_SPECIFICATION (Hợp nhất đặc tả điều kiện)</div>
+                <div className="font-semibold text-amber-300">3. MERGE_SPECIFICATION / COEXIST (Cùng tồn tại / Phân định ngữ cảnh áp dụng)</div>
                 <div className="text-slate-400 mt-0.5">
-                  Cả hai cùng tồn tại nhưng áp dụng cho các ngữ cảnh hoặc phân hệ khác nhau.
+                  Cả hai cùng tồn tại song song nhưng phân định cho các điều kiện, phân hệ hoặc ngữ cảnh đặc thù khác nhau (Coexist).
                 </div>
               </div>
             </label>

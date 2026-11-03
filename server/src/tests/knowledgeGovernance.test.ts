@@ -36,7 +36,7 @@ describe('Knowledge Layer & Governance (Epic E6)', () => {
     // 3. Seed document version
     db.prepare(`
       INSERT OR REPLACE INTO document_versions (id, document_id, version_no, file_id, extracted_content, status, change_summary, created_by, created_at)
-      VALUES (?, ?, 'v1.0', NULL, 'Auth rules', 'VALIDATION', 'Initial', 'Lead BA', '2026-11-03')
+      VALUES (?, ?, 'v1.0', NULL, 'Auth rules', 'REVIEW_REQUIRED', 'Initial', 'Lead BA', '2026-11-03')
     `).run(testDocVerId, testDocId);
   });
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   ShieldAlert,
   ShieldCheck,
@@ -18,6 +18,7 @@ import { Button, Badge } from '../../common/components';
 import { DocumentItem, DocumentCategory } from '../../types';
 import { KnowledgeReviewModal, KnowledgeUnitItem } from './KnowledgeReviewModal';
 import { ConflictResolutionModal, ConflictData } from './ConflictResolutionModal';
+import { getAuthToken } from '../../common/services/api';
 
 export interface ReviewQueueItem {
   document: DocumentItem;
@@ -62,27 +63,36 @@ export const ReviewQueueView: React.FC<ReviewQueueViewProps> = ({
   // Active modals
   const [reviewingItem, setReviewingItem] = useState<ReviewQueueItem | null>(null);
   const [activeConflict, setActiveConflict] = useState<ConflictData | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
-  const fetchQueue = async () => {
+  const fetchQueue = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/v1/documents/review-queue?projectId=${projectId}`);
+      const headers: Record<string, string> = {};
+      const token = getAuthToken();
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const res = await fetch(`/api/v1/documents/review-queue?projectId=${projectId}`, { signal, headers });
       if (res.ok) {
         const json = await res.json();
         if (json.success && Array.isArray(json.data)) {
           setQueueItems(json.data);
         }
       }
-    } catch (err) {
-      console.error('Failed to fetch review queue:', err);
+    } catch (err: any) {
+      if (err.name !== 'AbortError') {
+        console.error('Failed to fetch review queue:', err);
+      }
     } finally {
       setLoading(false);
     }
-  };
+  }, [projectId]);
 
   useEffect(() => {
-    fetchQueue();
-  }, [projectId]);
+    const controller = new AbortController();
+    fetchQueue(controller.signal);
+    return () => controller.abort();
+  }, [fetchQueue]);
 
   const filteredItems = useMemo(() => {
     return queueItems.filter(item => {
@@ -106,53 +116,86 @@ export const ReviewQueueView: React.FC<ReviewQueueViewProps> = ({
   const totalUnits = queueItems.reduce((acc, i) => acc + i.unitsCount, 0);
 
   const handleUnitDecision = async (unitId: string, decision: 'Approve' | 'Reject', reason?: string) => {
+    setActionError(null);
     try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      const token = getAuthToken();
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
       const res = await fetch(`/api/v1/knowledge-units/${unitId}/decision`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ decision, reviewer: 'Lead QA', reason })
       });
-      if (res.ok) {
-        // Update local state in reviewingItem
-        if (reviewingItem) {
-          const updatedUnits = reviewingItem.units.map(u =>
-            u.id === unitId ? { ...u, status: (decision === 'Approve' ? 'Approved' : 'Rejected') as any } : u
-          );
-          setReviewingItem({
-            ...reviewingItem,
-            units: updatedUnits
-          });
-        }
-        await fetchQueue();
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || errorData.message || `Lỗi duyệt đơn vị tri thức (HTTP ${res.status})`);
       }
-    } catch (err) {
+      // Update local state in reviewingItem using functional updater to avoid stale state in bulk loops (BUG-025)
+      setReviewingItem(prev => {
+        if (!prev) return null;
+        return {
+          ...prev,
+          units: prev.units.map(u =>
+            u.id === unitId ? { ...u, status: (decision === 'Approve' ? 'Approved' : 'Rejected') as any } : u
+          )
+        };
+      });
+      await fetchQueue();
+    } catch (err: any) {
       console.error('Error recording unit decision:', err);
+      setActionError(err.message || 'Lỗi xử lý duyệt đơn vị tri thức');
+      throw err;
     }
   };
 
   const handleBulkApproveExplicit = async () => {
     if (!reviewingItem) return;
+    setActionError(null);
     const explicitUnits = reviewingItem.units.filter(u => u.evidenceLevel === 'Explicit' && u.status !== 'Approved');
-    for (const u of explicitUnits) {
-      await handleUnitDecision(u.id, 'Approve');
+    try {
+      for (const u of explicitUnits) {
+        await handleUnitDecision(u.id, 'Approve');
+      }
+    } catch (err: any) {
+      setActionError(`Lỗi khi duyệt hàng loạt: ${err.message}`);
     }
     await fetchQueue();
   };
 
-  const handleConflictResolved = async () => {
+  const handleConflictResolved = async (resolvedConflictId?: string) => {
+    const targetConflictId = resolvedConflictId || activeConflict?.id;
     await fetchQueue();
-    if (reviewingItem) {
-      const updatedConflicts = reviewingItem.conflicts.filter(c => c.id !== activeConflict?.id);
-      setReviewingItem({
-        ...reviewingItem,
-        conflicts: updatedConflicts,
-        conflictsCount: updatedConflicts.length
+    if (targetConflictId) {
+      setReviewingItem(prev => {
+        if (!prev) return null;
+        const updatedConflicts = prev.conflicts.filter(c => c.id !== targetConflictId);
+        return {
+          ...prev,
+          conflicts: updatedConflicts,
+          conflictsCount: updatedConflicts.length
+        };
       });
     }
   };
 
   return (
     <div className="space-y-5">
+      {/* Action Error Banner (BUG-025) */}
+      {actionError && (
+        <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+            <span>{actionError}</span>
+          </div>
+          <button
+            onClick={() => setActionError(null)}
+            className="text-rose-400 hover:text-rose-200 text-xs px-2 py-0.5"
+          >
+            Đóng
+          </button>
+        </div>
+      )}
       {/* Metrics Banner */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3.5">
         <div className="p-4 rounded-xl bg-slate-900 border border-slate-800 shadow-sm flex items-center justify-between">
@@ -224,7 +267,7 @@ export const ReviewQueueView: React.FC<ReviewQueueViewProps> = ({
           </div>
 
           <button
-            onClick={fetchQueue}
+            onClick={() => fetchQueue()}
             className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition-colors"
             title="Làm mới hàng đợi"
           >

@@ -332,10 +332,33 @@ aiRouter.post('/generate-testcases', async (req: Request, res: Response) => {
       return sendError(res, 'Missing required field: requirement', 400);
     }
 
+    // Resolve true projectId from DB first to prevent client-side spoofing (BUG-001)
+    let actualProjectId: string | undefined;
+    if (requirement.id) {
+      try {
+        const dbReq = dbRepository.requirements.getById(requirement.id);
+        if (dbReq && (dbReq as any).projectId) {
+          actualProjectId = (dbReq as any).projectId;
+        }
+      } catch {}
+    }
+    if (!actualProjectId && (requirement.sourceReferences?.[0]?.documentId || sourceDoc?.id)) {
+      const docId = requirement.sourceReferences?.[0]?.documentId || sourceDoc?.id;
+      try {
+        const dbDoc = dbRepository.documents.getById(docId);
+        if (dbDoc && dbDoc.projectId) {
+          actualProjectId = dbDoc.projectId;
+        }
+      } catch {}
+    }
+    // Fail-closed: DB entity takes absolute precedence over client header/body
+    const projectId = actualProjectId || requirement.projectId || sourceDoc?.projectId || (req.headers['x-project-id'] as string) || req.body.projectId;
+
     const result = await aiService.generateGroundedDrafts({
       requirement,
       sourceDoc,
-      userPrompt
+      userPrompt,
+      projectId
     });
 
     sendSuccess(res, result, 'Successfully generated grounded test cases');

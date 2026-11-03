@@ -14,9 +14,13 @@ export const UPLOAD_LIMITS = {
   MAX_ZIP_COMPRESSION_RATIO: 50                // Ratio > 50:1 flagged as zip bomb
 };
 
+export const ALLOWED_EXTENSIONS = new Set([
+  '.md', '.markdown', '.txt', '.docx', '.pdf', '.zip', '.json', '.yaml', '.yml'
+]);
+
 const DISALLOWED_EXTENSIONS = new Set([
   '.exe', '.dll', '.so', '.bin', '.sh', '.bat', '.cmd', '.vbs', '.py', '.rb',
-  '.php', '.jar', '.apk', '.dmg', '.pkg', '.elf', '.msi'
+  '.php', '.jar', '.apk', '.dmg', '.pkg', '.elf', '.msi', '.svg', '.js', '.htm', '.html', '.ps1'
 ]);
 
 /**
@@ -32,8 +36,15 @@ export function validateFileContent(originalName: string, buffer: Buffer): Secur
     };
   }
 
-  // 2. Disallowed extension blacklist
+  // 2. Extension Whitelist (BUG-031) & Blacklist check
   const ext = path.extname(originalName).toLowerCase();
+  if (!ALLOWED_EXTENSIONS.has(ext)) {
+    return {
+      isValid: false,
+      error: `Định dạng tệp "${ext}" không được hỗ trợ hoặc bị chặn vì lý do an toàn bảo mật.`,
+      statusCode: 415
+    };
+  }
   if (DISALLOWED_EXTENSIONS.has(ext)) {
     return {
       isValid: false,
@@ -82,6 +93,13 @@ export function validateFileContent(originalName: string, buffer: Buffer): Secur
         statusCode: 400
       };
     }
+
+    // BUG-009: DOCX files are zip archives and must undergo full archive & zip bomb inspection
+    const archiveCheck = validateZipArchive(buffer);
+    if (!archiveCheck.isValid) {
+      return archiveCheck;
+    }
+
     try {
       const zip = new AdmZip(buffer);
       const entries = zip.getEntries();
@@ -183,9 +201,17 @@ export function validateZipArchive(buffer: Buffer): SecurityCheckResult {
     const uncompressedSize = entry.header.size;
     const compressedSize = entry.header.compressedSize;
 
+    if (uncompressedSize > UPLOAD_LIMITS.MAX_ZIP_TOTAL_UNCOMPRESSED) {
+      return {
+        isValid: false,
+        error: `Tệp con "${entryName}" vượt quá dung lượng giải nén an toàn (${(UPLOAD_LIMITS.MAX_ZIP_TOTAL_UNCOMPRESSED / (1024 * 1024)).toFixed(0)}MB).`,
+        statusCode: 413
+      };
+    }
+
     if (compressedSize > 0) {
       const ratio = uncompressedSize / compressedSize;
-      if (ratio > UPLOAD_LIMITS.MAX_ZIP_COMPRESSION_RATIO && uncompressedSize > 10 * 1024 * 1024) {
+      if (ratio > UPLOAD_LIMITS.MAX_ZIP_COMPRESSION_RATIO && uncompressedSize > 1024 * 1024) {
         return {
           isValid: false,
           error: `Phát hiện rủi ro tấn công Zip Bomb trong tệp "${entryName}" (tỷ lệ nén bất thường: ${ratio.toFixed(0)}:1).`,

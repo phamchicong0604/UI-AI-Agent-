@@ -98,9 +98,3 @@ export const Stage2CombinedOutputSchema = z.object({
 
 export type Stage2CombinedOutput = z.infer<typeof Stage2CombinedOutputSchema>;
 
-/**
- * BR-AI-01: Only items with 'Explicit' evidence level can be assigned 'Approved' status.
- */
-export function canAutoApproveUnit(evidenceLevel: EvidenceLevel | string): boolean {
-  return evidenceLevel === 'Explicit';
-}

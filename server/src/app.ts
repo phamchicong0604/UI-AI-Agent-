@@ -14,6 +14,7 @@ import { settingsRouter } from './modules/settings/settings.router.js';
 import { agentRouter } from './modules/agent/agent.router.js';
 import { workflowRouter } from './modules/workflow/workflow.router.js';
 import { knowledgeRouter } from './modules/knowledge/knowledge.router.js';
+import { authRouter } from './common/auth.router.js';
 
 export const app = express();
 
@@ -33,6 +34,7 @@ app.get('/health', (req, res) => {
 });
 
 // Mount API v1 Routers
+app.use('/api/v1/auth', authRouter);
 app.use('/api/v1/ai', aiRouter);
 app.use('/api/v1/projects', projectsRouter);
 app.use('/api/v1/documents', documentsRouter);

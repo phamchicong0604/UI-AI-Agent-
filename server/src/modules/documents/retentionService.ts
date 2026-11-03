@@ -35,8 +35,8 @@ export class RetentionService {
 
   /**
    * Cascade delete a project:
-   * 1. Physically deletes all stored byte files from FileStore on disk.
-   * 2. Cascade deletes project and associated rows from SQLite.
+   * 1. Cascade deletes project and all associated child rows from SQLite in an atomic transaction (BUG-008).
+   * 2. Physically deletes stored byte files from FileStore on disk after DB commit (BUG-022).
    * 3. Appends chained cryptographic AuditEvent (E10-T3.2, E10-T3.3).
    */
   public static async cascadeDeleteProject(
@@ -44,30 +44,107 @@ export class RetentionService {
     projectId: string,
     deletedBy: string = 'System Admin'
   ): Promise<CascadeProjectDeletionResult> {
-    // 1. Find all stored_files linked to documents in this project
+    // 1. Identify all file storage keys linked to this project before DB deletion
     const fileRows = db.prepare(`
-      SELECT sf.id, sf.storage_key as storageKey
+      SELECT DISTINCT sf.id, sf.storage_key as storageKey
       FROM stored_files sf
       JOIN document_versions dv ON dv.file_id = sf.id
       JOIN documents d ON d.id = dv.document_id
       WHERE d.project_id = ?
     `).all(projectId) as Array<{ id: string; storageKey: string }>;
 
+    // 2. Execute explicit cascade deletion of all child tables in a single SQLite transaction
+    const cascadeTx = db.transaction(() => {
+      // a. Delete pipeline_runs and review_decisions (BUG-008)
+      db.prepare(`
+        DELETE FROM pipeline_runs
+        WHERE document_version_id IN (
+          SELECT dv.id FROM document_versions dv
+          JOIN documents d ON d.id = dv.document_id
+          WHERE d.project_id = ?
+        )
+      `).run(projectId);
+
+      db.prepare(`
+        DELETE FROM review_decisions
+        WHERE target_id IN (
+          SELECT id FROM document_versions WHERE document_id IN (SELECT id FROM documents WHERE project_id = ?)
+        ) OR target_id IN (
+          SELECT id FROM knowledge_units WHERE project_id = ?
+        )
+      `).run(projectId, projectId);
+
+      // b. Delete knowledge_sources, conflicts and knowledge_units
+      db.prepare(`
+        DELETE FROM knowledge_sources
+        WHERE unit_id IN (SELECT id FROM knowledge_units WHERE project_id = ?)
+      `).run(projectId);
+
+      db.prepare('DELETE FROM conflicts WHERE project_id = ?').run(projectId);
+      db.prepare('DELETE FROM knowledge_units WHERE project_id = ?').run(projectId);
+
+      // c. Delete upload_batches
+      db.prepare('DELETE FROM upload_batches WHERE project_id = ?').run(projectId);
+
+      // d. Delete jobs linked to this project
+      db.prepare(`
+        DELETE FROM jobs
+        WHERE payload LIKE ?
+      `).run(`%"projectId":"${projectId}"%`);
+
+      // e. Delete document_relationships
+      db.prepare(`
+        DELETE FROM document_relationships
+        WHERE source_doc_id IN (SELECT id FROM documents WHERE project_id = ?)
+           OR target_doc_id IN (SELECT id FROM documents WHERE project_id = ?)
+      `).run(projectId, projectId);
+
+      // f. Delete document_versions
+      db.prepare(`
+        DELETE FROM document_versions
+        WHERE document_id IN (SELECT id FROM documents WHERE project_id = ?)
+      `).run(projectId);
+
+      // g. Delete stored_files that are not referenced by any other project
+      for (const f of fileRows) {
+        const otherRefs = db.prepare(`
+          SELECT COUNT(*) as count FROM document_versions WHERE file_id = ?
+        `).get(f.id) as { count: number };
+        if (otherRefs.count === 0) {
+          db.prepare('DELETE FROM stored_files WHERE id = ?').run(f.id);
+        }
+      }
+
+      // h. Delete documents
+      db.prepare('DELETE FROM documents WHERE project_id = ?').run(projectId);
+
+      // i. Delete project row
+      db.prepare('DELETE FROM projects WHERE id = ?').run(projectId);
+    });
+
+    cascadeTx.immediate();
+
+    // 3. Delete physical files from disk only after DB transaction has successfully committed (BUG-022)
+    // Strictly verify no other records in stored_files reference the storageKey to prevent data loss (NEW-10)
     let deletedFilesCount = 0;
     for (const f of fileRows) {
       try {
-        await defaultFileStore.delete(f.storageKey);
-        deletedFilesCount++;
+        const remainingRefs = db.prepare(`
+          SELECT COUNT(*) as count FROM stored_files WHERE storage_key = ?
+        `).get(f.storageKey) as { count: number };
+
+        if (remainingRefs.count === 0) {
+          const deleted = await defaultFileStore.delete(f.storageKey);
+          if (deleted) {
+            deletedFilesCount++;
+          }
+        }
       } catch (err) {
-        // Continue deleting remaining files even if one file is missing on disk
+        // Continue cleaning other files if missing
       }
     }
 
-    // 2. Cascade delete project from database
-    const deleteProjectStmt = db.prepare(`DELETE FROM projects WHERE id = ?`);
-    deleteProjectStmt.run(projectId);
-
-    // 3. Append cryptographic Audit Event with hash chain
+    // 4. Append cryptographic Audit Event with hash chain
     const latestHash = dbRepository.auditEvents.getLatestHash();
     const eventId = 'audit-' + randomUUID();
     const timestamp = new Date().toISOString();
