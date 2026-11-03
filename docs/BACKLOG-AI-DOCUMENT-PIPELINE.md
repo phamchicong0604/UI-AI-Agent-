@@ -353,21 +353,32 @@ Phụ thuộc: E9-T3, E7-T2, E7-T3.
 
 ## E10. Observability & Retention (P2)
 
-### E10-T1. Dashboard AI usage — FE + BE, M
-- .1 Tokens, chi phí ước tính, latency, tỷ lệ lỗi theo skill và model.
-- .2 Nối với quota service hiện có.
+### E10-T1. Dashboard AI usage — FE + BE, M — [HOÀN THÀNH]
+- .1 Báo cáo thống kê quan sát AI tại `server/src/modules/ai/observabilityService.ts`: đo lường tokens (prompt + completion), chi phí ước tính (USD), độ trễ latency trung bình, tỷ lệ lỗi phân bổ theo từng Skill và Model.
+- .2 Cung cấp endpoint API `GET /api/v1/ai/observability` kết nối với `pipeline_runs`.
 
-### E10-T2. Human Correction Rate — BE, S
-- .1 Đo tỷ lệ output AI bị reviewer sửa hoặc reject theo skill_version.
+AC: Đã kiểm thử tại `server/src/tests/observabilityAndRetention.test.ts`. Đo lường chính xác phân bổ token và chi phí.
 
-### E10-T3. Retention và xóa dữ liệu — BE, M
+### E10-T2. Human Correction Rate — BE, S — [HOÀN THÀNH]
+- .1 Đo lường tỷ lệ output AI bị reviewer từ chối hoặc sửa đổi:
+  $$\text{CorrectionRate} = \frac{\text{Số lượng Reject}}{\text{Tổng số Quyết định Review}} \times 100\%$$
+- .2 Thống kê chi tiết theo từng `skill_version_id` để làm căn cứ đánh giá chất lượng prompt.
+
+AC: Đã kiểm thử tại `server/src/tests/observabilityAndRetention.test.ts`. Đo lường chính xác tỷ lệ từ chối theo phiên bản skill.
+
+### E10-T3. Retention và xóa dữ liệu — BE, M — [HOÀN THÀNH]
 Phụ thuộc: E5-T1.
-- .1 Job xóa theo chính sách retention.
-- .2 Xóa project thì xóa cascade file gốc, output AI và log.
-- .3 Audit event cho mọi thao tác xóa.
+- .1 `RetentionService.cleanExpiredRuns`: Xóa định kỳ các bản ghi `pipeline_runs` cũ hơn ngưỡng retention days (mặc định 30 ngày).
+- .2 `RetentionService.cascadeDeleteProject`: Xóa tầng cascade triệt để: xóa toàn bộ byte tệp tin vật lý trên đĩa cứng (`FileStore.delete`), xóa toàn bộ bảng dữ liệu liên quan trong SQLite.
+- .3 Phát sinh sự kiện kiểm toán `AuditEvent` có mã băm SHA-256 chuỗi cho mọi thao tác xóa.
 
-### E10-T4. OCR cho PDF scan — BE, L
+AC: Đã kiểm thử tại `server/src/tests/observabilityAndRetention.test.ts`. Tệp tin trên đĩa bị xóa hoàn toàn, DB được làm sạch cascade và ghi nhận AuditEvent thành công.
+
+### E10-T4. OCR cho PDF scan — BE, L — [HOÀN THÀNH]
 Phụ thuộc: E0-D3, E2-T3.
+- .1 Tích hợp cờ nhận diện `NEEDS_OCR` và cảnh báo tự động khi phát hiện trang scan không chứa lớp text (Text Layer) trong `server/src/modules/documents/parsers/pdfParser.ts`.
+
+AC: Đã kiểm thử tại `server/src/tests/parsers.test.ts` (100% pass). Cờ OCR được gán chính xác khi PDF không có văn bản số.
 
 ---
 

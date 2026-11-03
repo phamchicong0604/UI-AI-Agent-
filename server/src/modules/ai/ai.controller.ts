@@ -5,8 +5,9 @@ import { PROVIDER_MODELS } from './model.registry.js';
 import { quotaService } from './quota.service.js';
 import { modelFetcher } from './model.fetcher.js';
 import { accountModelsService, resolveSource, ModelSyncError } from './account-models.service.js';
-import { dbRepository } from '../../database/db.js';
+import { db, dbRepository } from '../../database/db.js';
 import { sendSuccess, sendError } from '../../common/response.js';
+import { ObservabilityService } from './observabilityService.js';
 
 export const aiRouter = Router();
 const aiService = new AiService();
@@ -44,6 +45,19 @@ aiRouter.post('/connection', (req: Request, res: Response) => {
     sendSuccess(res, updated, 'AI connection settings saved successfully');
   } catch (err: any) {
     sendError(res, `Failed to save AI connection: ${err.message}`, 500);
+  }
+});
+
+/**
+ * GET /api/v1/ai/observability
+ * AI Usage & Observability Report (Epic E10-T1, E10-T2)
+ */
+aiRouter.get('/observability', (req: Request, res: Response) => {
+  try {
+    const report = ObservabilityService.getObservabilityReport(db);
+    sendSuccess(res, report);
+  } catch (err: any) {
+    sendError(res, `Lỗi trích xuất báo cáo quan sát AI: ${err.message}`, 500);
   }
 });
 

@@ -13,7 +13,7 @@ Báo cáo kết quả kiểm thử định lượng hệ thống trích xuất t
 | **Extraction Precision** | $\ge 80.0\%$ | **92.5%** | ✅ ĐẠT |
 | **Extraction Recall** | $\ge 80.0\%$ | **94%** | ✅ ĐẠT |
 | **Conflict Detection Recall** | $\ge 85.0\%$ | **100%** | ✅ ĐẠT TUYỆT ĐỐI |
-| **Thời gian xử lý trung bình** | $< 500\text{ms}$ / doc | **0.88 ms** | ✅ CỰC NHANH (0 LLM call) |
+| **Thời gian xử lý trung bình** | $< 500\text{ms}$ / doc | **1.13 ms** | ✅ CỰC NHANH (0 LLM call) |
 | **Tổng tokens tiêu thụ** | Giám sát | **647 tokens** | Tiết kiệm 100% token LLM |
 
 ---

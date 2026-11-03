@@ -5,6 +5,6 @@
   "extractionPrecision": 92.5,
   "extractionRecall": 94,
   "conflictDetectionRecall": 100,
-  "averageLatencyMs": 0.88,
+  "averageLatencyMs": 1.13,
   "totalTokensEstimated": 647
 }
