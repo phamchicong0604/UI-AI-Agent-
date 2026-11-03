@@ -5,6 +5,7 @@ import { PROVIDER_MODELS } from './model.registry.js';
 import { quotaService } from './quota.service.js';
 import { modelFetcher } from './model.fetcher.js';
 import { accountModelsService, resolveSource, ModelSyncError } from './account-models.service.js';
+import { dbRepository } from '../../database/db.js';
 import { sendSuccess, sendError } from '../../common/response.js';
 
 export const aiRouter = Router();
@@ -43,6 +44,23 @@ aiRouter.post('/connection', (req: Request, res: Response) => {
     sendSuccess(res, updated, 'AI connection settings saved successfully');
   } catch (err: any) {
     sendError(res, `Failed to save AI connection: ${err.message}`, 500);
+  }
+});
+
+/**
+ * POST /api/v1/ai/connection/select-model
+ * Saves a chosen model separately into SQLite and loads its per-model effort configuration.
+ */
+aiRouter.post('/connection/select-model', (req: Request, res: Response) => {
+  try {
+    const { provider, modelId, effortLevel } = req.body;
+    if (!modelId) {
+      return sendError(res, 'Model ID is required', 400);
+    }
+    const result = aiConnectionManager.selectModel(provider, modelId, effortLevel);
+    sendSuccess(res, result, `Đã lưu lựa chọn mô hình "${modelId}" riêng vào SQLite database`);
+  } catch (err: any) {
+    sendError(res, `Failed to select model: ${err.message}`, 500);
   }
 });
 
@@ -190,6 +208,46 @@ aiRouter.post('/models/account/sync', async (req: Request, res: Response) => {
       },
       timestamp: new Date().toISOString()
     });
+  }
+});
+
+/**
+ * GET /api/v1/ai/models/efforts?provider=
+ * Retrieves all saved per-model effort configurations for a provider from SQLite.
+ */
+aiRouter.get('/models/efforts', (req: Request, res: Response) => {
+  try {
+    const active = aiConnectionManager.getActiveConnection();
+    const provider = (req.query.provider as any) || active?.provider || 'google';
+    const efforts = dbRepository.modelEfforts.getAll(provider);
+    sendSuccess(res, efforts, 'Per-model efforts retrieved successfully');
+  } catch (err: any) {
+    sendError(res, `Failed to load model efforts: ${err.message}`, 500);
+  }
+});
+
+/**
+ * POST /api/v1/ai/models/effort
+ * Saves effort level specifically for a selected model into SQLite.
+ */
+aiRouter.post('/models/effort', (req: Request, res: Response) => {
+  try {
+    const { provider, modelId, effortLevel, maxOutputTokens, resolvedVariant } = req.body;
+    if (!modelId || !effortLevel) {
+      return sendError(res, 'Both modelId and effortLevel are required', 400);
+    }
+    const active = aiConnectionManager.getActiveConnection();
+    const targetProvider = provider || active?.provider || 'google';
+    const saved = aiConnectionManager.saveModelEffort(
+      targetProvider,
+      modelId,
+      effortLevel,
+      maxOutputTokens,
+      resolvedVariant
+    );
+    sendSuccess(res, saved, `Đã lưu mức độ out "${effortLevel}" cho mô hình "${modelId}" vào SQLite`);
+  } catch (err: any) {
+    sendError(res, `Failed to save model effort: ${err.message}`, 500);
   }
 });
 

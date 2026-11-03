@@ -132,6 +132,18 @@ db.exec(`
     PRIMARY KEY (provider, auth_method, source, model_id)
   );
   CREATE INDEX IF NOT EXISTS idx_ai_models_lookup ON ai_models (provider, auth_method, source);
+
+  -- Per-model effort level settings stored separately in SQLite
+  CREATE TABLE IF NOT EXISTS ai_model_efforts (
+    provider TEXT NOT NULL,
+    model_id TEXT NOT NULL,
+    effort_level TEXT NOT NULL DEFAULT 'medium',
+    max_output_tokens INTEGER DEFAULT 32768,
+    resolved_variant TEXT,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (provider, model_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_ai_model_efforts_lookup ON ai_model_efforts (provider, model_id);
 `);
 
 try {
@@ -139,6 +151,9 @@ try {
 } catch {}
 try {
   db.exec("ALTER TABLE ai_connections ADD COLUMN max_output_tokens INTEGER DEFAULT 32768");
+} catch {}
+try {
+  db.exec("ALTER TABLE ai_connections ADD COLUMN base_model TEXT");
 } catch {}
 
 /* -------------------------------------------------------------
@@ -835,6 +850,65 @@ export const dbRepository = {
         syncedAt: rows[0].synced_at,
         models: rows.map(r => JSON.parse(r.data) as ModelOption)
       };
+    }
+  },
+
+  modelEfforts: {
+    /**
+     * Reads saved effort setting for a specific model under a provider
+     */
+    get(provider: string, modelId: string): { effortLevel: string; maxOutputTokens: number; resolvedVariant?: string; updatedAt?: string } | null {
+      const row = db.prepare(`
+        SELECT effort_level, max_output_tokens, resolved_variant, updated_at
+        FROM ai_model_efforts
+        WHERE provider = ? AND model_id = ?
+      `).get(provider, modelId) as any;
+      if (!row) return null;
+      return {
+        effortLevel: row.effort_level,
+        maxOutputTokens: row.max_output_tokens,
+        resolvedVariant: row.resolved_variant || undefined,
+        updatedAt: row.updated_at
+      };
+    },
+
+    /**
+     * Reads all per-model effort settings for a provider
+     */
+    getAll(provider: string): Record<string, { effortLevel: string; maxOutputTokens: number; resolvedVariant?: string; updatedAt: string }> {
+      const rows = db.prepare(`
+        SELECT model_id, effort_level, max_output_tokens, resolved_variant, updated_at
+        FROM ai_model_efforts
+        WHERE provider = ?
+      `).all(provider) as any[];
+      const map: Record<string, any> = {};
+      for (const r of rows) {
+        map[r.model_id] = {
+          effortLevel: r.effort_level,
+          maxOutputTokens: r.max_output_tokens,
+          resolvedVariant: r.resolved_variant || undefined,
+          updatedAt: r.updated_at
+        };
+      }
+      return map;
+    },
+
+    /**
+     * Saves per-model effort setting atomically in SQLite
+     */
+    save(provider: string, modelId: string, effortLevel: string, maxOutputTokens = 32768, resolvedVariant?: string) {
+      const now = new Date().toISOString();
+      const stmt = db.prepare(`
+        INSERT INTO ai_model_efforts (provider, model_id, effort_level, max_output_tokens, resolved_variant, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(provider, model_id) DO UPDATE SET
+          effort_level = excluded.effort_level,
+          max_output_tokens = excluded.max_output_tokens,
+          resolved_variant = excluded.resolved_variant,
+          updated_at = excluded.updated_at
+      `);
+      stmt.run(provider, modelId, effortLevel, maxOutputTokens, resolvedVariant ?? null, now);
+      return { provider, modelId, effortLevel, maxOutputTokens, resolvedVariant, updatedAt: now };
     }
   }
 };

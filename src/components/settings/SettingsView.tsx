@@ -43,7 +43,10 @@ import {
   getAiQuota,
   checkAiQuota,
   getSavedAccountModels,
-  syncAccountModels
+  syncAccountModels,
+  selectAiModel,
+  getAiModelEfforts,
+  saveAiModelEffort
 } from '../../common/services/api';
 import { 
   AiConnectionConfig, 
@@ -115,6 +118,90 @@ export const SettingsView: React.FC = () => {
   const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
   const [copiedCmd, setCopiedCmd] = useState<boolean>(false);
 
+  // Per-model Effort & Separate Model Persistence
+  const [savedModelEfforts, setSavedModelEfforts] = useState<Record<string, { effortLevel: string; maxOutputTokens: number; resolvedVariant?: string; updatedAt?: string }>>({});
+  const [modelSelectSuccessMsg, setModelSelectSuccessMsg] = useState<string | null>(null);
+  const [effortSavedMsg, setEffortSavedMsg] = useState<string | null>(null);
+  const [modelViewMode, setModelViewMode] = useState<'base' | 'all'>('base');
+  const [isSelectingModel, setIsSelectingModel] = useState<boolean>(false);
+  const [isSavingEffort, setIsSavingEffort] = useState<boolean>(false);
+
+  // Helper functions to decompose model IDs and group into Base Models
+  const parseModelBase = (id: string, name: string): { baseId: string; baseName: string; effort?: ReasoningEffortLevel } => {
+    const match = id.match(/^(.*?)-(low|medium|high|xhigh|max)$/i);
+    if (match) {
+      const baseId = match[1];
+      const effort = match[2].toLowerCase() as ReasoningEffortLevel;
+      const cleanName = name.replace(/\s*\((Low|Medium|High|X-High|Max)\)\s*$/i, '').trim();
+      return { baseId, baseName: cleanName || baseId, effort };
+    }
+    return { baseId: id, baseName: name, effort: undefined };
+  };
+
+  const groupIntoBaseModels = (models: ModelOption[]) => {
+    const map = new Map<string, {
+      baseId: string;
+      baseName: string;
+      supportedEfforts: ReasoningEffortLevel[];
+      variants: Partial<Record<ReasoningEffortLevel, ModelOption>>;
+      defaultModel: ModelOption;
+      recommended: boolean;
+      category: 'reasoning' | 'fast' | 'flagship' | 'local';
+      description: string;
+      contextWindow: string;
+      maxOutput: string;
+      rateLimits?: { rpm: number; tpm: number };
+      source?: string;
+      account?: string;
+      isLive?: boolean;
+    }>();
+
+    for (const m of models) {
+      const { baseId, baseName, effort } = parseModelBase(m.id, m.name);
+      let entry = map.get(baseId);
+      if (!entry) {
+        entry = {
+          baseId,
+          baseName,
+          supportedEfforts: [],
+          variants: {},
+          defaultModel: m,
+          recommended: Boolean(m.recommended),
+          category: m.category,
+          description: m.description,
+          contextWindow: m.contextWindow,
+          maxOutput: m.maxOutput,
+          rateLimits: m.rateLimits,
+          source: m.source,
+          account: m.account,
+          isLive: m.isLive
+        };
+        map.set(baseId, entry);
+      }
+
+      if (effort) {
+        if (!entry.supportedEfforts.includes(effort)) {
+          entry.supportedEfforts.push(effort);
+        }
+        entry.variants[effort] = m;
+      } else {
+        entry.supportedEfforts = ['low', 'medium', 'high'];
+      }
+
+      if (m.recommended) entry.recommended = true;
+    }
+
+    const effortOrder: ReasoningEffortLevel[] = ['low', 'medium', 'high', 'xhigh', 'max'];
+    for (const entry of map.values()) {
+      entry.supportedEfforts.sort((a, b) => effortOrder.indexOf(a) - effortOrder.indexOf(b));
+      if (entry.supportedEfforts.length === 0) {
+        entry.supportedEfforts = ['low', 'medium', 'high'];
+      }
+    }
+
+    return Array.from(map.values());
+  };
+
   useEffect(() => {
     loadAiConnection();
     loadModels();
@@ -172,9 +259,124 @@ export const SettingsView: React.FC = () => {
           cliBinary: c.cliBinary
         });
         await loadSavedModelsFromDb(c.provider, c.authMethod, c.cliBinary);
+        await loadModelEfforts(c.provider);
       }
     } catch (err: any) {
       console.warn('Could not load AI connection:', err.message);
+    }
+  };
+
+  const loadModelEfforts = async (p?: AiProviderId) => {
+    try {
+      const res = await getAiModelEfforts(p || provider);
+      const data = res?.data !== undefined ? res.data : res;
+      if (data && typeof data === 'object') {
+        setSavedModelEfforts(data as any);
+      }
+    } catch (err: any) {
+      console.warn('Could not load model efforts:', err.message);
+    }
+  };
+
+  const handleSelectModel = async (selectedModelId: string, customEffort?: ReasoningEffortLevel) => {
+    setIsSelectingModel(true);
+    setModelSelectSuccessMsg(null);
+    try {
+      const { baseId, baseName } = parseModelBase(selectedModelId, selectedModelId);
+      const existingEffort = savedModelEfforts[selectedModelId]?.effortLevel || savedModelEfforts[baseId]?.effortLevel;
+      const targetEffort = customEffort || (existingEffort as ReasoningEffortLevel) || effortLevel || 'medium';
+
+      const res = await selectAiModel({
+        provider,
+        modelId: selectedModelId,
+        effortLevel: targetEffort
+      });
+
+      const newConn = res.data?.connection;
+      const savedEffort = res.data?.savedEffort;
+
+      if (newConn?.model) {
+        setModel(newConn.model);
+      } else {
+        setModel(selectedModelId);
+      }
+
+      if (savedEffort?.effortLevel) {
+        setEffortLevel(savedEffort.effortLevel as ReasoningEffortLevel);
+      }
+
+      setModelSelectSuccessMsg(`✅ Đã chọn & lưu mô hình "${baseName}" riêng vào SQLite database!`);
+      setTimeout(() => setModelSelectSuccessMsg(null), 3500);
+
+      handleCheckQuota({ model: newConn?.model || selectedModelId });
+      loadModelEfforts(provider);
+    } catch (err: any) {
+      console.error('Failed to select model:', err);
+      setModel(selectedModelId);
+    } finally {
+      setIsSelectingModel(false);
+    }
+  };
+
+  const handleSelectEffortForCurrentModel = async (newEffort: ReasoningEffortLevel) => {
+    setIsSavingEffort(true);
+    setEffortSavedMsg(null);
+    try {
+      setEffortLevel(newEffort);
+
+      const { baseId, baseName } = parseModelBase(model, model);
+      const allCurrentModels = availableModels[provider] || [];
+      const targetVariantId = `${baseId}-${newEffort}`;
+      const hasExactVariant = allCurrentModels.some(m => m.id === targetVariantId);
+      const actualVariant = hasExactVariant ? targetVariantId : model;
+
+      if (hasExactVariant) {
+        setModel(actualVariant);
+      }
+
+      await saveAiModelEffort({
+        provider,
+        modelId: baseId,
+        effortLevel: newEffort,
+        maxOutputTokens,
+        resolvedVariant: actualVariant
+      });
+
+      setSavedModelEfforts(prev => ({
+        ...prev,
+        [baseId]: {
+          effortLevel: newEffort,
+          maxOutputTokens,
+          resolvedVariant: actualVariant,
+          updatedAt: new Date().toISOString()
+        },
+        [actualVariant]: {
+          effortLevel: newEffort,
+          maxOutputTokens,
+          resolvedVariant: actualVariant,
+          updatedAt: new Date().toISOString()
+        }
+      }));
+
+      setEffortSavedMsg(
+        `✅ Đã lưu Mức độ Out "${newEffort.toUpperCase()}" cho mô hình "${baseName}" (Mã thực thi: ${actualVariant}) vào Database!`
+      );
+      setTimeout(() => setEffortSavedMsg(null), 4000);
+
+      await saveAiConnection({
+        provider,
+        authMethod,
+        apiKey: apiKey ? apiKey.trim() : undefined,
+        baseUrl: baseUrl ? baseUrl.trim() : undefined,
+        model: actualVariant,
+        effortLevel: newEffort,
+        maxOutputTokens,
+        cliBinary
+      });
+    } catch (err: any) {
+      console.error('Failed to save effort for model:', err);
+    } finally {
+      setIsSavingEffort(false);
     }
   };
 
@@ -1041,89 +1243,145 @@ export const SettingsView: React.FC = () => {
                 {/* FULL MODEL SELECT DROPDOWN & SEARCH PICKER */}
                 {(() => {
                   const providerModels = availableModels[provider] || DEFAULT_PROVIDER_MODELS[provider] || [];
-                  let filteredModels = modelSearch
+                  const baseModels = groupIntoBaseModels(providerModels);
+
+                  const { baseId: currentBaseId, baseName: currentBaseName } = parseModelBase(model, model);
+                  const currentBase = baseModels.find(b => b.baseId === currentBaseId) || {
+                    baseId: currentBaseId,
+                    baseName: currentBaseName,
+                    supportedEfforts: ['low', 'medium', 'high'] as ReasoningEffortLevel[],
+                    variants: {},
+                    defaultModel: providerModels[0] || {
+                      id: model,
+                      name: model,
+                      description: 'Mô hình được cấu hình sử dụng trực tiếp',
+                      contextWindow: '128,000 tokens',
+                      maxOutput: '8,192 tokens',
+                      category: 'flagship',
+                      rateLimits: { rpm: 500, tpm: 800000 },
+                      pricingType: 'token_billed',
+                      bestFor: 'Tác vụ phân tích & kiểm thử tổng quát',
+                      isLive: false
+                    },
+                    recommended: false,
+                    category: 'flagship' as const,
+                    description: 'Mô hình AI',
+                    contextWindow: '128,000 tokens',
+                    maxOutput: '32,768 tokens',
+                    rateLimits: { rpm: 500, tpm: 800000 }
+                  };
+
+                  let filteredBaseModels = modelSearch
+                    ? baseModels.filter(b => b.baseId.toLowerCase().includes(modelSearch.toLowerCase()) || b.baseName.toLowerCase().includes(modelSearch.toLowerCase()))
+                    : baseModels;
+
+                  let filteredRawModels = modelSearch
                     ? providerModels.filter(m => m.id.toLowerCase().includes(modelSearch.toLowerCase()) || m.name.toLowerCase().includes(modelSearch.toLowerCase()))
                     : providerModels;
 
                   if (modelCategoryFilter === 'recommended') {
-                    filteredModels = filteredModels.filter(m => m.recommended);
+                    filteredBaseModels = filteredBaseModels.filter(b => b.recommended);
+                    filteredRawModels = filteredRawModels.filter(m => m.recommended);
                   } else if (modelCategoryFilter === 'reasoning') {
-                    filteredModels = filteredModels.filter(m => m.category === 'reasoning');
+                    filteredBaseModels = filteredBaseModels.filter(b => b.category === 'reasoning');
+                    filteredRawModels = filteredRawModels.filter(m => m.category === 'reasoning');
                   } else if (modelCategoryFilter === 'fast') {
-                    filteredModels = filteredModels.filter(m => m.category === 'fast');
+                    filteredBaseModels = filteredBaseModels.filter(b => b.category === 'fast');
+                    filteredRawModels = filteredRawModels.filter(m => m.category === 'fast');
                   }
 
-                  const selectedModelMeta = providerModels.find(m => m.id === model) || {
-                    id: model,
-                    name: model,
-                    description: 'Mô hình được cấu hình sử dụng trực tiếp',
-                    contextWindow: '128,000 tokens',
-                    maxOutput: '8,192 tokens',
-                    category: 'flagship',
-                    rateLimits: { rpm: 500, tpm: 800000 },
-                    pricingType: 'token_billed',
-                    bestFor: 'Tác vụ phân tích & kiểm thử tổng quát',
-                    isLive: false
-                  };
-
                   return (
-                    <div className="space-y-3">
+                    <div className="space-y-4">
+                      {/* Step 1 Header & View Mode Switcher */}
                       <div className="p-4 rounded-xl bg-slate-900/90 border border-slate-800 space-y-3">
-                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                          <label className="text-xs font-bold text-white flex items-center gap-2">
-                            <Layers className="w-4 h-4 text-purple-400" />
-                            <span>{t('aiSelectModelDropdownLabel')}</span>
-                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30 font-normal">
-                              {providerModels.length} models từ {provider.toUpperCase()}
-                            </span>
-                          </label>
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/40 uppercase tracking-wider">
+                                {t('aiStepSelectModelFirst')}
+                              </span>
+                              <span className="text-[10px] text-emerald-400 font-mono flex items-center gap-1">
+                                <Database className="w-3 h-3" />
+                                {t('aiModelSavedSeparately')}
+                              </span>
+                            </div>
+                            <label className="text-xs font-bold text-white flex items-center gap-2 mt-1">
+                              <Layers className="w-4 h-4 text-purple-400" />
+                              <span>{t('aiSelectModelDropdownLabel')}</span>
+                              <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30 font-normal">
+                                {baseModels.length} mô hình chính ({providerModels.length} biến thể)
+                              </span>
+                            </label>
+                          </div>
 
-                          <span className="text-[11px] text-slate-400">
-                            Bấm vào khung bên dưới để mở toàn bộ danh sách & chọn model
-                          </span>
+                          {/* Mode Toggle: Base Models vs All Variants */}
+                          <div className="flex items-center bg-slate-950 p-1 rounded-lg border border-slate-800 text-xs">
+                            <button
+                              type="button"
+                              onClick={() => setModelViewMode('base')}
+                              className={`px-2.5 py-1 rounded text-[11px] font-medium transition-all ${
+                                modelViewMode === 'base'
+                                  ? 'bg-purple-600 text-white shadow-sm font-semibold'
+                                  : 'text-slate-400 hover:text-slate-200'
+                              }`}
+                            >
+                              🌟 {t('aiTabBaseModels')} ({baseModels.length})
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setModelViewMode('all')}
+                              className={`px-2.5 py-1 rounded text-[11px] font-medium transition-all ${
+                                modelViewMode === 'all'
+                                  ? 'bg-purple-600 text-white shadow-sm font-semibold'
+                                  : 'text-slate-400 hover:text-slate-200'
+                              }`}
+                            >
+                              📋 {t('aiTabAllVariants')} ({providerModels.length})
+                            </button>
+                          </div>
                         </div>
 
-                        {/* Interactive Custom Model Selector */}
+                        {/* Interactive Dropdown Button */}
                         <div className="relative" ref={modelDropdownRef}>
-                          {/* Main Trigger Button */}
                           <button
                             type="button"
                             onClick={() => setIsModelDropdownOpen(!isModelDropdownOpen)}
                             className="w-full bg-slate-950 border border-purple-500/50 hover:border-purple-400 rounded-xl px-4 py-3 text-left transition-all flex items-center justify-between gap-3 shadow-inner group"
                           >
                             <div className="flex items-center gap-3 min-w-0">
-                              <div className="w-8 h-8 rounded-lg bg-purple-900/40 border border-purple-600/40 flex items-center justify-center shrink-0">
+                              <div className="w-9 h-9 rounded-lg bg-purple-900/40 border border-purple-600/40 flex items-center justify-center shrink-0">
                                 <Cpu className="w-4 h-4 text-purple-400" />
                               </div>
                               <div className="min-w-0">
                                 <div className="flex items-center gap-2">
                                   <span className="font-bold text-white text-xs truncate">
-                                    {selectedModelMeta?.name || model}
+                                    {currentBase.baseName}
                                   </span>
-                                  {selectedModelMeta?.recommended && (
+                                  <code className="text-[10px] font-mono text-purple-300 px-1.5 py-0.2 rounded bg-purple-950/80 border border-purple-800/50">
+                                    {currentBase.baseId}
+                                  </code>
+                                  {currentBase.recommended && (
                                     <span className="px-1.5 py-0.2 rounded text-[9px] bg-purple-500/20 text-purple-300 border border-purple-500/30 font-semibold">
                                       Khuyên dùng
                                     </span>
                                   )}
-                                  {selectedModelMeta?.isLive && (
-                                    <span className="px-1.5 py-0.2 rounded text-[9px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-mono flex items-center gap-1">
-                                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                                      Live
-                                    </span>
-                                  )}
+                                  <span className="px-1.5 py-0.2 rounded text-[9px] bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 font-mono flex items-center gap-1">
+                                    <Database className="w-2.5 h-2.5" />
+                                    Đã lưu DB riêng
+                                  </span>
                                 </div>
-                                <div className="flex items-center gap-2 text-[10px] text-slate-400 font-mono mt-0.5">
-                                  <span>ID: {selectedModelMeta?.id || model}</span>
+                                <div className="flex flex-wrap items-center gap-2 text-[10px] text-slate-400 font-mono mt-0.5">
+                                  <span>Context: {currentBase.contextWindow || '128K'}</span>
                                   <span>•</span>
-                                  <span>Context: {selectedModelMeta?.contextWindow || '128K'}</span>
+                                  <span>Hỗ trợ {currentBase.supportedEfforts.length} mức Effort ({currentBase.supportedEfforts.join(', ')})</span>
                                   <span>•</span>
-                                  <span className="text-cyan-400">{selectedModelMeta?.rateLimits?.rpm || 500} RPM</span>
+                                  <span className="text-cyan-400">{currentBase.rateLimits?.rpm || 500} RPM</span>
                                 </div>
                               </div>
                             </div>
 
                             <div className="flex items-center gap-2 shrink-0">
-                              <span className="text-[11px] text-purple-300 font-medium hidden sm:inline">Thay đổi</span>
+                              <span className="text-[11px] text-purple-300 font-medium hidden sm:inline">Chọn model khác</span>
                               <ChevronDown className={`w-4 h-4 text-purple-400 transition-transform duration-200 ${isModelDropdownOpen ? 'rotate-180' : ''}`} />
                             </div>
                           </button>
@@ -1157,10 +1415,10 @@ export const SettingsView: React.FC = () => {
                                 {/* Category Filter Tabs */}
                                 <div className="flex items-center gap-1.5 text-[10px] overflow-x-auto pb-0.5">
                                   {[
-                                    { id: 'all', label: `Tất cả (${providerModels.length})` },
-                                    { id: 'recommended', label: `⭐ Khuyên dùng (${providerModels.filter(m => m.recommended).length})` },
-                                    { id: 'reasoning', label: `🧠 Suy luận (${providerModels.filter(m => m.category === 'reasoning').length})` },
-                                    { id: 'fast', label: `⚡ Tốc độ cao (${providerModels.filter(m => m.category === 'fast').length})` }
+                                    { id: 'all', label: `Tất cả (${modelViewMode === 'base' ? baseModels.length : providerModels.length})` },
+                                    { id: 'recommended', label: `⭐ Khuyên dùng` },
+                                    { id: 'reasoning', label: `🧠 Suy luận` },
+                                    { id: 'fast', label: `⚡ Tốc độ cao` }
                                   ].map(tab => (
                                     <button
                                       key={tab.id}
@@ -1178,155 +1436,202 @@ export const SettingsView: React.FC = () => {
                                 </div>
                               </div>
 
-                              {/* Models List */}
+                              {/* Dropdown Items List */}
                               <div className="max-h-80 overflow-y-auto divide-y divide-slate-800/60 p-1.5 space-y-1">
-                                {filteredModels.length === 0 ? (
-                                  <div className="p-4 text-center text-xs text-slate-400">
-                                    Không tìm thấy model nào phù hợp từ khóa "{modelSearch}"
-                                  </div>
-                                ) : (
-                                  filteredModels.map((m) => {
-                                    const isSelected = model === m.id;
-                                    return (
-                                      <div
-                                        key={m.id}
-                                        onClick={() => {
-                                          setModel(m.id);
-                                          if (m.id.endsWith('-low')) setEffortLevel('low');
-                                          else if (m.id.endsWith('-medium')) setEffortLevel('medium');
-                                          else if (m.id.endsWith('-high')) setEffortLevel('high');
-                                          setIsModelDropdownOpen(false);
-                                          handleCheckQuota({ model: m.id });
-                                        }}
-                                        className={`p-2.5 rounded-lg cursor-pointer transition-all flex items-center justify-between gap-3 ${
-                                          isSelected
-                                            ? 'bg-purple-950/70 text-white border border-purple-500/60 shadow-sm'
-                                            : 'hover:bg-slate-900/90 text-slate-300'
-                                        }`}
-                                      >
-                                        <div className="min-w-0 space-y-0.5">
-                                          <div className="flex items-center gap-2">
-                                            <span className="font-bold text-xs text-white">
-                                              {m.name}
-                                            </span>
-                                            <code className="text-[10px] font-mono text-purple-300 px-1.5 py-0.2 rounded bg-purple-950/60 border border-purple-800/40">
-                                              {m.id}
-                                            </code>
-                                            {m.recommended && (
-                                              <span className="px-1.5 py-0.2 rounded text-[9px] bg-purple-500/20 text-purple-300 font-semibold">
-                                                Khuyên dùng
+                                {modelViewMode === 'base' ? (
+                                  /* BASE MODELS LIST */
+                                  filteredBaseModels.length === 0 ? (
+                                    <div className="p-4 text-center text-xs text-slate-400">
+                                      Không tìm thấy model nào phù hợp "{modelSearch}"
+                                    </div>
+                                  ) : (
+                                    filteredBaseModels.map((b) => {
+                                      const isSelected = currentBaseId === b.baseId;
+                                      const savedEff = savedModelEfforts[b.baseId]?.effortLevel;
+                                      return (
+                                        <div
+                                          key={b.baseId}
+                                          onClick={() => {
+                                            handleSelectModel(b.baseId);
+                                            setIsModelDropdownOpen(false);
+                                          }}
+                                          className={`p-2.5 rounded-lg cursor-pointer transition-all flex items-center justify-between gap-3 ${
+                                            isSelected
+                                              ? 'bg-purple-950/70 text-white border border-purple-500/60 shadow-sm'
+                                              : 'hover:bg-slate-900/90 text-slate-300'
+                                          }`}
+                                        >
+                                          <div className="min-w-0 space-y-1">
+                                            <div className="flex flex-wrap items-center gap-2">
+                                              <span className="font-bold text-xs text-white">
+                                                {b.baseName}
                                               </span>
-                                            )}
-                                            {m.isLive && (
-                                              <span className="px-1.5 py-0.2 rounded text-[9px] bg-emerald-500/20 text-emerald-400 font-mono">
-                                                Live
-                                              </span>
-                                            )}
-                                            {m.source && (
+                                              <code className="text-[10px] font-mono text-purple-300 px-1.5 py-0.2 rounded bg-purple-950/60 border border-purple-800/40">
+                                                {b.baseId}
+                                              </code>
+                                              {b.recommended && (
+                                                <span className="px-1.5 py-0.2 rounded text-[9px] bg-purple-500/20 text-purple-300 font-semibold">
+                                                  Khuyên dùng
+                                                </span>
+                                              )}
+                                              {savedEff && (
+                                                <span className="px-1.5 py-0.2 rounded text-[9px] bg-cyan-950/60 text-cyan-300 border border-cyan-800/50 font-mono font-semibold">
+                                                  Effort đã lưu: {savedEff.toUpperCase()}
+                                                </span>
+                                              )}
                                               <span className="px-1.5 py-0.2 rounded text-[9px] bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 font-mono flex items-center gap-0.5">
                                                 <Database className="w-2.5 h-2.5" />
-                                                DB
+                                                Lưu DB riêng
                                               </span>
+                                            </div>
+                                            <p className="text-[10px] text-slate-400 line-clamp-1">
+                                              {b.description}
+                                            </p>
+                                            <div className="flex flex-wrap items-center gap-3 text-[9px] text-slate-400 font-mono">
+                                              <span>Context: <strong className="text-slate-300">{b.contextWindow}</strong></span>
+                                              <span>•</span>
+                                              <span>Hỗ trợ Effort: <strong className="text-amber-300">{b.supportedEfforts.join(', ')}</strong></span>
+                                              <span>•</span>
+                                              <span>Tốc độ: <strong className="text-cyan-400">{b.rateLimits?.rpm || 500} RPM</strong></span>
+                                            </div>
+                                          </div>
+
+                                          <div className="shrink-0">
+                                            {isSelected ? (
+                                              <div className="w-5 h-5 rounded-full bg-purple-600 flex items-center justify-center">
+                                                <Check className="w-3 h-3 text-white" />
+                                              </div>
+                                            ) : (
+                                              <div className="w-5 h-5 rounded-full border border-slate-700 hover:border-slate-500" />
                                             )}
                                           </div>
-                                          <p className="text-[10px] text-slate-400 line-clamp-1">
-                                            {m.description}
-                                          </p>
-                                          <div className="flex items-center gap-3 text-[9px] text-slate-400 font-mono">
-                                            <span>Context: <strong className="text-slate-300">{m.contextWindow}</strong></span>
-                                            <span>Max Output: <strong className="text-slate-300">{m.maxOutput || '32,768'}</strong></span>
-                                            <span>Tốc độ: <strong className="text-cyan-400">{m.rateLimits?.rpm || 500} RPM</strong></span>
+                                        </div>
+                                      );
+                                    })
+                                  )
+                                ) : (
+                                  /* RAW VARIANTS LIST */
+                                  filteredRawModels.length === 0 ? (
+                                    <div className="p-4 text-center text-xs text-slate-400">
+                                      Không tìm thấy biến thể nào phù hợp "{modelSearch}"
+                                    </div>
+                                  ) : (
+                                    filteredRawModels.map((m) => {
+                                      const isSelected = model === m.id;
+                                      return (
+                                        <div
+                                          key={m.id}
+                                          onClick={() => {
+                                            handleSelectModel(m.id);
+                                            setIsModelDropdownOpen(false);
+                                          }}
+                                          className={`p-2.5 rounded-lg cursor-pointer transition-all flex items-center justify-between gap-3 ${
+                                            isSelected
+                                              ? 'bg-purple-950/70 text-white border border-purple-500/60 shadow-sm'
+                                              : 'hover:bg-slate-900/90 text-slate-300'
+                                          }`}
+                                        >
+                                          <div className="min-w-0 space-y-0.5">
+                                            <div className="flex items-center gap-2">
+                                              <span className="font-bold text-xs text-white">{m.name}</span>
+                                              <code className="text-[10px] font-mono text-purple-300 px-1.5 py-0.2 rounded bg-purple-950/60 border border-purple-800/40">
+                                                {m.id}
+                                              </code>
+                                            </div>
+                                            <div className="flex items-center gap-3 text-[9px] text-slate-400 font-mono">
+                                              <span>Context: <strong className="text-slate-300">{m.contextWindow}</strong></span>
+                                              <span>Tốc độ: <strong className="text-cyan-400">{m.rateLimits?.rpm || 500} RPM</strong></span>
+                                            </div>
+                                          </div>
+                                          <div className="shrink-0">
+                                            {isSelected ? (
+                                              <div className="w-5 h-5 rounded-full bg-purple-600 flex items-center justify-center">
+                                                <Check className="w-3 h-3 text-white" />
+                                              </div>
+                                            ) : (
+                                              <div className="w-5 h-5 rounded-full border border-slate-700 hover:border-slate-500" />
+                                            )}
                                           </div>
                                         </div>
-
-                                        <div className="shrink-0">
-                                          {isSelected ? (
-                                            <div className="w-5 h-5 rounded-full bg-purple-600 flex items-center justify-center">
-                                              <Check className="w-3 h-3 text-white" />
-                                            </div>
-                                          ) : (
-                                            <div className="w-5 h-5 rounded-full border border-slate-700 hover:border-slate-500" />
-                                          )}
-                                        </div>
-                                      </div>
-                                    );
-                                  })
+                                      );
+                                    })
+                                  )
                                 )}
                               </div>
                             </div>
                           )}
                         </div>
 
-                        {/* Selected Model Detailed Inspector */}
-                        {selectedModelMeta && (
-                          <div className="p-3.5 rounded-xl bg-purple-950/20 border border-purple-800/40 text-xs space-y-2.5 mt-2">
-                            <div className="flex flex-wrap items-center justify-between gap-2">
-                              <div className="flex items-center gap-2">
-                                <span className="font-bold text-white text-sm">{selectedModelMeta.name}</span>
-                                <code className="text-purple-300 font-mono text-[11px] px-2 py-0.5 rounded bg-purple-900/40 border border-purple-700/50">
-                                  {selectedModelMeta.id}
-                                </code>
-                                {selectedModelMeta.recommended && (
-                                  <span className="px-1.5 py-0.5 rounded text-[9px] bg-purple-500/20 text-purple-300 border border-purple-500/30 font-semibold">
-                                    Khuyên dùng
-                                  </span>
-                                )}
-                                {selectedModelMeta.isLive && (
-                                  <span className="px-1.5 py-0.5 rounded text-[9px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-mono flex items-center gap-1">
-                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                                    API Live
-                                  </span>
-                                )}
-                              </div>
-                              <span className="text-[10px] text-slate-400">
-                                Nhóm: <strong className="text-purple-300 uppercase">{selectedModelMeta.category}</strong>
-                              </span>
-                            </div>
-
-                            <p className="text-[11px] text-slate-300 leading-relaxed">
-                              {selectedModelMeta.description}
-                            </p>
-
-                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 border-t border-purple-900/30 text-[10px]">
-                              <div>
-                                <span className="text-slate-400 block">Context Window:</span>
-                                <span className="font-mono text-slate-200 font-semibold">{selectedModelMeta.contextWindow}</span>
-                              </div>
-                              <div>
-                                <span className="text-slate-400 block">Max Output:</span>
-                                <span className="font-mono text-slate-200 font-semibold">{selectedModelMeta.maxOutput || '8,192 tokens'}</span>
-                              </div>
-                              <div>
-                                <span className="text-slate-400 block">Tốc độ tối đa:</span>
-                                <span className="font-mono text-cyan-400 font-semibold">{selectedModelMeta.rateLimits?.rpm || 500} RPM</span>
-                              </div>
-                              <div>
-                                <span className="text-slate-400 block">Tối ưu cho QA:</span>
-                                <span className="text-purple-200 truncate block font-medium">{selectedModelMeta.bestFor || 'Tổng hợp tài liệu'}</span>
-                              </div>
-                            </div>
+                        {/* Model Select Success Notification */}
+                        {modelSelectSuccessMsg && (
+                          <div className="p-2.5 rounded-lg bg-emerald-950/40 border border-emerald-500/50 text-emerald-300 text-xs flex items-center gap-2 animate-in fade-in duration-200">
+                            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                            <span className="font-medium">{modelSelectSuccessMsg}</span>
                           </div>
                         )}
+
+                        {/* Inspector for current base model */}
+                        <div className="p-3.5 rounded-xl bg-purple-950/20 border border-purple-800/40 text-xs space-y-2.5 mt-2">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-white text-sm">{currentBase.baseName}</span>
+                              <code className="text-purple-300 font-mono text-[11px] px-2 py-0.5 rounded bg-purple-900/40 border border-purple-700/50">
+                                {currentBase.baseId}
+                              </code>
+                              {currentBase.recommended && (
+                                <span className="px-1.5 py-0.5 rounded text-[9px] bg-purple-500/20 text-purple-300 border border-purple-500/30 font-semibold">
+                                  Khuyên dùng
+                                </span>
+                              )}
+                              <span className="px-1.5 py-0.5 rounded text-[9px] bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 font-mono flex items-center gap-1">
+                                <Database className="w-2.5 h-2.5" />
+                                Lưu SQLite riêng
+                              </span>
+                            </div>
+                            <div className="text-[10px] text-slate-400 font-mono">
+                              Mã thực thi hiện tại: <span className="text-purple-300 font-bold">{model}</span>
+                            </div>
+                          </div>
+
+                          <p className="text-[11px] text-slate-300 leading-relaxed">
+                            {currentBase.description}
+                          </p>
+
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 border-t border-purple-900/30 text-[10px]">
+                            <div>
+                              <span className="text-slate-400 block">Context Window:</span>
+                              <span className="font-mono text-slate-200 font-semibold">{currentBase.contextWindow}</span>
+                            </div>
+                            <div>
+                              <span className="text-slate-400 block">Mức Effort hỗ trợ:</span>
+                              <span className="font-mono text-amber-300 font-semibold">{currentBase.supportedEfforts.join(', ')}</span>
+                            </div>
+                            <div>
+                              <span className="text-slate-400 block">Tốc độ tối đa:</span>
+                              <span className="font-mono text-cyan-400 font-semibold">{currentBase.rateLimits?.rpm || 500} RPM</span>
+                            </div>
+                            <div>
+                              <span className="text-slate-400 block">Tối ưu cho QA:</span>
+                              <span className="text-purple-200 truncate block font-medium">{currentBase.defaultModel.bestFor || 'Tổng hợp tài liệu'}</span>
+                            </div>
+                          </div>
+                        </div>
                       </div>
 
-                      {/* Quick Cards Grid (Top models or filtered) */}
+                      {/* Quick 1-Touch Base Model Cards */}
                       <div className="space-y-2">
-                        <div className="text-[11px] text-slate-400 font-medium">
-                          Chọn nhanh 1-chạm hoặc bấm thẻ bên dưới:
+                        <div className="flex items-center justify-between text-[11px] text-slate-400 font-medium">
+                          <span>{t('aiStepSelectModelFirst')} – Bấm thẻ để chọn & lưu model riêng:</span>
+                          <span className="text-slate-500 text-[10px]">Tự động nạp Effort đã lưu của model đó</span>
                         </div>
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                          {providerModels.slice(0, 6).map((m) => {
-                            const isSelected = model === m.id;
+                          {baseModels.slice(0, 6).map((b) => {
+                            const isSelected = currentBaseId === b.baseId;
+                            const savedEff = savedModelEfforts[b.baseId]?.effortLevel;
                             return (
                               <div
-                                key={m.id}
-                                onClick={() => {
-                                  setModel(m.id);
-                                  if (m.id.endsWith('-low')) setEffortLevel('low');
-                                  else if (m.id.endsWith('-medium')) setEffortLevel('medium');
-                                  else if (m.id.endsWith('-high')) setEffortLevel('high');
-                                  handleCheckQuota({ model: m.id });
-                                }}
+                                key={b.baseId}
+                                onClick={() => handleSelectModel(b.baseId)}
                                 className={`p-3.5 rounded-xl border cursor-pointer transition-all flex flex-col justify-between ${
                                   isSelected
                                     ? 'bg-purple-950/30 border-purple-500 shadow-md ring-1 ring-purple-500/40'
@@ -1336,24 +1641,21 @@ export const SettingsView: React.FC = () => {
                                 <div>
                                   <div className="flex items-start justify-between gap-2">
                                     <div className="flex flex-wrap items-center gap-1.5 font-bold text-white text-xs">
-                                      <span>{m.name}</span>
-                                      {m.recommended && (
+                                      <span>{b.baseName}</span>
+                                      {b.recommended && (
                                         <span className="px-1.5 py-0.5 rounded text-[9px] bg-purple-500/20 text-purple-300 border border-purple-500/30 font-semibold">
                                           Khuyên dùng
                                         </span>
                                       )}
-                                      {m.isLive && (
-                                        <span className="px-1.5 py-0.5 rounded text-[9px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-mono flex items-center gap-1">
-                                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                                          API Live
+                                      {savedEff && (
+                                        <span className="px-1.5 py-0.5 rounded text-[9px] bg-cyan-950/60 text-cyan-300 border border-cyan-800/50 font-mono font-semibold">
+                                          Effort: {savedEff.toUpperCase()}
                                         </span>
                                       )}
-                                      {m.source && (
-                                        <span className="px-1.5 py-0.5 rounded text-[9px] bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 font-mono flex items-center gap-1">
-                                          <Database className="w-2.5 h-2.5" />
-                                          SQLite
-                                        </span>
-                                      )}
+                                      <span className="px-1.5 py-0.5 rounded text-[9px] bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 font-mono flex items-center gap-1">
+                                        <Database className="w-2.5 h-2.5" />
+                                        DB
+                                      </span>
                                     </div>
                                     <div className={`w-4 h-4 rounded-full border flex items-center justify-center shrink-0 ${
                                       isSelected ? 'border-purple-500 bg-purple-500' : 'border-slate-600'
@@ -1363,14 +1665,14 @@ export const SettingsView: React.FC = () => {
                                   </div>
 
                                   <p className="text-[11px] text-slate-300 mt-2 leading-relaxed line-clamp-2">
-                                    {m.description}
+                                    {b.description}
                                   </p>
                                 </div>
 
                                 <div className="mt-3 pt-2.5 border-t border-slate-800/80 space-y-1 text-[10px]">
                                   <div className="flex items-center justify-between text-slate-400">
-                                    <span>Context: <strong className="text-slate-200 font-mono">{m.contextWindow || '128K'}</strong></span>
-                                    <span>Tốc độ: <strong className="text-cyan-400 font-mono">{m.rateLimits?.rpm || 500} RPM</strong></span>
+                                    <span>Context: <strong className="text-slate-200 font-mono">{b.contextWindow}</strong></span>
+                                    <span>Effort: <strong className="text-amber-300 font-mono">{b.supportedEfforts.join(', ')}</strong></span>
                                   </div>
                                 </div>
                               </div>
@@ -1383,7 +1685,7 @@ export const SettingsView: React.FC = () => {
                       <div className="p-3.5 rounded-xl bg-slate-900/60 border border-slate-800/80 space-y-1.5">
                         <div className="flex items-center justify-between text-[11px] text-slate-300">
                           <span className="font-semibold">{t('aiCustomModelLabel')}</span>
-                          <span className="text-[10px] text-slate-500">Cho phép nhập bất kỳ model ID nào vừa phát hành hoặc model riêng</span>
+                          <span className="text-[10px] text-slate-500">Cho phép nhập trực tiếp bất kỳ model ID nào</span>
                         </div>
                         <div className="flex items-center gap-2">
                           <input
@@ -1395,6 +1697,14 @@ export const SettingsView: React.FC = () => {
                             placeholder={t('aiCustomModelPlaceholder')}
                             className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3.5 py-2 text-xs text-white font-mono focus:outline-none focus:border-purple-500"
                           />
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleSelectModel(model)}
+                            className="border-purple-800/60 text-purple-300 text-xs shrink-0 h-8"
+                          >
+                            Lưu model này
+                          </Button>
                         </div>
                       </div>
                     </div>
@@ -1402,130 +1712,207 @@ export const SettingsView: React.FC = () => {
                 })()}
               </div>
 
-              {/* 5. MỨC ĐỘ OUT & DUNG LƯỢNG OUTPUT (REASONING EFFORT & OUTPUT CAPACITY) */}
-              <div className="space-y-4 pt-2">
-                <div>
-                  <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-2">
-                    <Sliders className="w-4 h-4 text-purple-400" />
-                    <span>{t('aiEffortSectionTitle')}</span>
-                  </h3>
-                  <p className="text-[11px] text-slate-400 mt-0.5">
-                    {t('aiEffortSectionSubtitle')}
-                  </p>
-                </div>
+              {/* 5. MỨC ĐỘ OUT & DUNG LƯỢNG OUTPUT (REASONING EFFORT) CHO MÔ HÌNH ĐANG CHỌN */}
+              {(() => {
+                const { baseId, baseName: rawBaseName } = parseModelBase(model, model);
+                const providerModels = availableModels[provider] || DEFAULT_PROVIDER_MODELS[provider] || [];
+                const baseModels = groupIntoBaseModels(providerModels);
+                const currentBase = baseModels.find(b => b.baseId === baseId);
+                const baseName = currentBase?.baseName || rawBaseName;
+                const supportedEfforts = currentBase?.supportedEfforts || ['low', 'medium', 'high'];
 
-                <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800 space-y-4">
-                  {/* Effort Level Selection */}
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="font-semibold text-white flex items-center gap-1.5">
-                        <Zap className="w-3.5 h-3.5 text-amber-400" />
-                        {t('aiEffortLabel')}
-                      </span>
-                      <span className="text-[11px] font-mono text-purple-300 uppercase font-bold">
-                        Đang chọn: {effortLevel}
-                      </span>
+                const effortItems: Array<{
+                  id: ReasoningEffortLevel;
+                  name: string;
+                  desc: string;
+                  icon: string;
+                  badge: string;
+                  variantSuffix: string;
+                }> = [
+                  { id: 'low', name: 'Low', desc: 'Tốc độ phản hồi cực nhanh', icon: '⚡', badge: 'Fast', variantSuffix: '-low' },
+                  { id: 'medium', name: 'Medium', desc: 'Cân bằng tốc độ & chất lượng', icon: '⚖️', badge: 'Khuyên dùng', variantSuffix: '-medium' },
+                  { id: 'high', name: 'High', desc: 'Suy luận logic sâu cho QA', icon: '🧠', badge: 'Deep', variantSuffix: '-high' },
+                  { id: 'xhigh', name: 'X-High', desc: 'Phân tích mở rộng mã nguồn', icon: '🔬', badge: 'Heavy', variantSuffix: '-xhigh' },
+                  { id: 'max', name: 'Max', desc: 'Nỗ lực tư duy tối đa mô hình', icon: '🚀', badge: 'Max', variantSuffix: '-max' }
+                ];
+
+                return (
+                  <div className="space-y-4 pt-2">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 uppercase tracking-wider">
+                            {t('aiStepSelectEffortSecond')}
+                          </span>
+                          <span className="text-[10px] text-emerald-400 font-mono flex items-center gap-1">
+                            <Database className="w-3 h-3" />
+                            {t('aiEffortSavedForModel')}
+                          </span>
+                        </div>
+                        <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-2 mt-1">
+                          <Sliders className="w-4 h-4 text-purple-400" />
+                          <span>{t('aiEffortConfiguredFor')} <strong className="text-purple-300 normal-case">{baseName}</strong></span>
+                        </h3>
+                        <p className="text-[11px] text-slate-400 mt-0.5">
+                          Sau khi đã chọn mô hình <strong className="text-white">{baseName}</strong> ở trên, chọn mức độ Out bên dưới. Lựa chọn sẽ được lưu riêng cho chính mô hình này vào SQLite DB.
+                        </p>
+                      </div>
+                      <div className="shrink-0 font-mono text-[11px] text-purple-300 px-2.5 py-1 rounded bg-slate-900 border border-slate-800">
+                        Mã thực thi CLI: <span className="text-white font-bold">{model}</span>
+                      </div>
                     </div>
 
-                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5">
-                      {(
-                        [
-                          { id: 'low', name: 'Low', desc: 'Tốc độ phản hồi cực nhanh', icon: '⚡', badge: 'Fast' },
-                          { id: 'medium', name: 'Medium', desc: 'Cân bằng tốc độ & chất lượng', icon: '⚖️', badge: 'Khuyên dùng' },
-                          { id: 'high', name: 'High', desc: 'Suy luận logic sâu cho QA', icon: '🧠', badge: 'Deep' },
-                          { id: 'xhigh', name: 'X-High', desc: 'Phân tích mở rộng mã nguồn', icon: '🔬', badge: 'Heavy' },
-                          { id: 'max', name: 'Max', desc: 'Nỗ lực tư duy tối đa mô hình', icon: '🚀', badge: 'Max' }
-                        ] as const
-                      ).map((item) => {
-                        const isSelected = effortLevel === item.id;
-                        return (
-                          <div
-                            key={item.id}
-                            onClick={() => {
-                              setEffortLevel(item.id);
-                              // If current model has an exact matching variant in availableModels, auto-switch to it
-                              const basePrefix = model.replace(/-(low|medium|high|xhigh|max)$/, '');
-                              const matchingVariant = `${basePrefix}-${item.id}`;
-                              const allCurrentModels = availableModels[provider] || [];
-                              if (allCurrentModels.some((m) => m.id === matchingVariant)) {
-                                setModel(matchingVariant);
-                              }
-                            }}
-                            className={`p-3 rounded-xl border cursor-pointer transition-all flex flex-col justify-between ${
-                              isSelected
-                                ? 'bg-purple-950/40 border-purple-500 shadow-md ring-1 ring-purple-500/40'
-                                : 'bg-slate-950/70 border-slate-800 hover:border-slate-700'
-                            }`}
-                          >
-                            <div className="flex items-start justify-between gap-1">
-                              <span className="text-base">{item.icon}</span>
-                              <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
-                                isSelected ? 'bg-purple-500 text-white' : 'bg-slate-800 text-slate-400'
-                              }`}>
-                                {item.badge}
-                              </span>
-                            </div>
-                            <div className="mt-2">
-                              <div className="font-bold text-xs text-white flex items-center justify-between">
-                                <span>{item.name}</span>
-                                {isSelected && <Check className="w-3 h-3 text-purple-400" />}
-                              </div>
-                              <p className="text-[10px] text-slate-400 mt-1 leading-snug">
-                                {item.desc}
-                              </p>
-                            </div>
+                    <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800 space-y-4">
+                      {/* Active Model Effort Context Card */}
+                      <div className="p-3 rounded-xl bg-purple-950/30 border border-purple-800/40 text-xs flex flex-wrap items-center justify-between gap-2.5">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-slate-400 font-medium">Mô hình áp dụng:</span>
+                          <span className="font-bold text-white px-2 py-0.5 rounded bg-purple-900/60 border border-purple-700/60">
+                            {baseName} ({baseId})
+                          </span>
+                          <span className="text-slate-500">•</span>
+                          <span className="text-slate-400">Mức độ Out hiện tại:</span>
+                          <span className="font-bold text-amber-300 uppercase font-mono px-2 py-0.5 rounded bg-amber-950/50 border border-amber-700/50">
+                            {effortLevel}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1.5 text-[10px] text-emerald-400 font-mono">
+                          <Database className="w-3 h-3" />
+                          <span>Bảng ai_model_efforts (SQLite)</span>
+                        </div>
+                      </div>
+
+                      {/* Effort Saved Success Toast */}
+                      {effortSavedMsg && (
+                        <div className="p-2.5 rounded-lg bg-emerald-950/40 border border-emerald-500/50 text-emerald-300 text-xs flex items-center justify-between gap-2 animate-in fade-in duration-200">
+                          <div className="flex items-center gap-2">
+                            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                            <span className="font-medium">{effortSavedMsg}</span>
                           </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  {/* Max Output Tokens Selection */}
-                  <div className="space-y-2 pt-3 border-t border-slate-800/80">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="font-semibold text-white flex items-center gap-1.5">
-                        <Cpu className="w-3.5 h-3.5 text-cyan-400" />
-                        {t('aiMaxTokensLabel')}
-                      </span>
-                      <span className="text-[11px] font-mono text-cyan-400 font-bold">
-                        {maxOutputTokens.toLocaleString()} tokens
-                      </span>
-                    </div>
-
-                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
-                      {[
-                        { val: 4096, label: '4,096', note: 'Ngắn gọn' },
-                        { val: 8192, label: '8,192', note: 'Cơ bản' },
-                        { val: 16384, label: '16,384', note: 'Vừa phải' },
-                        { val: 32768, label: '32,768', note: 'Chuẩn QA' },
-                        { val: 65536, label: '65,536', note: 'Chi tiết' },
-                        { val: 128000, label: '128,000', note: 'Tối đa' }
-                      ].map((tok) => {
-                        const isSelected = maxOutputTokens === tok.val;
-                        return (
                           <button
-                            key={tok.val}
                             type="button"
-                            onClick={() => setMaxOutputTokens(tok.val)}
-                            className={`p-2 rounded-lg border text-left transition-all ${
-                              isSelected
-                                ? 'bg-cyan-950/40 border-cyan-500 text-white shadow-sm ring-1 ring-cyan-500/40'
-                                : 'bg-slate-950/60 border-slate-800 text-slate-300 hover:border-slate-700'
-                            }`}
+                            onClick={() => setEffortSavedMsg(null)}
+                            className="text-slate-400 hover:text-white text-xs px-1"
                           >
-                            <div className="font-mono font-bold text-xs">{tok.label}</div>
-                            <div className="text-[9px] text-slate-400 mt-0.5">{tok.note}</div>
+                            ✕
                           </button>
-                        );
-                      })}
-                    </div>
+                        </div>
+                      )}
 
-                    <p className="text-[10px] text-slate-400 mt-1 italic">
-                      {t('aiMaxTokensHint')}
-                    </p>
+                      {/* Effort Level Selection Cards */}
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="font-semibold text-white flex items-center gap-1.5">
+                            <Zap className="w-3.5 h-3.5 text-amber-400" />
+                            {t('aiEffortLabel')}
+                          </span>
+                          <span className="text-[11px] text-slate-400">
+                            Bấm để lưu Mức độ Out cho mô hình <strong className="text-purple-300">{baseName}</strong>:
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5">
+                          {effortItems.map((item) => {
+                            const isSelected = effortLevel === item.id;
+                            const isSupported = supportedEfforts.includes(item.id);
+                            const variantId = `${baseId}${item.variantSuffix}`;
+
+                            return (
+                              <div
+                                key={item.id}
+                                onClick={() => {
+                                  if (isSupported) {
+                                    handleSelectEffortForCurrentModel(item.id);
+                                  }
+                                }}
+                                className={`p-3 rounded-xl border transition-all flex flex-col justify-between ${
+                                  !isSupported
+                                    ? 'opacity-40 bg-slate-950/40 border-slate-800/50 cursor-not-allowed'
+                                    : isSelected
+                                    ? 'bg-purple-950/50 border-purple-500 shadow-md ring-2 ring-purple-500/50 cursor-pointer'
+                                    : 'bg-slate-950/70 border-slate-800 hover:border-slate-700 cursor-pointer'
+                                }`}
+                              >
+                                <div className="flex items-start justify-between gap-1">
+                                  <span className="text-base">{item.icon}</span>
+                                  <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                                    isSelected
+                                      ? 'bg-purple-500 text-white'
+                                      : isSupported
+                                      ? 'bg-slate-800 text-slate-400'
+                                      : 'bg-slate-900 text-slate-600'
+                                  }`}>
+                                    {isSupported ? item.badge : 'N/A'}
+                                  </span>
+                                </div>
+                                <div className="mt-2">
+                                  <div className="font-bold text-xs text-white flex items-center justify-between">
+                                    <span>{item.name}</span>
+                                    {isSelected && <Check className="w-3.5 h-3.5 text-purple-400 font-bold" />}
+                                  </div>
+                                  <p className="text-[10px] text-slate-400 mt-1 leading-snug">
+                                    {item.desc}
+                                  </p>
+                                  {isSupported && (
+                                    <div className="mt-2 pt-1.5 border-t border-slate-800/60 text-[9px] font-mono text-purple-300 truncate">
+                                      {variantId}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* Max Output Tokens Selection */}
+                      <div className="space-y-2 pt-3 border-t border-slate-800/80">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="font-semibold text-white flex items-center gap-1.5">
+                            <Cpu className="w-3.5 h-3.5 text-cyan-400" />
+                            {t('aiMaxTokensLabel')}
+                          </span>
+                          <span className="text-[11px] font-mono text-cyan-400 font-bold">
+                            {maxOutputTokens.toLocaleString()} tokens
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+                          {[
+                            { val: 4096, label: '4,096', note: 'Ngắn gọn' },
+                            { val: 8192, label: '8,192', note: 'Cơ bản' },
+                            { val: 16384, label: '16,384', note: 'Vừa phải' },
+                            { val: 32768, label: '32,768', note: 'Chuẩn QA' },
+                            { val: 65536, label: '65,536', note: 'Chi tiết' },
+                            { val: 128000, label: '128,000', note: 'Tối đa' }
+                          ].map((tok) => {
+                            const isSelected = maxOutputTokens === tok.val;
+                            return (
+                              <button
+                                key={tok.val}
+                                type="button"
+                                onClick={() => setMaxOutputTokens(tok.val)}
+                                className={`p-2 rounded-lg border text-left transition-all ${
+                                  isSelected
+                                    ? 'bg-cyan-950/40 border-cyan-500 text-white shadow-sm ring-1 ring-cyan-500/40'
+                                    : 'bg-slate-950/60 border-slate-800 text-slate-300 hover:border-slate-700'
+                                }`}
+                              >
+                                <div className="font-mono font-bold text-xs">{tok.label}</div>
+                                <div className="text-[9px] text-slate-400 mt-0.5">{tok.note}</div>
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        <p className="text-[10px] text-slate-400 mt-1 italic">
+                          {t('aiMaxTokensHint')}
+                        </p>
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </div>
+                );
+              })()}
 
               {/* 5. THÔNG TIN HẠN MỨC & DUNG LƯỢNG (QUOTA & RATE LIMITS) */}
               <div className="space-y-3 pt-2">

@@ -314,7 +314,7 @@ export const en = {
 
   // Reasoning Effort & Output Tokens
   aiEffortSectionTitle: '5. Reasoning Effort Level & Output Capacity',
-  aiEffortSectionSubtitle: 'Configure the depth of reasoning for test case generation and bug detection. Higher levels yield deeper analysis.',
+  aiEffortSectionSubtitle: 'Configure the depth of reasoning for test case generation. After choosing a model, you configure and save effort specifically for that model.',
   aiEffortLabel: 'Reasoning Effort Level:',
   aiEffortLow: 'Low (Fast Response)',
   aiEffortMedium: 'Medium (Balanced - Recommended)',
@@ -323,6 +323,15 @@ export const en = {
   aiEffortMax: 'Max (Maximum Depth)',
   aiMaxTokensLabel: 'Max Output Tokens Limit:',
   aiMaxTokensHint: 'Maximum output tokens generated per completion call.',
+  aiModelSavedSeparately: 'Model saved separately into SQLite',
+  aiEffortSavedForModel: 'Effort level saved for this model in SQLite',
+  aiEffortConfiguredFor: 'Configuring Effort Level for model:',
+  aiEffortSupportedByModel: 'Effort levels supported by this model:',
+  aiTabBaseModels: 'Base Models',
+  aiTabAllVariants: 'All CLI Variants',
+  aiExecutionVariantBadge: 'CLI Exec Variant:',
+  aiStepSelectModelFirst: 'Step 1: Select Model (Saved separately in DB)',
+  aiStepSelectEffortSecond: 'Step 2: Select Reasoning Effort for this model',
 
   // Terminal & CLI Agent Settings
   settingsTabAgent: 'Terminal & CLI Agent',

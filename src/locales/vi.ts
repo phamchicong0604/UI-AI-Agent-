@@ -314,7 +314,7 @@ export const vi = {
 
   // Reasoning Effort & Output Tokens
   aiEffortSectionTitle: '5. Mức độ Out / Nỗ lực suy luận (Reasoning Effort Level)',
-  aiEffortSectionSubtitle: 'Tùy chỉnh độ sâu suy luận khi sinh kịch bản test và rà soát bug. Mức độ cao hơn cho kết quả phân tích kỹ càng hơn.',
+  aiEffortSectionSubtitle: 'Tùy chỉnh độ sâu suy luận khi sinh kịch bản test và rà soát bug. Sau khi chọn Model, bạn cấu hình mức độ Out riêng cho chính Model đó.',
   aiEffortLabel: 'Mức độ Out (Reasoning Effort):',
   aiEffortLow: 'Low (Tốc độ cao)',
   aiEffortMedium: 'Medium (Cân bằng - Khuyên dùng)',
@@ -323,6 +323,15 @@ export const vi = {
   aiEffortMax: 'Max (Tối đa)',
   aiMaxTokensLabel: 'Giới hạn Tokens Đầu ra (Max Output Tokens):',
   aiMaxTokensHint: 'Số lượng tokens tối đa mà mô hình có thể tạo ra trong một lượt thực thi.',
+  aiModelSavedSeparately: 'Đã lưu mô hình riêng vào SQLite',
+  aiEffortSavedForModel: 'Đã lưu Mức độ Out cho mô hình vào SQLite',
+  aiEffortConfiguredFor: 'Cấu hình Mức độ Out cho mô hình:',
+  aiEffortSupportedByModel: 'Mức độ Out hỗ trợ bởi mô hình này:',
+  aiTabBaseModels: 'Mô hình chính (Base Models)',
+  aiTabAllVariants: 'Tất cả biến thể CLI (Raw Variants)',
+  aiExecutionVariantBadge: 'Mã thực thi CLI:',
+  aiStepSelectModelFirst: 'Bước 1: Chọn Mô hình (Lưu riêng vào DB)',
+  aiStepSelectEffortSecond: 'Bước 2: Chọn Mức độ Out (Effort) cho mô hình đó',
 
   // Terminal & CLI Agent Settings
   settingsTabAgent: 'Terminal & CLI Agent',

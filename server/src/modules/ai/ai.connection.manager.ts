@@ -66,8 +66,8 @@ export class AIConnectionManager {
     // Default model if provider changed
     const targetProvider = payload.provider || existing?.provider || 'google';
     let targetModel = payload.model || existing?.model;
-    const availableModels = PROVIDER_MODELS[targetProvider] || [];
-    if (!targetModel || !availableModels.some(m => m.id === targetModel)) {
+    if (!targetModel || typeof targetModel !== 'string' || !targetModel.trim()) {
+      const availableModels = PROVIDER_MODELS[targetProvider] || [];
       targetModel = availableModels[0]?.id || 'gemini-4-argon-medium';
     }
 
@@ -98,6 +98,82 @@ export class AIConnectionManager {
       apiKey: undefined,
       maskedApiKey: this.maskKey(updated.apiKey)
     };
+  }
+
+  /**
+   * Selects and saves a model separately in SQLite.
+   * If this model already has a saved effort level, it is loaded and applied.
+   */
+  selectModel(provider: AiProviderId, modelId: string, effortLevel?: ReasoningEffortLevel): {
+    connection: AiConnectionConfig;
+    savedEffort: { effortLevel: string; maxOutputTokens: number; resolvedVariant?: string; updatedAt?: string } | null;
+  } {
+    const existing = dbRepository.aiConnections.get();
+    const targetProvider = provider || existing?.provider || 'google';
+
+    const basePrefix = modelId.replace(/-(low|medium|high|xhigh|max)$/, '');
+    const modelEffort = dbRepository.modelEfforts.get(targetProvider, modelId) || dbRepository.modelEfforts.get(targetProvider, basePrefix);
+
+    const activeEffort = effortLevel || (modelEffort?.effortLevel as ReasoningEffortLevel) || (
+      modelId.endsWith('-low') ? 'low' :
+      modelId.endsWith('-high') ? 'high' :
+      modelId.endsWith('-xhigh') ? 'xhigh' :
+      modelId.endsWith('-max') ? 'max' : 'medium'
+    );
+
+    let resolvedVariant = modelId;
+    if (modelEffort?.resolvedVariant) {
+      resolvedVariant = modelEffort.resolvedVariant;
+    } else if (modelId.endsWith('-low') || modelId.endsWith('-medium') || modelId.endsWith('-high')) {
+      resolvedVariant = `${basePrefix}-${activeEffort}`;
+    }
+
+    const savedConn = this.saveConnection({
+      provider: targetProvider,
+      model: resolvedVariant || modelId,
+      effortLevel: activeEffort
+    });
+
+    return {
+      connection: savedConn,
+      savedEffort: modelEffort || { effortLevel: activeEffort, maxOutputTokens: 32768, resolvedVariant }
+    };
+  }
+
+  /**
+   * Saves effort level specifically for a given model into SQLite.
+   */
+  saveModelEffort(
+    provider: AiProviderId,
+    modelId: string,
+    effortLevel: ReasoningEffortLevel,
+    maxOutputTokens = 32768,
+    resolvedVariant?: string
+  ) {
+    const basePrefix = modelId.replace(/-(low|medium|high|xhigh|max)$/, '');
+    const actualVariant = resolvedVariant || (
+      modelId.includes('-') && /-(low|medium|high|xhigh|max)$/.test(modelId)
+        ? `${basePrefix}-${effortLevel}`
+        : modelId
+    );
+
+    const saved = dbRepository.modelEfforts.save(provider, modelId, effortLevel, maxOutputTokens, actualVariant);
+    if (basePrefix !== modelId) {
+      dbRepository.modelEfforts.save(provider, basePrefix, effortLevel, maxOutputTokens, actualVariant);
+    }
+
+    // Update active connection if current model matches
+    const active = dbRepository.aiConnections.get();
+    if (active && (active.model === modelId || active.model.startsWith(basePrefix))) {
+      this.saveConnection({
+        provider,
+        model: actualVariant,
+        effortLevel,
+        maxOutputTokens
+      });
+    }
+
+    return saved;
   }
 
   /**

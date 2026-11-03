@@ -333,6 +333,32 @@ export const aiConnectionApi = {
       method: 'POST',
       body: JSON.stringify(data || {})
     });
+  },
+  async selectModel(data: {
+    provider?: string;
+    modelId: string;
+    effortLevel?: string;
+  }): Promise<any> {
+    return fetchJson<any>(`${API_BASE_URL}/ai/connection/select-model`, {
+      method: 'POST',
+      body: JSON.stringify(data)
+    });
+  },
+  async getModelEfforts(provider?: string): Promise<Record<string, { effortLevel: string; maxOutputTokens: number; resolvedVariant?: string; updatedAt: string }>> {
+    const qs = provider ? `?provider=${encodeURIComponent(provider)}` : '';
+    return fetchJson<any>(`${API_BASE_URL}/ai/models/efforts${qs}`);
+  },
+  async saveModelEffort(data: {
+    provider?: string;
+    modelId: string;
+    effortLevel: string;
+    maxOutputTokens?: number;
+    resolvedVariant?: string;
+  }): Promise<any> {
+    return fetchJson<any>(`${API_BASE_URL}/ai/models/effort`, {
+      method: 'POST',
+      body: JSON.stringify(data)
+    });
   }
 };
 
@@ -385,6 +411,9 @@ export const detectCliTools = aiConnectionApi.detectCli;
 export const disconnectAiConnection = aiConnectionApi.disconnect;
 export const getAiModels = aiConnectionApi.getModels;
 export const fetchAiLiveModels = aiConnectionApi.fetchLiveModels;
+export const selectAiModel = aiConnectionApi.selectModel;
+export const getAiModelEfforts = aiConnectionApi.getModelEfforts;
+export const saveAiModelEffort = aiConnectionApi.saveModelEffort;
 
 /* -------------------------------------------------------------
  * ACCOUNT MODELS (synced from subscription / API key, stored in SQLite)
