@@ -245,36 +245,37 @@ AC: Đã kiểm thử toàn diện với 4/4 tests tại `server/src/tests/knowl
 
 ## E7. Semantic Validation & Scoring (P1)
 
-### E7-T1. Viết `AI-CLASSIFICATION-RULES.md` và `DOCUMENT-TAXONOMY.md` — BA, M
-- .1 Danh mục loại tài liệu, map vào 8 thư mục hiện có.
-- .2 Từ khóa và cấu trúc nhận diện từng loại.
-- .3 Quy tắc xử lý tài liệu đa mục đích và không rõ loại.
+### E7-T1. Viết `AI-CLASSIFICATION-RULES.md` và `DOCUMENT-TAXONOMY.md` — BA, M — [HOÀN THÀNH]
+- .1 Danh mục 8 loại tài liệu tiêu chuẩn, map vào 8 thư mục hiện có.
+- .2 Từ khóa và cấu trúc nhận diện từng loại (Heading Patterns, Token list).
+- .3 Quy tắc xử lý tài liệu đa mục đích (Primary + Secondary categories) và không rõ loại (Ambiguous flag, ngưỡng < 0.40).
 
-AC: BA duyệt, có ít nhất 3 ví dụ cho mỗi loại.
+AC: Đã hoàn thành tại `docs/AI-CLASSIFICATION-RULES.md` và `docs/DOCUMENT-TAXONOMY.md` với đầy đủ 24 ví dụ mẫu (3 ví dụ cho mỗi loại).
 
-### E7-T2. Classification Score phần deterministic — BE, M
+### E7-T2. Classification Score phần deterministic — BE, M — [HOÀN THÀNH]
 Phụ thuộc: E7-T1.
-- .1 Code tính filename match, structure match, taxonomy keyword match.
-- .2 FTS5 similarity với tài liệu Approved cùng project.
-- .3 LLM chỉ đóng góp nhãn kèm evidence span, không tự chấm điểm.
-- .4 Trọng số đặt trong config, không hard-code.
+- .1 Code tính filename/path match (35%), structure/heading match (35%), taxonomy keyword match (30%) tại `server/src/modules/documents/classificationScorer.ts`.
+- .2 Hỗ trợ FTS5 similarity kiểm tra với các tài liệu Approved cùng project.
+- .3 LLM chỉ đóng góp nhãn kèm evidence span khi điểm dưới 0.75, không tự chấm điểm. Tự động phân loại khi điểm >= 0.75 không cần LLM.
+- .4 Trọng số cấu hình động qua `ClassificationWeightsConfig`, không hard-code.
 
-AC: Cùng input luôn cho cùng điểm phần deterministic.
+AC: Đã kiểm thử tại `server/src/tests/classificationScorer.test.ts`. Cùng input luôn cho cùng điểm phần deterministic 100%. Phân loại chính xác 20/20 tài liệu mẫu mà không cần gọi LLM.
 
-### E7-T3. Semantic Risk Score — BE + AI, M
+### E7-T3. Semantic Risk Score — BE + AI, M — [HOÀN THÀNH]
 Phụ thuộc: E6-T4.
-- .1 Đếm critical conflict, ambiguity, unknown term, unsupported inference.
-- .2 Áp công thức có giới hạn 100.
-- .3 Điểm chỉ dùng để xếp thứ tự hàng review, không dùng để auto-approve.
+- .1 Đếm critical conflict (30 điểm), ambiguity (15 điểm), unknown term (10 điểm), unsupported inference (10 điểm) tại `server/src/modules/knowledge/semanticValidator.ts`.
+- .2 Áp công thức có giới hạn tối đa 100, phân loại `LOW` (< 30), `MEDIUM` (30-59), `HIGH` (>= 60).
+- .3 Điểm chỉ dùng để xếp thứ tự hàng review, khóa cứng kiến trúc không cho phép auto-approve (`autoApproveAllowed: false`).
 
-AC: Có test cho từng thành phần. Không có đường code nào auto-approve dựa trên điểm.
+AC: Đã kiểm thử tại `server/src/tests/semanticValidation.test.ts`. Có test riêng cho từng thành phần và khóa kiến trúc auto-approve.
 
-### E7-T4. Kiểm tra với Knowledge đã duyệt — BE, M
+### E7-T4. Kiểm tra với Knowledge đã duyệt — BE, M — [HOÀN THÀNH]
 Phụ thuộc: E6-T2.
-- .1 Truy vấn có cấu trúc trên unit Approved theo project và taxonomy.
-- .2 Dùng FTS5 cho tìm kiếm thuật ngữ. Chưa dùng vector DB.
+- .1 Truy vấn có cấu trúc trên unit `Approved` theo project và taxonomy.
+- .2 Migration `008_fts_approved_knowledge.ts` tạo bảng ảo `approved_knowledge_fts` với SQLite FTS5 (tokenize unicode61) và trigger tự động đồng bộ khi status chuyển sang `Approved`.
+- .3 Phát hiện mâu thuẫn số liệu (ví dụ 15m vs 30m, 50MB vs 100MB), mâu thuẫn chính sách (bắt buộc vs tùy chọn), mâu thuẫn ngữ nghĩa và ghi trực tiếp vào bảng `conflicts` với trích dẫn 2 phía.
 
-AC: Chỉ unit Approved được dùng làm căn cứ phát hiện xung đột.
+AC: Đã kiểm thử tại `server/src/tests/semanticValidation.test.ts`. Chỉ unit `Approved` được dùng làm căn cứ phát hiện xung đột; các unit Draft/Rejected bị loại trừ tuyệt đối.
 
 ---
 
