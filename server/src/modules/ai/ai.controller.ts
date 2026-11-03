@@ -4,6 +4,7 @@ import { aiConnectionManager } from './ai.connection.manager.js';
 import { PROVIDER_MODELS } from './model.registry.js';
 import { quotaService } from './quota.service.js';
 import { modelFetcher } from './model.fetcher.js';
+import { accountModelsService, resolveSource, ModelSyncError } from './account-models.service.js';
 import { sendSuccess, sendError } from '../../common/response.js';
 
 export const aiRouter = Router();
@@ -129,6 +130,66 @@ aiRouter.post('/models/fetch', async (req: Request, res: Response) => {
     sendSuccess(res, result, result.message);
   } catch (err: any) {
     sendError(res, `Failed to fetch live models: ${err.message}`, 500);
+  }
+});
+
+/**
+ * GET /api/v1/ai/models/account?provider=&authMethod=&cliBinary=
+ * Reads the model list previously synced for this account from SQLite (no provider call).
+ */
+aiRouter.get('/models/account', (req: Request, res: Response) => {
+  try {
+    const active = aiConnectionManager.getActiveConnection();
+    const ref = {
+      provider: (req.query.provider as any) || active?.provider || 'google',
+      authMethod: (req.query.authMethod as any) || active?.authMethod || 'api_key',
+      cliBinary: (req.query.cliBinary as string) || active?.cliBinary
+    };
+    const saved = accountModelsService.getSaved(ref);
+    sendSuccess(res, {
+      synced: Boolean(saved),
+      ...(saved || { provider: ref.provider, authMethod: ref.authMethod, models: [] }),
+      source: resolveSource(ref)
+    });
+  } catch (err: any) {
+    sendError(res, `Failed to read saved models: ${err.message}`, 500);
+  }
+});
+
+/**
+ * POST /api/v1/ai/models/account/sync
+ * Queries the connected account (CLI subscription or API key) for its models and saves them to SQLite.
+ */
+aiRouter.post('/models/account/sync', async (req: Request, res: Response) => {
+  const active = aiConnectionManager.getActiveConnection();
+  const ref = {
+    provider: req.body.provider || active?.provider || 'google',
+    authMethod: req.body.authMethod || active?.authMethod || 'api_key',
+    cliBinary: req.body.cliBinary || active?.cliBinary,
+    apiKey: req.body.apiKey,
+    baseUrl: req.body.baseUrl
+  };
+  try {
+    const snapshot = await accountModelsService.syncAndSave(ref);
+    sendSuccess(
+      res,
+      { synced: true, ...snapshot },
+      `Đã đồng bộ và lưu ${snapshot.models.length} model từ tài khoản (${resolveSource(ref)}).`
+    );
+  } catch (err: any) {
+    const code = err instanceof ModelSyncError ? err.code : 'failed';
+    const status = code === 'auth_required' ? 401 : code === 'unsupported' ? 422 : code === 'not_installed' ? 404 : 502;
+    res.status(status).json({
+      success: false,
+      error: err.message,
+      data: {
+        code,
+        loginCommand: err instanceof ModelSyncError ? err.loginCommand : undefined,
+        // Still return what is stored so the UI keeps showing the last good list
+        saved: accountModelsService.getSaved(ref)
+      },
+      timestamp: new Date().toISOString()
+    });
   }
 });
 

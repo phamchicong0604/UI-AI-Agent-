@@ -12,7 +12,8 @@ import {
   BugItem,
   AuditEvent,
   StatusLifecycle,
-  TestResultStatus
+  TestResultStatus,
+  ModelOption
 } from '../../types';
 
 const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:5001/api/v1';
@@ -384,6 +385,69 @@ export const detectCliTools = aiConnectionApi.detectCli;
 export const disconnectAiConnection = aiConnectionApi.disconnect;
 export const getAiModels = aiConnectionApi.getModels;
 export const fetchAiLiveModels = aiConnectionApi.fetchLiveModels;
+
+/* -------------------------------------------------------------
+ * ACCOUNT MODELS (synced from subscription / API key, stored in SQLite)
+ * ----------------------------------------------------------- */
+export interface AccountModelsResult {
+  provider: string;
+  authMethod: string;
+  source: string;
+  synced: boolean;
+  account?: string;
+  syncedAt?: string;
+  models: ModelOption[];
+}
+
+export interface AccountModelsSyncResponse {
+  ok: boolean;
+  message: string;
+  data?: AccountModelsResult;
+  /** Present on failure */
+  code?: 'auth_required' | 'unsupported' | 'not_installed' | 'failed';
+  loginCommand?: string;
+  saved?: AccountModelsResult | null;
+}
+
+/** Reads the model list last saved in the DB for this account (does not call the provider). */
+export async function getSavedAccountModels(params: {
+  provider: string;
+  authMethod: string;
+  cliBinary?: string;
+}): Promise<AccountModelsResult> {
+  const qs = new URLSearchParams({
+    provider: params.provider,
+    authMethod: params.authMethod,
+    ...(params.cliBinary ? { cliBinary: params.cliBinary } : {})
+  });
+  return fetchJson<AccountModelsResult>(`${API_BASE_URL}/ai/models/account?${qs.toString()}`);
+}
+
+/** Queries the account for its models, saves them to the DB and returns the stored list. */
+export async function syncAccountModels(params: {
+  provider: string;
+  authMethod: string;
+  cliBinary?: string;
+  apiKey?: string;
+  baseUrl?: string;
+}): Promise<AccountModelsSyncResponse> {
+  const res = await fetch(`${API_BASE_URL}/ai/models/account/sync`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params)
+  });
+  const json = await res.json().catch(() => ({}));
+  if (res.ok) {
+    return { ok: true, message: json.message || '', data: json.data };
+  }
+  return {
+    ok: false,
+    message: json.error || `HTTP ${res.status}`,
+    code: json.data?.code,
+    loginCommand: json.data?.loginCommand,
+    saved: json.data?.saved ?? null
+  };
+}
 export const getAiQuota = aiConnectionApi.getQuota;
 export const checkAiQuota = aiConnectionApi.checkQuota;
 

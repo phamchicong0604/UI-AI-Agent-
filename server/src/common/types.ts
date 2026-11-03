@@ -231,6 +231,22 @@ export interface ModelOption {
   pricingType: 'token_billed' | 'subscription_included';
   bestFor: string;
   isLive?: boolean;
+  /** Where the model entry came from: e.g. "cli:agy", "api:google", "catalog" */
+  source?: string;
+  /** Account / subscription identity the model list was synced for */
+  account?: string;
+  /** ISO timestamp of the last successful sync from the provider account */
+  syncedAt?: string;
+}
+
+/** A persisted snapshot of the model list available to one provider account */
+export interface AccountModelSnapshot {
+  provider: AiProviderId;
+  authMethod: AiAuthMethod;
+  source: string;
+  account?: string;
+  syncedAt?: string;
+  models: ModelOption[];
 }
 
 export interface AiQuotaInfo {

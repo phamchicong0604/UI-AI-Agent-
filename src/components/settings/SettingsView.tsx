@@ -27,7 +27,8 @@ import {
   Clock,
   Sliders,
   ChevronDown,
-  Search
+  Search,
+  Database
 } from 'lucide-react';
 import { Card, Badge, Button } from '../../common/components';
 import { DEFAULT_PROVIDER_MODELS } from '../../common/constants/modelRegistry';
@@ -40,7 +41,9 @@ import {
   getAiModels,
   fetchAiLiveModels,
   getAiQuota,
-  checkAiQuota
+  checkAiQuota,
+  getSavedAccountModels,
+  syncAccountModels
 } from '../../common/services/api';
 import { 
   AiConnectionConfig, 
@@ -86,6 +89,13 @@ export const SettingsView: React.FC = () => {
   const [modelSearch, setModelSearch] = useState<string>('');
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState<boolean>(false);
   const [modelCategoryFilter, setModelCategoryFilter] = useState<'all' | 'recommended' | 'reasoning' | 'fast'>('all');
+  const [accountModelSnapshot, setAccountModelSnapshot] = useState<{
+    source?: string;
+    account?: string;
+    syncedAt?: string;
+    synced: boolean;
+    count: number;
+  }>({ synced: false, count: 0 });
   const modelDropdownRef = useRef<HTMLDivElement>(null);
 
   // Quota & Rate limits
@@ -161,12 +171,7 @@ export const SettingsView: React.FC = () => {
           model: c.model,
           cliBinary: c.cliBinary
         });
-        await handleFetchLiveModels({
-          provider: c.provider,
-          authMethod: c.authMethod,
-          baseUrl: c.baseUrl,
-          cliBinary: c.cliBinary
-        });
+        await loadSavedModelsFromDb(c.provider, c.authMethod, c.cliBinary);
       }
     } catch (err: any) {
       console.warn('Could not load AI connection:', err.message);
@@ -188,35 +193,98 @@ export const SettingsView: React.FC = () => {
     }
   };
 
-  const handleFetchLiveModels = async (customParams?: { provider?: AiProviderId; authMethod?: AiAuthMethod; apiKey?: string; baseUrl?: string; cliBinary?: string }) => {
+  const loadSavedModelsFromDb = async (p?: AiProviderId, a?: AiAuthMethod, c?: string) => {
+    try {
+      const targetProvider = p || provider;
+      const targetAuthMethod = a || authMethod;
+      const targetCli = c || cliBinary;
+      const res = await getSavedAccountModels({
+        provider: targetProvider,
+        authMethod: targetAuthMethod,
+        cliBinary: targetCli
+      });
+      if (res && res.synced && Array.isArray(res.models) && res.models.length > 0) {
+        setAvailableModels(prev => ({
+          ...prev,
+          [targetProvider]: res.models
+        }));
+        setAccountModelSnapshot({
+          source: res.source,
+          account: res.account,
+          syncedAt: res.syncedAt,
+          synced: true,
+          count: res.models.length
+        });
+        return res.models;
+      } else {
+        setAccountModelSnapshot({
+          source: res?.source || (targetAuthMethod === 'cli_subscription' ? `cli:${targetCli}` : `api:${targetProvider}`),
+          synced: false,
+          count: 0
+        });
+        return null;
+      }
+    } catch (err: any) {
+      console.warn('Failed to load saved models from DB:', err.message);
+      return null;
+    }
+  };
+
+  const handleSyncAccountModels = async () => {
     setIsFetchingModels(true);
     setModelsSyncStatus(null);
     try {
-      const targetProvider = customParams?.provider || provider;
-      const res = await fetchAiLiveModels({
-        provider: targetProvider,
-        authMethod: customParams?.authMethod || authMethod,
-        apiKey: customParams?.apiKey || (apiKey ? apiKey.trim() : undefined),
-        baseUrl: customParams?.baseUrl || (baseUrl ? baseUrl.trim() : undefined),
-        cliBinary: customParams?.cliBinary || cliBinary
+      const res = await syncAccountModels({
+        provider,
+        authMethod,
+        cliBinary,
+        apiKey: apiKey ? apiKey.trim() : undefined,
+        baseUrl: baseUrl ? baseUrl.trim() : undefined
       });
-      const data = res?.data !== undefined ? res.data : res;
-      if (data && Array.isArray(data.models) && data.models.length > 0) {
+      if (res.ok && res.data) {
+        const snap = res.data;
         setAvailableModels(prev => ({
           ...prev,
-          [targetProvider]: data.models
+          [provider]: snap.models
         }));
-        setModelsSyncStatus(data.message || 'Đã đồng bộ model thực tế thành công');
+        setAccountModelSnapshot({
+          source: snap.source,
+          account: snap.account,
+          syncedAt: snap.syncedAt,
+          synced: true,
+          count: snap.models.length
+        });
+        setModelsSyncStatus(
+          `✅ Đã quét từ tài khoản Subscription ("${snap.account || snap.source}") và lưu thành công ${snap.models.length} model vào SQLite database!`
+        );
         setModel(prevModel => {
-          if (prevModel && data.models.some((m: any) => m.id === prevModel)) {
+          if (prevModel && snap.models.some(m => m.id === prevModel)) {
             return prevModel;
           }
-          const recommended = data.models.find((m: any) => m.recommended) || data.models[0];
+          const recommended = snap.models.find(m => m.recommended) || snap.models[0];
           return recommended ? recommended.id : prevModel;
         });
+      } else {
+        if (res.code === 'auth_required') {
+          setModelsSyncStatus(
+            `⚠️ Yêu cầu xác thực tài khoản: ${res.message}${res.loginCommand ? ` (Chạy lệnh: "${res.loginCommand}")` : ''}`
+          );
+        } else {
+          setModelsSyncStatus(`⚠️ ${res.message}`);
+        }
+        if (res.saved && Array.isArray(res.saved.models) && res.saved.models.length > 0) {
+          setAvailableModels(prev => ({ ...prev, [provider]: res.saved!.models }));
+          setAccountModelSnapshot({
+            source: res.saved.source,
+            account: res.saved.account,
+            syncedAt: res.saved.syncedAt,
+            synced: true,
+            count: res.saved.models.length
+          });
+        }
       }
     } catch (err: any) {
-      setModelsSyncStatus(`Không thể quét trực tiếp: ${err.message}`);
+      setModelsSyncStatus(`Lỗi đồng bộ: ${err.message}`);
     } finally {
       setIsFetchingModels(false);
     }
@@ -281,7 +349,7 @@ export const SettingsView: React.FC = () => {
 
     setTestResult(null);
     handleCheckQuota({ provider: newProvider, model: newModel, cliBinary: newCli });
-    handleFetchLiveModels({ provider: newProvider, cliBinary: newCli });
+    loadSavedModelsFromDb(newProvider, authMethod, newCli);
   };
 
   const handleSaveConnection = async () => {
@@ -604,7 +672,10 @@ export const SettingsView: React.FC = () => {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {/* Method 1: API Key */}
                 <div
-                  onClick={() => setAuthMethod('api_key')}
+                  onClick={() => {
+                    setAuthMethod('api_key');
+                    loadSavedModelsFromDb(provider, 'api_key', cliBinary);
+                  }}
                   className={`p-5 rounded-xl border cursor-pointer transition-all flex flex-col justify-between ${
                     authMethod === 'api_key'
                       ? 'bg-gradient-to-b from-purple-950/30 to-slate-900 border-purple-500/80 ring-1 ring-purple-500/40 shadow-md shadow-purple-950/30'
@@ -646,7 +717,10 @@ export const SettingsView: React.FC = () => {
 
                 {/* Method 2: CLI Subscription */}
                 <div
-                  onClick={() => setAuthMethod('cli_subscription')}
+                  onClick={() => {
+                    setAuthMethod('cli_subscription');
+                    loadSavedModelsFromDb(provider, 'cli_subscription', cliBinary);
+                  }}
                   className={`p-5 rounded-xl border cursor-pointer transition-all flex flex-col justify-between ${
                     authMethod === 'cli_subscription'
                       ? 'bg-gradient-to-b from-purple-950/30 to-slate-900 border-purple-500/80 ring-1 ring-purple-500/40 shadow-md shadow-purple-950/30'
@@ -793,7 +867,10 @@ export const SettingsView: React.FC = () => {
                         return (
                           <div
                             key={cli.id}
-                            onClick={() => setCliBinary(cli.binary)}
+                            onClick={() => {
+                              setCliBinary(cli.binary);
+                              loadSavedModelsFromDb(provider, authMethod, cli.binary);
+                            }}
                             className={`p-3.5 rounded-xl border cursor-pointer transition-all ${
                               isSelected
                                 ? 'bg-slate-800/90 border-purple-500 shadow-md ring-1 ring-purple-500/40'
@@ -890,16 +967,57 @@ export const SettingsView: React.FC = () => {
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => handleFetchLiveModels()}
+                      onClick={() => handleSyncAccountModels()}
                       disabled={isFetchingModels}
                       className="border-purple-800/50 hover:bg-purple-950/30 text-purple-300 text-xs py-1 h-8"
                     >
                       <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${isFetchingModels ? 'animate-spin' : ''}`} />
-                      <span>{isFetchingModels ? t('aiFetchingLiveModels') : t('aiFetchLiveModelsBtn')}</span>
+                      <span>{isFetchingModels ? t('aiSyncingAccountModels') : t('aiSyncAccountModelsBtn')}</span>
                     </Button>
                     <span className="text-[11px] px-2.5 py-1 rounded-full bg-slate-800 text-slate-300 border border-slate-700 font-mono">
                       Đang chọn: <span className="text-purple-400 font-bold">{model}</span>
                     </span>
+                  </div>
+                </div>
+
+                {/* Account Model Snapshot & Database Persistence Status */}
+                <div className="p-3 rounded-xl bg-slate-900/80 border border-slate-800 text-xs flex flex-wrap items-center justify-between gap-2.5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex items-center gap-1.5">
+                      <Database className={`w-3.5 h-3.5 ${accountModelSnapshot.synced ? 'text-emerald-400' : 'text-slate-400'}`} />
+                      <span className="text-slate-400 font-medium">{t('aiAccountSourceLabel')}</span>
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-semibold border ${
+                        accountModelSnapshot.synced
+                          ? 'bg-emerald-950/40 text-emerald-300 border-emerald-500/40'
+                          : 'bg-slate-800 text-slate-300 border-slate-700'
+                      }`}>
+                        {accountModelSnapshot.synced ? t('aiAccountSavedInDb') : t('aiAccountCatalogDefault')}
+                      </span>
+                    </div>
+
+                    {accountModelSnapshot.account && (
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-slate-500">•</span>
+                        <span className="text-slate-400">{t('aiAccountLabel')}</span>
+                        <span className="font-mono text-purple-300 font-semibold text-[11px]">
+                          {accountModelSnapshot.account}
+                        </span>
+                      </div>
+                    )}
+
+                    {accountModelSnapshot.syncedAt && (
+                      <div className="flex items-center gap-1.5 text-[10px] text-slate-400">
+                        <span className="text-slate-500">•</span>
+                        <span>{t('aiLastSyncedAt')}</span>
+                        <span className="font-mono text-slate-300">
+                          {new Date(accountModelSnapshot.syncedAt).toLocaleTimeString()} {new Date(accountModelSnapshot.syncedAt).toLocaleDateString()}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="text-[11px] text-slate-400 font-mono">
+                    <span>Đang có <strong className="text-white">{availableModels[provider]?.length || 0}</strong> model</span>
                   </div>
                 </div>
 
@@ -1104,6 +1222,12 @@ export const SettingsView: React.FC = () => {
                                                 Live
                                               </span>
                                             )}
+                                            {m.source && (
+                                              <span className="px-1.5 py-0.2 rounded text-[9px] bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 font-mono flex items-center gap-0.5">
+                                                <Database className="w-2.5 h-2.5" />
+                                                DB
+                                              </span>
+                                            )}
                                           </div>
                                           <p className="text-[10px] text-slate-400 line-clamp-1">
                                             {m.description}
@@ -1222,6 +1346,12 @@ export const SettingsView: React.FC = () => {
                                         <span className="px-1.5 py-0.5 rounded text-[9px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-mono flex items-center gap-1">
                                           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
                                           API Live
+                                        </span>
+                                      )}
+                                      {m.source && (
+                                        <span className="px-1.5 py-0.5 rounded text-[9px] bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 font-mono flex items-center gap-1">
+                                          <Database className="w-2.5 h-2.5" />
+                                          SQLite
                                         </span>
                                       )}
                                     </div>

@@ -10,7 +10,9 @@ import {
   TestRunItem, 
   BugItem, 
   AuditEvent,
-  AiConnectionConfig 
+  AiConnectionConfig,
+  AccountModelSnapshot,
+  ModelOption
 } from '../common/types.js';
 import { computeSha256, computeAuditEventHash } from '../common/crypto.js';
 
@@ -115,6 +117,21 @@ db.exec(`
     error_message TEXT,
     updated_at TEXT NOT NULL
   );
+
+  -- Models available to a specific provider account (synced from CLI subscription or API key)
+  CREATE TABLE IF NOT EXISTS ai_models (
+    provider TEXT NOT NULL,
+    auth_method TEXT NOT NULL,
+    source TEXT NOT NULL,
+    model_id TEXT NOT NULL,
+    account TEXT,
+    name TEXT NOT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    data TEXT NOT NULL,
+    synced_at TEXT NOT NULL,
+    PRIMARY KEY (provider, auth_method, source, model_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_ai_models_lookup ON ai_models (provider, auth_method, source);
 `);
 
 try {
@@ -765,6 +782,59 @@ export const dbRepository = {
         WHERE id = 'primary'
       `);
       stmt.run(status, latencyMs ?? null, errorMessage ?? null, now, now);
+    }
+  },
+
+  aiModels: {
+    /**
+     * Replaces the stored model list for one (provider, authMethod, source) account atomically.
+     */
+    replaceForAccount(snapshot: AccountModelSnapshot): AccountModelSnapshot {
+      const syncedAt = snapshot.syncedAt || new Date().toISOString();
+      const del = db.prepare('DELETE FROM ai_models WHERE provider = ? AND auth_method = ? AND source = ?');
+      const ins = db.prepare(`
+        INSERT INTO ai_models (provider, auth_method, source, model_id, account, name, sort_order, data, synced_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      const tx = db.transaction(() => {
+        del.run(snapshot.provider, snapshot.authMethod, snapshot.source);
+        snapshot.models.forEach((m, idx) => {
+          const entry: ModelOption = { ...m, source: snapshot.source, account: snapshot.account, syncedAt };
+          ins.run(
+            snapshot.provider,
+            snapshot.authMethod,
+            snapshot.source,
+            m.id,
+            snapshot.account ?? null,
+            m.name,
+            idx,
+            JSON.stringify(entry),
+            syncedAt
+          );
+        });
+      });
+      tx();
+      return { ...snapshot, syncedAt };
+    },
+
+    /**
+     * Reads the stored model list for an account. Returns null when never synced.
+     */
+    getForAccount(provider: string, authMethod: string, source: string): AccountModelSnapshot | null {
+      const rows = db.prepare(`
+        SELECT account, data, synced_at FROM ai_models
+        WHERE provider = ? AND auth_method = ? AND source = ?
+        ORDER BY sort_order ASC
+      `).all(provider, authMethod, source) as Array<{ account: string | null; data: string; synced_at: string }>;
+      if (rows.length === 0) return null;
+      return {
+        provider: provider as AccountModelSnapshot['provider'],
+        authMethod: authMethod as AccountModelSnapshot['authMethod'],
+        source,
+        account: rows[0].account || undefined,
+        syncedAt: rows[0].synced_at,
+        models: rows.map(r => JSON.parse(r.data) as ModelOption)
+      };
     }
   }
 };
