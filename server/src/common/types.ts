@@ -235,6 +235,7 @@ export interface AiConnectionConfig {
 
 export interface CliDetectionInfo {
   id: string;
+  provider: AiProviderId;
   name: string;
   binary: string;
   installed: boolean;

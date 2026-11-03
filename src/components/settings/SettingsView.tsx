@@ -17,6 +17,7 @@ import {
   Terminal,
   Unplug,
   Check,
+  Copy,
   Info
 } from 'lucide-react';
 import { Card, Badge, Button } from '../../common/components';
@@ -68,6 +69,7 @@ export const SettingsView: React.FC = () => {
   const [isTesting, setIsTesting] = useState<boolean>(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string; latencyMs?: number } | null>(null);
   const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
+  const [copiedCmd, setCopiedCmd] = useState<boolean>(false);
 
   useEffect(() => {
     loadAiConnection();
@@ -128,6 +130,12 @@ export const SettingsView: React.FC = () => {
     if (recommended) {
       setModel(recommended.id);
     }
+    // Auto-map matching CLI for this provider
+    if (newProvider === 'anthropic') setCliBinary('claude');
+    else if (newProvider === 'openai') setCliBinary('gh');
+    else if (newProvider === 'google') setCliBinary('agy');
+    else if (newProvider === 'custom') setCliBinary('ollama');
+
     setTestResult(null);
   };
 
@@ -606,9 +614,21 @@ export const SettingsView: React.FC = () => {
               {/* DYNAMIC FORM: When CLI Subscription is active */}
               {authMethod === 'cli_subscription' && (
                 <div className="space-y-4 p-5 rounded-xl bg-slate-950/70 border border-slate-800/80">
+                  {/* Architecture & Connection Explanation */}
+                  <div className="p-3.5 rounded-xl bg-indigo-950/20 border border-indigo-800/30 text-xs text-indigo-200/90 space-y-1">
+                    <div className="font-bold text-white flex items-center gap-1.5">
+                      <Terminal className="w-3.5 h-3.5 text-indigo-400" />
+                      <span>Cơ chế kết nối CLI Subscription:</span>
+                    </div>
+                    <p className="text-[11px] text-slate-300 leading-relaxed">
+                      Backend của hệ thống chạy cục bộ sẽ giao tiếp trực tiếp với CLI chính thức trên máy của bạn (Subprocess Bridge). 
+                      Hệ thống tận dụng phiên đăng nhập (OAuth session) của gói thuê bao Pro/Team có sẵn mà <strong>không yêu cầu API Key trả tiền theo token</strong>.
+                    </p>
+                  </div>
+
                   <div className="flex items-center justify-between">
                     <label className="text-xs font-semibold text-slate-300 block">
-                      {t('aiCliSelectLabel')}
+                      Công cụ CLI tương ứng cho nhà cung cấp <span className="text-purple-400 font-bold uppercase">{provider}</span>:
                     </label>
                     <Button
                       variant="outline"
@@ -622,58 +642,65 @@ export const SettingsView: React.FC = () => {
                     </Button>
                   </div>
 
-                  {/* CLI Tool Select Grid */}
+                  {/* Filtered CLI Tools for Selected Provider */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    {detectedClis.map((cli) => {
-                      const isSelected = cliBinary === cli.binary || cliBinary === cli.id;
-                      return (
-                        <div
-                          key={cli.id}
-                          onClick={() => setCliBinary(cli.binary)}
-                          className={`p-3.5 rounded-xl border cursor-pointer transition-all ${
-                            isSelected
-                              ? 'bg-slate-800/90 border-purple-500 shadow-md ring-1 ring-purple-500/40'
-                              : 'bg-slate-900/60 border-slate-800 hover:border-slate-700'
-                          }`}
-                        >
-                          <div className="flex items-center justify-between">
-                            <span className="text-xs font-bold text-white flex items-center gap-1.5">
-                              <Terminal className="w-3.5 h-3.5 text-purple-400" />
-                              {cli.name}
-                            </span>
-                            {cli.installed ? (
-                              <span className="px-2 py-0.5 rounded text-[10px] bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-medium">
-                                Đã cài đặt
+                    {detectedClis
+                      .filter(cli => {
+                        if (provider === 'anthropic') return cli.id === 'claude';
+                        if (provider === 'openai') return cli.id === 'gh';
+                        if (provider === 'google') return cli.id === 'agy' || cli.id === 'gemini';
+                        return true;
+                      })
+                      .map((cli) => {
+                        const isSelected = cliBinary === cli.binary || cliBinary === cli.id;
+                        return (
+                          <div
+                            key={cli.id}
+                            onClick={() => setCliBinary(cli.binary)}
+                            className={`p-3.5 rounded-xl border cursor-pointer transition-all ${
+                              isSelected
+                                ? 'bg-slate-800/90 border-purple-500 shadow-md ring-1 ring-purple-500/40'
+                                : 'bg-slate-900/60 border-slate-800 hover:border-slate-700'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                                <Terminal className="w-3.5 h-3.5 text-purple-400" />
+                                {cli.name}
                               </span>
-                            ) : (
-                              <span className="px-2 py-0.5 rounded text-[10px] bg-slate-800 text-slate-400">
-                                Chưa cài đặt
-                              </span>
-                            )}
+                              {cli.installed ? (
+                                <span className="px-2 py-0.5 rounded text-[10px] bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-medium">
+                                  Đã cài đặt
+                                </span>
+                              ) : (
+                                <span className="px-2 py-0.5 rounded text-[10px] bg-slate-800 text-slate-400">
+                                  Chưa cài đặt
+                                </span>
+                              )}
+                            </div>
+                            <div className="mt-2 text-[11px] text-slate-400 space-y-0.5">
+                              <div>Phiên bản: <span className="text-slate-300 font-mono">{cli.version || 'N/A'}</span></div>
+                              {cli.path && <div className="truncate font-mono text-[10px] text-slate-500">{cli.path}</div>}
+                            </div>
                           </div>
-                          <div className="mt-2 text-[11px] text-slate-400 space-y-0.5">
-                            <div>Phiên bản: <span className="text-slate-300 font-mono">{cli.version || 'N/A'}</span></div>
-                            {cli.path && <div className="truncate font-mono text-[10px] text-slate-500">{cli.path}</div>}
-                          </div>
-                        </div>
-                      );
-                    })}
+                        );
+                      })}
                   </div>
 
                   {/* Active Selected CLI Diagnostic & Verification Details */}
                   {activeCliInfo && (
-                    <div className="p-4 rounded-xl bg-slate-900/90 border border-slate-800 mt-3 space-y-2.5">
+                    <div className="p-4 rounded-xl bg-slate-900/90 border border-slate-800 mt-3 space-y-3">
                       <div className="flex items-center justify-between text-xs">
-                        <span className="text-slate-400">Xác thực Subscription:</span>
+                        <span className="text-slate-400">Trạng thái đăng nhập Subscription:</span>
                         {activeCliInfo.authStatus === 'authenticated' ? (
                           <span className="flex items-center gap-1.5 text-emerald-400 font-semibold text-xs">
                             <CheckCircle2 className="w-3.5 h-3.5" />
-                            Đã xác thực Subscription {activeCliInfo.account ? `(${activeCliInfo.account})` : ''}
+                            Đã xác thực Subscription {activeCliInfo.account ? `(@${activeCliInfo.account})` : ''}
                           </span>
                         ) : activeCliInfo.installed ? (
                           <span className="flex items-center gap-1.5 text-amber-400 font-semibold text-xs">
                             <AlertCircle className="w-3.5 h-3.5" />
-                            Cần đăng nhập tài khoản
+                            Phiên đăng nhập hết hạn / Cần login
                           </span>
                         ) : (
                           <span className="text-rose-400 text-xs">CLI chưa có trong PATH máy</span>
@@ -681,9 +708,28 @@ export const SettingsView: React.FC = () => {
                       </div>
 
                       {activeCliInfo.authStatus !== 'authenticated' && activeCliInfo.loginCommand && (
-                        <div className="p-2.5 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-300">
-                          <span className="text-slate-400 block text-[11px] mb-1">Để đăng nhập vào gói Subscription, mở Terminal và chạy:</span>
-                          <code className="text-purple-300 font-mono font-bold">{activeCliInfo.loginCommand}</code>
+                        <div className="p-3 rounded-xl bg-slate-950 border border-amber-900/30 text-xs text-slate-300 space-y-1.5">
+                          <span className="text-amber-400/90 block text-[11px] font-medium">
+                            Để liên kết tài khoản trả phí, vui lòng mở Terminal của bạn và chạy lệnh sau:
+                          </span>
+                          <div className="flex items-center justify-between bg-slate-900 px-3 py-2 rounded-lg border border-slate-800">
+                            <code className="text-purple-300 font-mono font-bold text-xs">{activeCliInfo.loginCommand}</code>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                navigator.clipboard.writeText(activeCliInfo.loginCommand);
+                                setCopiedCmd(true);
+                                setTimeout(() => setCopiedCmd(false), 2000);
+                              }}
+                              className="text-[11px] text-slate-400 hover:text-white flex items-center gap-1 ml-2"
+                            >
+                              {copiedCmd ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                              <span>{copiedCmd ? 'Đã sao chép' : 'Sao chép'}</span>
+                            </button>
+                          </div>
+                          <span className="text-[10px] text-slate-400 block pt-0.5">
+                            Sau khi đăng nhập xong trên terminal, bấm nút <strong>[ Kiểm tra kết nối ]</strong> bên dưới để ứng dụng kích hoạt.
+                          </span>
                         </div>
                       )}
                     </div>
