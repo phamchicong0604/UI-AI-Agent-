@@ -19,6 +19,7 @@ import {
   Copy,
   Check,
   ChevronDown,
+  ChevronRight,
   FileText,
   User,
   Calendar,
@@ -27,7 +28,10 @@ import {
   BookOpen,
   ListFilter,
   FileCheck2,
-  ChevronRight
+  PanelLeftClose,
+  PanelLeft,
+  ArrowLeft,
+  X
 } from 'lucide-react';
 import { DocumentModal } from './DocumentModal';
 import { DocumentUploadModal } from './DocumentUploadModal';
@@ -41,50 +45,50 @@ const CATEGORY_LABELS: Record<DocumentCategory, { vi: string; en: string; shortV
   '01_Project_Overview': {
     vi: '01. Tổng quan dự án',
     en: '01. Project Overview',
-    shortVi: 'Tổng quan dự án',
-    shortEn: 'Project Overview'
+    shortVi: '01. Tổng quan',
+    shortEn: '01. Overview'
   },
   '02_Business_Requirements': {
     vi: '02. Yêu cầu nghiệp vụ (BRD)',
     en: '02. Business Requirements',
-    shortVi: 'Yêu cầu nghiệp vụ (BRD)',
-    shortEn: 'Business Requirements'
+    shortVi: '02. Nghiệp vụ BRD',
+    shortEn: '02. BRD'
   },
   '03_System_Requirements': {
     vi: '03. Đặc tả hệ thống (SRS)',
     en: '03. System Requirements',
-    shortVi: 'Đặc tả hệ thống (SRS)',
-    shortEn: 'System Requirements'
+    shortVi: '03. Đặc tả SRS',
+    shortEn: '03. SRS'
   },
   '04_UI_UX': {
     vi: '04. Thiết kế UI / UX',
     en: '04. UI & UX Design',
-    shortVi: 'Thiết kế UI / UX',
-    shortEn: 'UI & UX Design'
+    shortVi: '04. Thiết kế UI/UX',
+    shortEn: '04. UI/UX'
   },
   '05_Technical_Documents': {
     vi: '05. Tài liệu kỹ thuật & API',
     en: '05. Technical & API Docs',
-    shortVi: 'Tài liệu kỹ thuật & API',
-    shortEn: 'Technical & API'
+    shortVi: '05. Kỹ thuật & API',
+    shortEn: '05. Tech & API'
   },
   '06_QA': {
     vi: '06. Kế hoạch & Chiến lược QA',
     en: '06. QA & Test Strategy',
-    shortVi: 'Kế hoạch QA',
-    shortEn: 'QA Strategy'
+    shortVi: '06. Kế hoạch QA',
+    shortEn: '06. QA Strategy'
   },
   '07_EVD_Evidence': {
     vi: '07. Hướng dẫn Bằng chứng (EVD)',
     en: '07. Evidence Guides (EVD)',
-    shortVi: 'Bằng chứng (EVD)',
-    shortEn: 'Evidence (EVD)'
+    shortVi: '07. Bằng chứng EVD',
+    shortEn: '07. Evidence'
   },
   '08_Change_History': {
     vi: '08. Lịch sử thay đổi',
     en: '08. Change History',
-    shortVi: 'Lịch sử thay đổi',
-    shortEn: 'Change History'
+    shortVi: '08. Lịch sử thay đổi',
+    shortEn: '08. Changelog'
   }
 };
 
@@ -107,6 +111,19 @@ export const DocumentsView: React.FC = () => {
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [localSearch, setLocalSearch] = useState<string>('');
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
+
+  // Folder Accordion Open States (all open by default for immediate discoverability)
+  const [openFolders, setOpenFolders] = useState<Record<string, boolean>>({
+    '01_Project_Overview': true,
+    '02_Business_Requirements': true,
+    '03_System_Requirements': true,
+    '04_UI_UX': true,
+    '05_Technical_Documents': true,
+    '06_QA': true,
+    '07_EVD_Evidence': true,
+    '08_Change_History': true
+  });
 
   // Modals state
   const [isDocModalOpen, setIsDocModalOpen] = useState(false);
@@ -121,9 +138,11 @@ export const DocumentsView: React.FC = () => {
   const [copiedHash, setCopiedHash] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
-  // Filter documents strictly by current active project
+  // Filter documents strictly by current active project and sort systematically
   const projectDocs = useMemo(() => {
-    return documents.filter(doc => (doc.projectId || 'PRJ-01') === activeProject.id);
+    return documents
+      .filter(doc => (doc.projectId || 'PRJ-01') === activeProject.id)
+      .sort((a, b) => a.category.localeCompare(b.category) || a.id.localeCompare(b.id));
   }, [documents, activeProject.id]);
 
   // Current document for reader mode
@@ -132,8 +151,13 @@ export const DocumentsView: React.FC = () => {
       const found = projectDocs.find(d => d.id === readingDocId);
       if (found) return found;
     }
+    // If selectedCategory is filtered, pick first in that category
+    if (selectedCategory !== 'ALL') {
+      const found = projectDocs.find(d => d.category === selectedCategory);
+      if (found) return found;
+    }
     return projectDocs[0] || null;
-  }, [projectDocs, readingDocId]);
+  }, [projectDocs, readingDocId, selectedCategory]);
 
   const getCategoryLabel = (cat: DocumentCategory, short = false) => {
     const item = CATEGORY_LABELS[cat];
@@ -160,11 +184,37 @@ export const DocumentsView: React.FC = () => {
         const matchTitle = doc.title.toLowerCase().includes(q);
         const matchId = doc.id.toLowerCase().includes(q);
         const matchDesc = doc.description?.toLowerCase().includes(q);
-        if (!matchTitle && !matchId && !matchDesc) return false;
+        const matchTags = doc.tags?.some(t => t.toLowerCase().includes(q));
+        if (!matchTitle && !matchId && !matchDesc && !matchTags) return false;
       }
       return true;
     });
   }, [projectDocs, selectedCategory, statusFilter, localSearch]);
+
+  const toggleFolder = (catKey: string) => {
+    setOpenFolders(prev => ({ ...prev, [catKey]: !prev[catKey] }));
+  };
+
+  const expandAllFolders = () => {
+    const all: Record<string, boolean> = {};
+    (Object.keys(CATEGORY_LABELS) as DocumentCategory[]).forEach(k => { all[k] = true; });
+    setOpenFolders(all);
+  };
+
+  const collapseAllFolders = () => {
+    setOpenFolders({});
+  };
+
+  const handleSelectCategory = (catKey: string) => {
+    setSelectedCategory(catKey);
+    if (catKey !== 'ALL') {
+      setOpenFolders(prev => ({ ...prev, [catKey]: true }));
+      const firstDoc = projectDocs.find(d => d.category === catKey);
+      if (firstDoc) {
+        setReadingDocId(firstDoc.id);
+      }
+    }
+  };
 
   const getStatusBadge = (status: StatusLifecycle) => {
     switch (status) {
@@ -214,8 +264,8 @@ export const DocumentsView: React.FC = () => {
   const draftOrReviewCount = projectDocs.filter(d => d.status === 'Draft' || d.status === 'In Review').length;
 
   return (
-    <div className="space-y-5">
-      {/* 1. Unified Project Workspace Header & Mode Switcher */}
+    <div className="space-y-4">
+      {/* 1. UNIFIED PROJECT WORKSPACE HEADER & MODE SWITCHER */}
       <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         {/* Left: Active Project Selector & Metrics */}
         <div className="space-y-1.5 min-w-0">
@@ -355,118 +405,230 @@ export const DocumentsView: React.FC = () => {
         </div>
       </div>
 
-      {/* 2. READER WORKSPACE MODE (Chỗ Đọc Tài Liệu Dự Án) */}
+      {/* 2. HORIZONTAL CATEGORY SWITCHER RIBBON (Dải chuyển đổi hạng mục nhanh) */}
+      <div className="flex items-center gap-2 overflow-x-auto pb-1 select-none scrollbar-thin">
+        {/* All Categories Pill */}
+        <button
+          type="button"
+          onClick={() => handleSelectCategory('ALL')}
+          className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition-all border shrink-0 ${
+            selectedCategory === 'ALL'
+              ? 'bg-indigo-600 text-white border-indigo-500 shadow-md shadow-indigo-600/25 ring-1 ring-indigo-400/40'
+              : 'bg-slate-900/90 hover:bg-slate-800 text-slate-300 border-slate-800 hover:border-slate-700'
+          }`}
+        >
+          <Folder className="w-3.5 h-3.5 text-indigo-400" />
+          <span>Tất cả tài liệu</span>
+          <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
+            selectedCategory === 'ALL' ? 'bg-indigo-700 text-white' : 'bg-slate-850 text-slate-400'
+          }`}>
+            {projectDocs.length}
+          </span>
+        </button>
+
+        {/* 8 Standard Categories Pills */}
+        {(Object.keys(CATEGORY_LABELS) as DocumentCategory[]).map((catKey) => {
+          const isSelected = selectedCategory === catKey;
+          const count = projectDocs.filter(d => d.category === catKey).length;
+          const labelObj = CATEGORY_LABELS[catKey];
+          const shortLabel = language === 'vi' ? labelObj.shortVi : labelObj.shortEn;
+
+          return (
+            <button
+              key={catKey}
+              type="button"
+              onClick={() => handleSelectCategory(catKey)}
+              className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition-all border shrink-0 ${
+                isSelected
+                  ? 'bg-indigo-600 text-white border-indigo-500 shadow-md shadow-indigo-600/25 ring-1 ring-indigo-400/40'
+                  : count > 0
+                  ? 'bg-slate-900/90 hover:bg-slate-800 text-slate-300 border-slate-800 hover:border-slate-700'
+                  : 'bg-slate-900/40 text-slate-500 border-slate-850 opacity-60 hover:opacity-100 hover:bg-slate-850'
+              }`}
+            >
+              {isSelected ? (
+                <FolderOpen className="w-3.5 h-3.5 text-amber-300" />
+              ) : (
+                <Folder className="w-3.5 h-3.5 text-indigo-400" />
+              )}
+              <span>{shortLabel}</span>
+              <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
+                isSelected ? 'bg-indigo-700 text-white' : count > 0 ? 'bg-slate-800 text-slate-300' : 'bg-slate-850 text-slate-500'
+              }`}>
+                {count}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* 3. READER WORKSPACE MODE (Chỗ Đọc Tài Liệu Dự Án) */}
       {viewMode === 'reader' && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
-          {/* Left Navigation Tree & Document List (3.5 cols) */}
-          <div className="lg:col-span-3 space-y-3">
-            {/* Search Document in Project */}
-            <div className="relative">
-              <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-400" />
-              <input
-                type="text"
-                value={localSearch}
-                onChange={(e) => setLocalSearch(e.target.value)}
-                placeholder={language === 'vi' ? 'Tìm tài liệu trong dự án...' : 'Search document...'}
-                className="w-full bg-slate-900 border border-slate-800 rounded-xl pl-8 pr-3 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500"
-              />
-            </div>
-
-            {/* Document Tree by Categories */}
-            <div className="p-3 rounded-2xl bg-slate-900 border border-slate-800 space-y-2 max-h-[75vh] overflow-y-auto">
-              <div className="px-2 py-1 text-[11px] font-bold uppercase tracking-wider text-slate-400 flex items-center justify-between">
-                <span>{language === 'vi' ? 'Mục lục tài liệu' : 'Documents'}</span>
-                <span className="font-mono text-[10px] text-slate-500">{projectDocs.length} tệp</span>
-              </div>
-
-              {/* All / Category Filter Tabs */}
-              <div className="flex flex-wrap gap-1 pb-1 border-b border-slate-800">
-                <button
-                  onClick={() => setSelectedCategory('ALL')}
-                  className={`px-2 py-1 rounded-lg text-[11px] font-semibold transition-colors ${
-                    selectedCategory === 'ALL'
-                      ? 'bg-indigo-600 text-white'
-                      : 'text-slate-400 hover:bg-slate-800'
-                  }`}
-                >
-                  Tất cả ({projectDocs.length})
-                </button>
-                {categories.filter(c => c.key !== 'ALL' && c.count > 0).map(c => (
+          {/* Left Navigation Tree (Folder Accordion) */}
+          {!isSidebarCollapsed && (
+            <div className="lg:col-span-3 space-y-3">
+              {/* Search Box in Left Tree */}
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-400" />
+                <input
+                  type="text"
+                  value={localSearch}
+                  onChange={(e) => setLocalSearch(e.target.value)}
+                  placeholder={language === 'vi' ? 'Tìm tài liệu, mã DOC...' : 'Search document...'}
+                  className="w-full bg-slate-900 border border-slate-800 rounded-xl pl-8 pr-7 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+                />
+                {localSearch && (
                   <button
-                    key={c.key}
-                    onClick={() => setSelectedCategory(c.key)}
-                    className={`px-2 py-1 rounded-lg text-[11px] font-medium transition-colors ${
-                      selectedCategory === c.key
-                        ? 'bg-indigo-600 text-white'
-                        : 'text-slate-400 hover:bg-slate-800'
-                    }`}
+                    onClick={() => setLocalSearch('')}
+                    className="absolute right-2.5 top-2 text-slate-500 hover:text-slate-300"
                   >
-                    {c.key.split('_')[1]} ({c.count})
+                    <X className="w-3 h-3" />
                   </button>
-                ))}
-              </div>
-
-              {/* Documents List */}
-              <div className="space-y-1 pt-1">
-                {filteredDocs.length === 0 ? (
-                  <p className="text-xs text-slate-500 p-3 text-center">Không tìm thấy tài liệu phù hợp.</p>
-                ) : (
-                  filteredDocs.map(doc => {
-                    const isSelected = currentReadingDoc?.id === doc.id;
-                    return (
-                      <button
-                        key={doc.id}
-                        onClick={() => setReadingDocId(doc.id)}
-                        className={`w-full text-left p-2.5 rounded-xl text-xs transition-all flex items-start gap-2.5 ${
-                          isSelected
-                            ? 'bg-indigo-600/25 border border-indigo-500/50 text-white shadow-sm'
-                            : 'hover:bg-slate-800/80 text-slate-300 border border-transparent'
-                        }`}
-                      >
-                        <FileText className={`w-4 h-4 shrink-0 mt-0.5 ${isSelected ? 'text-indigo-400' : 'text-slate-500'}`} />
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center justify-between gap-1">
-                            <span className="font-mono text-[10px] font-bold text-indigo-300">{doc.id}</span>
-                            <span className={`w-2 h-2 rounded-full shrink-0 ${doc.status === 'Approved' ? 'bg-emerald-400' : 'bg-amber-400'}`} />
-                          </div>
-                          <div className="font-medium text-xs truncate mt-0.5" title={doc.title}>
-                            {doc.title}
-                          </div>
-                          <div className="text-[10px] text-slate-400 flex items-center justify-between mt-1">
-                            <span className="truncate">{doc.category.split('_')[1]}</span>
-                            <span className="font-mono">{doc.currentVersion}</span>
-                          </div>
-                        </div>
-                      </button>
-                    );
-                  })
                 )}
               </div>
 
-              {/* Quick Upload CTA at bottom of tree */}
-              <div className="pt-2 border-t border-slate-800">
-                <button
-                  onClick={() => setIsUploadModalOpen(true)}
-                  className="w-full py-2 px-3 rounded-xl bg-slate-850 hover:bg-slate-800 border border-slate-750 text-xs font-semibold text-indigo-300 hover:text-white flex items-center justify-center gap-1.5 transition-colors"
-                >
-                  <UploadCloud className="w-3.5 h-3.5" />
-                  <span>+ Tải lên file .md hoặc .zip</span>
-                </button>
+              {/* Folder Accordion Tree */}
+              <div className="p-3 rounded-2xl bg-slate-900 border border-slate-800 space-y-2 max-h-[75vh] overflow-y-auto">
+                <div className="px-2 py-1 text-[11px] font-bold uppercase tracking-wider text-slate-400 flex items-center justify-between border-b border-slate-800/80 pb-2">
+                  <span className="flex items-center gap-1.5">
+                    <Folder className="w-3.5 h-3.5 text-indigo-400" />
+                    <span>Cây thư mục ({filteredDocs.length})</span>
+                  </span>
+                  <div className="flex items-center gap-1 text-[10px] normal-case">
+                    <button
+                      onClick={expandAllFolders}
+                      className="text-indigo-400 hover:text-indigo-300 font-semibold px-1"
+                    >
+                      Mở hết
+                    </button>
+                    <span className="text-slate-600">•</span>
+                    <button
+                      onClick={collapseAllFolders}
+                      className="text-slate-400 hover:text-slate-200 px-1"
+                    >
+                      Đóng hết
+                    </button>
+                  </div>
+                </div>
+
+                {/* Categories & Document Folders */}
+                <div className="space-y-1.5 pt-1">
+                  {(Object.keys(CATEGORY_LABELS) as DocumentCategory[])
+                    .filter(catKey => {
+                      if (selectedCategory !== 'ALL' && selectedCategory !== catKey) return false;
+                      const catDocs = filteredDocs.filter(d => d.category === catKey);
+                      return selectedCategory === catKey || catDocs.length > 0;
+                    })
+                    .map(catKey => {
+                      const catDocs = filteredDocs.filter(d => d.category === catKey);
+                      const isFolderOpen = Boolean(openFolders[catKey]);
+                      const isCategoryActive = selectedCategory === catKey;
+
+                      return (
+                        <div key={catKey} className="rounded-xl border border-slate-800/60 overflow-hidden bg-slate-950/40">
+                          {/* Folder Header */}
+                          <button
+                            type="button"
+                            onClick={() => toggleFolder(catKey)}
+                            className={`w-full p-2.5 flex items-center justify-between gap-2 text-left transition-colors text-xs font-semibold ${
+                              isCategoryActive
+                                ? 'bg-indigo-950/40 text-indigo-200'
+                                : 'text-slate-300 hover:bg-slate-850'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2 min-w-0">
+                              {isFolderOpen ? (
+                                <FolderOpen className="w-4 h-4 text-amber-300 shrink-0" />
+                              ) : (
+                                <Folder className="w-4 h-4 text-indigo-400 shrink-0" />
+                              )}
+                              <span className="truncate">{CATEGORY_LABELS[catKey]?.vi}</span>
+                            </div>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-slate-800 text-slate-400">
+                                {catDocs.length}
+                              </span>
+                              <ChevronDown
+                                className={`w-3.5 h-3.5 text-slate-500 transition-transform duration-200 ${
+                                  isFolderOpen ? 'rotate-180' : ''
+                                }`}
+                              />
+                            </div>
+                          </button>
+
+                          {/* Documents Inside this Folder */}
+                          {isFolderOpen && (
+                            <div className="p-1 space-y-1 bg-slate-900/40 border-t border-slate-850">
+                              {catDocs.length === 0 ? (
+                                <div className="p-2.5 text-center text-[11px] text-slate-500 italic">
+                                  Chưa có tài liệu nào trong thư mục này
+                                </div>
+                              ) : (
+                                catDocs.map(doc => {
+                                  const isSelected = currentReadingDoc?.id === doc.id;
+                                  return (
+                                    <button
+                                      key={doc.id}
+                                      onClick={() => setReadingDocId(doc.id)}
+                                      className={`w-full text-left p-2 rounded-lg text-xs transition-all flex items-start gap-2 ${
+                                        isSelected
+                                          ? 'bg-indigo-600/25 border-l-4 border-l-indigo-500 text-white font-semibold shadow-sm'
+                                          : 'text-slate-300 hover:bg-slate-800/70 border-l-4 border-l-transparent'
+                                      }`}
+                                    >
+                                      <FileText className={`w-3.5 h-3.5 shrink-0 mt-0.5 ${isSelected ? 'text-indigo-400' : 'text-slate-500'}`} />
+                                      <div className="flex-1 min-w-0">
+                                        <div className="flex items-center justify-between gap-1">
+                                          <span className="font-mono text-[10px] text-indigo-300 font-bold">{doc.id}</span>
+                                          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${doc.status === 'Approved' ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+                                        </div>
+                                        <div className="text-[11px] truncate mt-0.5" title={doc.title}>
+                                          {doc.title}
+                                        </div>
+                                      </div>
+                                    </button>
+                                  );
+                                })
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                </div>
+
+                {/* Quick Upload CTA at bottom of tree */}
+                <div className="pt-2 border-t border-slate-800">
+                  <button
+                    onClick={() => setIsUploadModalOpen(true)}
+                    className="w-full py-2 px-3 rounded-xl bg-slate-850 hover:bg-slate-800 border border-slate-750 text-xs font-semibold text-indigo-300 hover:text-white flex items-center justify-center gap-1.5 transition-colors"
+                  >
+                    <UploadCloud className="w-3.5 h-3.5" />
+                    <span>+ Tải lên file .md hoặc .zip</span>
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
+          )}
 
-          {/* Right Reader Canvas (8.5 cols) */}
-          <div className="lg:col-span-9">
+          {/* Right Reader Canvas */}
+          <div className={isSidebarCollapsed ? "lg:col-span-12" : "lg:col-span-9"}>
             {currentReadingDoc ? (
               <DocumentReaderView
                 document={currentReadingDoc}
+                allProjectDocs={projectDocs}
+                selectedCategory={selectedCategory}
+                onSelectCategory={(cat) => handleSelectCategory(cat)}
+                onSelectDoc={(id) => setReadingDocId(id)}
+                onBackToList={() => setViewMode('list')}
                 onEdit={(d) => {
                   setSelectedDoc(d);
                   setIsDocModalOpen(true);
                 }}
                 onDelete={(id) => setConfirmDeleteId(id)}
-                onBackToList={() => setViewMode('list')}
+                isSidebarCollapsed={isSidebarCollapsed}
+                onToggleSidebar={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
               />
             ) : (
               /* Empty Workspace */
@@ -490,16 +652,6 @@ export const DocumentsView: React.FC = () => {
                   >
                     {t('docUploadBatch')}
                   </Button>
-                  <Button
-                    variant="secondary"
-                    onClick={() => {
-                      setSelectedDoc(null);
-                      setIsDocModalOpen(true);
-                    }}
-                    icon={<Plus className="w-4 h-4" />}
-                  >
-                    {t('docUploadCreate')}
-                  </Button>
                 </div>
               </div>
             )}
@@ -507,7 +659,7 @@ export const DocumentsView: React.FC = () => {
         </div>
       )}
 
-      {/* 3. UPLOAD LIST & CARD MANAGEMENT MODE */}
+      {/* 4. UPLOAD LIST & CARD MANAGEMENT MODE */}
       {viewMode === 'list' && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
           {/* Left Sidebar: Standard 8 Folders */}
@@ -522,30 +674,24 @@ export const DocumentsView: React.FC = () => {
               return (
                 <button
                   key={cat.key}
-                  onClick={() => setSelectedCategory(cat.key)}
+                  onClick={() => handleSelectCategory(cat.key)}
                   className={`w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl text-xs font-medium transition-all ${
                     isSelected
                       ? 'bg-indigo-600/20 text-indigo-200 border border-indigo-500/40 font-semibold shadow-sm'
                       : 'text-slate-300 hover:bg-slate-800/70 hover:text-white border border-transparent'
                   }`}
                 >
-                  <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="flex items-center gap-2.5 truncate">
                     {isSelected ? (
-                      <FolderOpen className="w-4 h-4 text-indigo-400 shrink-0" />
+                      <FolderOpen className="w-4 h-4 text-amber-300 shrink-0" />
                     ) : (
-                      <Folder className="w-4 h-4 text-slate-500 shrink-0" />
+                      <Folder className="w-4 h-4 text-indigo-400 shrink-0" />
                     )}
                     <span className="truncate">{cat.label}</span>
                   </div>
-                  <span
-                    className={`text-[11px] font-mono px-2 py-0.5 rounded-full shrink-0 ${
-                      isSelected
-                        ? 'bg-indigo-500 text-white font-bold'
-                        : cat.count > 0
-                        ? 'bg-slate-800 text-slate-200'
-                        : 'bg-slate-850 text-slate-500'
-                    }`}
-                  >
+                  <span className={`px-2 py-0.5 rounded-md text-[10px] font-mono shrink-0 ${
+                    isSelected ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400'
+                  }`}>
                     {cat.count}
                   </span>
                 </button>
@@ -682,11 +828,11 @@ export const DocumentsView: React.FC = () => {
                               setReadingDocId(doc.id);
                               setViewMode('reader');
                             }}
-                            className="px-2.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white transition-colors text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap shadow-sm shadow-indigo-600/20"
+                            className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white transition-colors text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap shadow-sm shadow-indigo-600/20"
                             title="Mở chế độ đọc tài liệu"
                           >
                             <BookOpen className="w-3.5 h-3.5" />
-                            <span>{language === 'vi' ? 'Đọc' : 'Read'}</span>
+                            <span>{language === 'vi' ? 'Đọc ngay' : 'Read'}</span>
                           </button>
 
                           <button
@@ -710,56 +856,53 @@ export const DocumentsView: React.FC = () => {
                         </div>
                       </div>
 
-                      {/* Card Middle Row: Description */}
+                      {/* Card Middle: Description */}
                       {doc.description && (
                         <p className="text-xs text-slate-300 leading-relaxed line-clamp-2">
                           {doc.description}
                         </p>
                       )}
 
-                      {/* Card Bottom Row: Metadata & SHA-256 */}
-                      <div className="pt-2.5 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-3 text-[11px] text-slate-400">
-                        <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
-                          <span className="inline-flex items-center gap-1.5 text-indigo-300 font-medium">
-                            <Folder className="w-3.5 h-3.5 text-indigo-400" />
-                            {getCategoryLabel(doc.category, true)}
-                          </span>
-
-                          <span className="inline-flex items-center gap-1.5">
-                            <User className="w-3.5 h-3.5 text-slate-500" />
-                            {doc.author}
-                          </span>
-
-                          <span className="inline-flex items-center gap-1.5">
-                            <Calendar className="w-3.5 h-3.5 text-slate-500" />
-                            {doc.updatedAt}
-                          </span>
-
-                          {doc.linkedRequirementsCount > 0 && (
-                            <span className="inline-flex items-center gap-1 text-emerald-400 font-semibold">
-                              <Link2 className="w-3.5 h-3.5" />
-                              {doc.linkedRequirementsCount} yêu cầu liên kết
+                      {/* Card Bottom Row: Metadata & Cryptographic Hash */}
+                      <div className="pt-2 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-3 text-xs text-slate-400">
+                        <div className="flex flex-wrap items-center gap-3">
+                          <span className="flex items-center gap-1">
+                            <Folder className="w-3 h-3 text-indigo-400" />
+                            <span className="text-slate-300 font-medium">
+                              {getCategoryLabel(doc.category, true)}
                             </span>
-                          )}
+                          </span>
+                          <span>•</span>
+                          <span className="flex items-center gap-1">
+                            <User className="w-3 h-3 text-slate-400" />
+                            <span>{doc.author}</span>
+                          </span>
+                          <span>•</span>
+                          <span className="flex items-center gap-1">
+                            <Calendar className="w-3 h-3 text-slate-400" />
+                            <span>{doc.updatedAt}</span>
+                          </span>
                         </div>
 
-                        {/* SHA-256 Pill */}
+                        {/* Hash Code & Integrity Verification Pill */}
                         {checksum && (
-                          <button
-                            type="button"
-                            onClick={() => handleCopyChecksum(checksum)}
-                            title={`Nhấp để sao chép mã toàn vẹn: ${checksum}`}
-                            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-950 hover:bg-slate-950/80 border border-emerald-500/25 hover:border-emerald-500/50 text-emerald-300 font-mono text-[11px] transition-all whitespace-nowrap shrink-0"
-                          >
-                            <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                            <span className="text-slate-400">SHA-256:</span>
-                            <span>{shortChecksum}</span>
-                            {copiedHash === checksum ? (
-                              <Check className="w-3 h-3 text-emerald-400 ml-0.5" />
-                            ) : (
-                              <Copy className="w-3 h-3 text-slate-400 hover:text-white ml-0.5" />
-                            )}
-                          </button>
+                          <div className="flex items-center gap-2 font-mono text-[11px]">
+                            <button
+                              type="button"
+                              onClick={() => handleCopyChecksum(checksum)}
+                              title="Nhấp để sao chép mã băm SHA-256 hoàn chỉnh"
+                              className="flex items-center gap-1 px-2.5 py-0.5 rounded-md bg-slate-950 border border-slate-800 text-slate-300 hover:text-white hover:border-slate-700 transition-colors"
+                            >
+                              <ShieldCheck className="w-3 h-3 text-emerald-400" />
+                              <span className="text-slate-400">SHA-256:</span>
+                              <span className="text-slate-300">{shortChecksum}</span>
+                              {copiedHash === checksum ? (
+                                <Check className="w-3 h-3 text-emerald-400 ml-0.5" />
+                              ) : (
+                                <Copy className="w-3 h-3 text-slate-400 ml-0.5" />
+                              )}
+                            </button>
+                          </div>
                         )}
                       </div>
                     </div>
@@ -771,17 +914,7 @@ export const DocumentsView: React.FC = () => {
         </div>
       )}
 
-      {/* 4. Modals */}
-      <ProjectModal
-        isOpen={isProjectModalOpen}
-        onClose={() => setIsProjectModalOpen(false)}
-      />
-
-      <DocumentUploadModal
-        isOpen={isUploadModalOpen}
-        onClose={() => setIsUploadModalOpen(false)}
-      />
-
+      {/* MODALS */}
       {isDocModalOpen && (
         <DocumentModal
           document={selectedDoc}
@@ -792,90 +925,98 @@ export const DocumentsView: React.FC = () => {
         />
       )}
 
-      <MarkdownPreviewModal
-        document={previewDoc}
-        isOpen={!!previewDoc}
-        onClose={() => setPreviewDoc(null)}
-      />
+      {isUploadModalOpen && (
+        <DocumentUploadModal
+          isOpen={isUploadModalOpen}
+          onClose={() => setIsUploadModalOpen(false)}
+        />
+      )}
+
+      {isProjectModalOpen && (
+        <ProjectModal
+          isOpen={isProjectModalOpen}
+          onClose={() => setIsProjectModalOpen(false)}
+        />
+      )}
+
+      {previewDoc && (
+        <MarkdownPreviewModal
+          isOpen={Boolean(previewDoc)}
+          document={previewDoc}
+          onClose={() => setPreviewDoc(null)}
+        />
+      )}
+
+      {/* Version History Modal */}
+      {activeVersionDoc && (
+        <Modal
+          isOpen={Boolean(activeVersionDoc)}
+          onClose={() => setActiveVersionDoc(null)}
+          title={`Lịch sử Phiên bản & Chữ ký băm mật mã: ${activeVersionDoc.id}`}
+          maxWidth="lg"
+        >
+          <div className="space-y-4">
+            <div className="p-3 bg-slate-950/70 border border-slate-800 rounded-xl space-y-1">
+              <div className="text-xs font-bold text-white">{activeVersionDoc.title}</div>
+              <div className="text-[11px] text-slate-400">
+                Thuộc dự án: <strong className="text-indigo-300">{activeProject.name}</strong> • Hạng mục: {getCategoryLabel(activeVersionDoc.category)}
+              </div>
+            </div>
+
+            <div className="space-y-2.5 max-h-[50vh] overflow-y-auto pr-1">
+              {activeVersionDoc.versions && activeVersionDoc.versions.length > 0 ? (
+                activeVersionDoc.versions.map((ver, idx) => (
+                  <div key={idx} className="p-3.5 bg-slate-900 border border-slate-800 rounded-xl space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-xs font-bold text-indigo-300 bg-indigo-950 px-2 py-0.5 rounded border border-indigo-500/30">
+                          {ver.version}
+                        </span>
+                        {getStatusBadge(ver.status)}
+                      </div>
+                      <span className="text-[11px] text-slate-400 font-mono">{ver.updatedAt}</span>
+                    </div>
+
+                    <p className="text-xs text-slate-300 leading-relaxed">
+                      {ver.changeSummary || 'Cập nhật nội dung đặc tả kỹ thuật'}
+                    </p>
+
+                    <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between text-[11px] text-slate-400">
+                      <span>Tác giả: <strong className="text-slate-300">{ver.author}</strong></span>
+                      <div className="flex items-center gap-1 font-mono text-emerald-400">
+                        <ShieldCheck className="w-3.5 h-3.5" />
+                        <span className="truncate max-w-[200px]" title={ver.checksum}>{ver.checksum}</span>
+                      </div>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="p-4 text-center text-slate-500 text-xs">Chưa có lịch sử phiên bản nào</div>
+              )}
+            </div>
+          </div>
+        </Modal>
+      )}
 
       {/* Delete Confirmation Modal */}
       {confirmDeleteId && (
         <Modal
-          isOpen={true}
+          isOpen={Boolean(confirmDeleteId)}
           onClose={() => setConfirmDeleteId(null)}
           title="Xác nhận xóa tài liệu"
           maxWidth="sm"
         >
           <div className="space-y-4">
             <p className="text-xs text-slate-300 leading-relaxed">
-              {t('docDeleteConfirm')} <br />
-              Mã tài liệu: <span className="font-mono text-indigo-400 font-bold">{confirmDeleteId}</span>
+              Bạn có chắc chắn muốn xóa tài liệu <strong className="text-rose-400 font-mono">{confirmDeleteId}</strong>?
+              Hành động này sẽ được ghi vào nhật ký kiểm toán bất biến SHA-256.
             </p>
-            <div className="flex items-center justify-end gap-2.5">
-              <Button variant="ghost" onClick={() => setConfirmDeleteId(null)}>
-                {t('actionCancel')}
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+              <Button variant="secondary" size="sm" onClick={() => setConfirmDeleteId(null)}>
+                Hủy bỏ
               </Button>
-              <Button variant="danger" onClick={() => handleDelete(confirmDeleteId)}>
-                {t('actionDelete')}
-              </Button>
-            </div>
-          </div>
-        </Modal>
-      )}
-
-      {/* Version History Modal */}
-      {activeVersionDoc && (
-        <Modal
-          isOpen={true}
-          onClose={() => setActiveVersionDoc(null)}
-          title={
-            <div className="flex items-center gap-2">
-              <History className="w-5 h-5 text-indigo-400" />
-              <span>{t('docVersionHistory')}: {activeVersionDoc.id}</span>
-            </div>
-          }
-          maxWidth="2xl"
-        >
-          <div className="space-y-4">
-            <div className="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800 text-xs">
-              <h4 className="font-bold text-white text-sm">{activeVersionDoc.title}</h4>
-              <p className="text-indigo-300 text-xs mt-1">{getCategoryLabel(activeVersionDoc.category, false)}</p>
-            </div>
-
-            <div className="space-y-2.5">
-              {activeVersionDoc.versions.map((ver, idx) => (
-                <div key={idx} className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
-                  <div className="flex items-center justify-between text-xs">
-                    <div className="flex items-center gap-2">
-                      <span className="font-mono font-bold text-white px-2 py-0.5 rounded bg-slate-800">
-                        {ver.version}
-                      </span>
-                      {getStatusBadge(ver.status)}
-                      <span className="text-slate-400 text-[11px]">{ver.updatedAt}</span>
-                    </div>
-                    <span className="text-slate-400 text-[11px]">{ver.author}</span>
-                  </div>
-
-                  <p className="text-xs text-slate-300">
-                    {ver.changeSummary}
-                  </p>
-
-                  <div className="flex items-center justify-between pt-2 text-[11px] text-slate-400 border-t border-slate-850">
-                    <span>{t('docFileSize')}: {ver.fileSize}</span>
-                    <div className="flex items-center gap-1.5 font-mono text-emerald-400">
-                      <ShieldCheck className="w-3.5 h-3.5" />
-                      <span title={ver.checksum}>
-                        {formatHashCode(ver.checksum)}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="pt-2 flex justify-end">
-              <Button variant="primary" onClick={() => setActiveVersionDoc(null)}>
-                {t('actionClose')}
+              <Button variant="danger" size="sm" onClick={() => handleDelete(confirmDeleteId)}>
+                Xác nhận xóa
               </Button>
             </div>
           </div>

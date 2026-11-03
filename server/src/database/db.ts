@@ -227,12 +227,11 @@ function seedDatabaseIfEmpty() {
     db.exec("UPDATE documents SET project_id = 'PRJ-01' WHERE project_id IS NULL OR project_id = ''");
   } catch {}
 
-  const docCount = (db.prepare('SELECT count(*) as count FROM documents').get() as any).count;
-  if (docCount === 0) {
-    console.log('[SQLite DB] Seeding initial baseline proposal records...');
+  // Ensure baseline documents exist
+  const insertDoc = db.prepare('INSERT OR IGNORE INTO documents (id, project_id, category, status, data, updated_at) VALUES (?, ?, ?, ?, ?, ?)');
 
-    // Seed Documents
-    const initialDocs: DocumentItem[] = [
+  // Seed Documents
+  const initialDocs: DocumentItem[] = [
       {
         id: 'DOC-01',
         title: 'Project Charter & Stakeholder Matrix',
@@ -278,10 +277,168 @@ function seedDatabaseIfEmpty() {
             checksum: `sha256:${computeSha256('DOC-02|v1.2|BRD Authentication & RBAC')}`
           }
         ]
+      },
+      {
+        id: 'DOC-03',
+        projectId: 'PRJ-01',
+        title: 'Software Requirements Specification (SRS) - Evidence Lifecycle',
+        category: '03_System_Requirements',
+        currentVersion: 'v1.1',
+        status: 'In Review',
+        author: 'Sarah Le (Lead BA)',
+        updatedAt: '2026-11-02 11:45',
+        description: 'Functional specs for EVD storage references, multi-entity linking and audit immutability.',
+        contentMarkdown: `# Software Requirements Specification (SRS) - Evidence Lifecycle
+
+> **Module**: Lưu trữ Bằng chứng EVD & Chuỗi Truy vết Bất biến  
+> **Phiên bản**: v1.1 (In Review) | **Tác giả**: Sarah Le (Lead BA)
+
+---
+
+## 1. Mục tiêu Phân hệ Bằng chứng (EVD)
+Hệ thống **Evidence Lifecycle Management** chịu trách nhiệm thu thập, xác thực tính toàn vẹn và liên kết bằng chứng thực thi kiểm thử (log file, ảnh chụp màn hình, kết quả API JSON, video quay màn hình) với:
+- Ca kiểm thử (\`TestCaseItem\`)
+- Đợt chạy kiểm thử (\`TestRunItem\`)
+- Yêu cầu nghiệp vụ (\`RequirementItem\`)
+- Lỗi phát sinh (\`BugItem\`)
+
+## 2. Quy trình Vòng đời Bằng chứng (Lifecycle Flow)
+1. **Đăng ký (Upload & Register)**: Tester tải lên bằng chứng, nhập mô tả và môi trường thực thi (QA, Staging, Prod).
+2. **Ký số & Mã băm (Hashing)**: Backend tự động tính toán mã băm mật mã học SHA-256 (\`sha256:xxxx\`) cho tệp đính kèm.
+3. **Liên kết Chéo (Multi-entity Traceability)**: Gắn ID bằng chứng \`EVD-xxx\` vào các bản ghi liên quan.
+4. **Xác thực Bằng chứng (Verify & Certify)**: Lead QA hoặc Approver kiểm tra và xác nhận tính xác thực (\`Verified = true\`).
+`,
+        tags: ['SRS', 'EVD', 'Storage'],
+        linkedRequirementsCount: 2,
+        versions: [
+          {
+            version: 'v1.1',
+            updatedAt: '2026-11-02 11:45',
+            author: 'Sarah Le',
+            status: 'In Review',
+            changeSummary: 'Defined presigned URL direct upload and tamper-evident hash signing.',
+            fileSize: '3.1 MB',
+            checksum: `sha256:${computeSha256('DOC-03|v1.1|SRS Evidence Lifecycle|2026-11-02')}`
+          }
+        ]
+      },
+      {
+        id: 'DOC-04',
+        projectId: 'PRJ-01',
+        title: 'Figma Design System & 3-Column QA Workspace Wireframes',
+        category: '04_UI_UX',
+        currentVersion: 'v2.0',
+        status: 'Approved',
+        author: 'Duc Pham (QA Lead)',
+        updatedAt: '2026-11-01 16:20',
+        description: 'Component specs, 3-column split view layout, and evidence attachment drawer UI.',
+        contentMarkdown: `# Figma Design System & 3-Column QA Workspace Wireframes
+
+> **Dự án**: AI-Ready QA Platform MVP  
+> **Chủ đề**: Quy chuẩn Giao diện 3 Cột & Bộ màu Dark Theme Slate  
+> **Phiên bản**: v2.0 (Approved) | **Tác giả**: Duc Pham (QA Lead)
+
+---
+
+## 1. Triết lý Thiết kế Giao diện (Design Principles)
+- **Zero White Borders**: Sử dụng dải màu Slate tối sâu (\`slate-950: #020617\`, \`slate-850: #162032\`, \`slate-750: #293548\`) loại bỏ hoàn toàn viền trắng fallback.
+- **Three-Column Navigation**: Phân tách không gian làm việc chuyên nghiệp (Menu trái -> Danh mục/Cây dữ liệu -> Không gian đọc đặc tả & kiểm thử).
+- **Instant Typography**: Trình hiển thị Markdown tối ưu hóa cho tài liệu kỹ thuật, bảng biểu RACI, checkbox tiêu chí nghiệm thu.
+`,
+        tags: ['Figma', 'UI/UX', 'Wireframe'],
+        linkedRequirementsCount: 1,
+        versions: [
+          {
+            version: 'v2.0',
+            updatedAt: '2026-11-01 16:20',
+            author: 'Duc Pham',
+            status: 'Approved',
+            changeSummary: 'Finalized dark slate theme tokens and 3-column test execution workspace layout.',
+            fileSize: '1.8 MB',
+            checksum: `sha256:${computeSha256('DOC-04|v2.0|Figma UI Specs 3-Column|2026-11-01')}`
+          }
+        ]
+      },
+      {
+        id: 'DOC-05',
+        projectId: 'PRJ-01',
+        title: 'REST API & Traceability Schema Specifications',
+        category: '05_Technical_Documents',
+        currentVersion: 'v1.0',
+        status: 'Approved',
+        author: 'Khoa Dang (Tech Lead)',
+        updatedAt: '2026-10-30 18:00',
+        description: 'Complete OpenAPI 3.0 schema, webhook contracts, and SQLite JSON persistence layout.',
+        contentMarkdown: `# REST API & Traceability Schema Specifications
+
+> **Hệ thống**: DocQA Backend Micro-Service  
+> **Giao thức**: RESTful JSON / SSE Streams  
+> **Phiên bản**: v1.0 (Approved) | **Tác giả**: Khoa Dang (Tech Lead)
+
+---
+
+## 1. Danh sách Điểm cuối API (Endpoints Summary)
+| Phương thức | Đường dẫn API | Mô tả nghiệp vụ |
+| :--- | :--- | :--- |
+| \`GET\` | \`/api/v1/documents\` | Truy vấn danh sách tài liệu dự án |
+| \`POST\` | \`/api/v1/documents/upload-batch\` | Tải lên tệp .md, .zip tự động giải nén |
+| \`GET\` | \`/api/v1/ai/connection\` | Lấy trạng thái kết nối AI & Model |
+| \`POST\` | \`/api/v1/ai/connection/select-model\` | Chọn và lưu riêng model vào SQLite |
+| \`POST\` | \`/api/v1/ai/models/effort\` | Lưu mức độ Out (Effort) theo từng model |
+`,
+        tags: ['API', 'OpenAPI', 'Technical'],
+        linkedRequirementsCount: 3,
+        versions: [
+          {
+            version: 'v1.0',
+            updatedAt: '2026-10-30 18:00',
+            author: 'Khoa Dang',
+            status: 'Approved',
+            changeSummary: 'Approved initial OpenAPI specification for Document & AI connection modules.',
+            fileSize: '4.2 MB',
+            checksum: `sha256:${computeSha256('DOC-05|v1.0|OpenAPI Spec Traceability|2026-10-30')}`
+          }
+        ]
+      },
+      {
+        id: 'DOC-06',
+        projectId: 'PRJ-01',
+        title: 'Master Test Strategy & Acceptance Plan',
+        category: '06_QA',
+        currentVersion: 'v1.3',
+        status: 'Approved',
+        author: 'Duc Pham (QA Lead)',
+        updatedAt: '2026-11-02 14:00',
+        description: 'Regression coverage goals, test levels, defect severity definitions, and release sign-off rules.',
+        contentMarkdown: `# Master Test Strategy & Acceptance Plan
+
+> **Chiến lược**: Kiểm thử Toàn diện & Đối soát Toàn vẹn Yêu cầu  
+> **Mục tiêu**: Bao phủ tối thiểu 95% Ma trận Truy vết  
+> **Phiên bản**: v1.3 (Approved) | **Tác giả**: Duc Pham (QA Lead)
+
+---
+
+## 1. Tiêu chí Chất lượng & Cấp độ Kiểm thử
+1. **Unit & Integration Test**: Đảm bảo 100% logic mật mã học SHA-256, SQLite repository và AI subprocess bridge hoạt động ổn định.
+2. **Acceptance Criteria Verification**: Mọi ca kiểm thử phải truy xuất ngược được về ít nhất 1 tài liệu đặc tả có trạng thái \`Approved\`.
+3. **Evidence Strict Rule**: Bất kỳ ca kiểm thử nào có kết quả \`Failed\` bắt buộc phải đính kèm ít nhất 1 bằng chứng EVD hợp lệ.
+`,
+        tags: ['QA', 'Strategy', 'TestPlan'],
+        linkedRequirementsCount: 2,
+        versions: [
+          {
+            version: 'v1.3',
+            updatedAt: '2026-11-02 14:00',
+            author: 'Duc Pham',
+            status: 'Approved',
+            changeSummary: 'Mandated SHA-256 evidence validation for all failed test execution results.',
+            fileSize: '2.1 MB',
+            checksum: `sha256:${computeSha256('DOC-06|v1.3|QA Master Strategy|2026-11-02')}`
+          }
+        ]
       }
     ];
 
-    const insertDoc = db.prepare('INSERT INTO documents (id, project_id, category, status, data, updated_at) VALUES (?, ?, ?, ?, ?, ?)');
     for (const doc of initialDocs) {
       insertDoc.run(doc.id, doc.projectId || 'PRJ-01', doc.category, doc.status, JSON.stringify(doc), doc.updatedAt);
     }
@@ -313,6 +470,8 @@ function seedDatabaseIfEmpty() {
     };
     insertDoc.run(fcbDoc.id, fcbDoc.projectId!, fcbDoc.category, fcbDoc.status, JSON.stringify(fcbDoc), fcbDoc.updatedAt);
 
+  const reqCount = (db.prepare('SELECT count(*) as count FROM requirements').get() as any).count;
+  if (reqCount === 0) {
     // Seed Requirements
     const initialReqs: RequirementItem[] = [
       {
@@ -621,10 +780,10 @@ export const dbRepository = {
   documents: {
     getAll(projectId?: string): DocumentItem[] {
       if (projectId && projectId !== 'ALL') {
-        const rows = db.prepare('SELECT data FROM documents WHERE project_id = ? ORDER BY updated_at DESC').all(projectId) as { data: string }[];
+        const rows = db.prepare('SELECT data FROM documents WHERE project_id = ? ORDER BY category ASC, id ASC').all(projectId) as { data: string }[];
         return rows.map(r => JSON.parse(r.data));
       }
-      const rows = db.prepare('SELECT data FROM documents ORDER BY updated_at DESC').all() as { data: string }[];
+      const rows = db.prepare('SELECT data FROM documents ORDER BY category ASC, id ASC').all() as { data: string }[];
       return rows.map(r => JSON.parse(r.data));
     },
     getById(id: string): DocumentItem | null {
