@@ -38,6 +38,7 @@ import { DocumentUploadModal } from './DocumentUploadModal';
 import { ProjectModal } from './ProjectModal';
 import { MarkdownPreviewModal } from './MarkdownPreviewModal';
 import { DocumentReaderView } from './DocumentReaderView';
+import { ReviewQueueView } from './ReviewQueueView';
 import { Button, Badge, Modal } from '../../common/components';
 import { formatHashCode } from '../../common/utils/hash';
 
@@ -104,8 +105,8 @@ export const DocumentsView: React.FC = () => {
   } = useApp();
   const { t, language } = useI18n();
 
-  // Mode: 'reader' (Đọc tài liệu dự án) vs 'list' (Quản lý danh sách tải lên)
-  const [viewMode, setViewMode] = useState<'reader' | 'list'>('reader');
+  // Mode: 'reader' (Đọc tài liệu dự án) vs 'list' (Quản lý danh sách tải lên) vs 'review' (Hàng đợi duyệt)
+  const [viewMode, setViewMode] = useState<'reader' | 'list' | 'review'>('reader');
   const [readingDocId, setReadingDocId] = useState<string | null>(null);
 
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
@@ -382,6 +383,18 @@ export const DocumentsView: React.FC = () => {
             >
               <ListFilter className="w-3.5 h-3.5" />
               <span>{language === 'vi' ? 'Lịch sử tải lên' : 'Upload List'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('review')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                viewMode === 'review'
+                  ? 'bg-amber-600 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <ShieldCheck className="w-3.5 h-3.5" />
+              <span>{language === 'vi' ? 'Hàng đợi duyệt (Review)' : 'Review Queue'}</span>
             </button>
           </div>
 
@@ -912,6 +925,18 @@ export const DocumentsView: React.FC = () => {
             )}
           </div>
         </div>
+      )}
+
+      {/* 5. HUMAN REVIEW QUEUE & KNOWLEDGE GOVERNANCE MODE (Epic E8) */}
+      {viewMode === 'review' && (
+        <ReviewQueueView
+          projectId={activeProject.id}
+          projectName={activeProject.name}
+          onOpenDocReader={(docId) => {
+            setReadingDocId(docId);
+            setViewMode('reader');
+          }}
+        />
       )}
 
       {/* MODALS */}

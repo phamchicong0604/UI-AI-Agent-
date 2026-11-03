@@ -1067,6 +1067,22 @@ export const dbRepository = {
       query += ' ORDER BY created_at DESC';
       return db.prepare(query).all(...params) as KnowledgeUnitRecord[];
     },
+    getByDocumentVersion(documentVersionId: string): (KnowledgeUnitRecord & { sources: KnowledgeSourceRecord[] })[] {
+      const rows = db.prepare(`
+        SELECT DISTINCT ku.id, ku.project_id as projectId, ku.unit_type as unitType, ku.content,
+               ku.subject, ku.action, ku.condition, ku.evidence_level as evidenceLevel,
+               ku.status, ku.created_at as createdAt, ku.updated_at as updatedAt
+        FROM knowledge_units ku
+        JOIN knowledge_sources ks ON ks.unit_id = ku.id
+        WHERE ks.document_version_id = ?
+        ORDER BY ku.created_at DESC
+      `).all(documentVersionId) as KnowledgeUnitRecord[];
+
+      return rows.map(r => ({
+        ...r,
+        sources: dbRepository.knowledgeSources.getByUnitId(r.id)
+      }));
+    },
     updateStatus(id: string, status: string): boolean {
       const now = new Date().toISOString();
       const res = db.prepare('UPDATE knowledge_units SET status = ?, updated_at = ? WHERE id = ?').run(status, now, id);

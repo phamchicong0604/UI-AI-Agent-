@@ -15,6 +15,7 @@ import {
 import { db, dbRepository } from '../../database/db.js';
 import { validateFileContent, validateZipArchive } from './uploadSecurity.js';
 import { documentParserManager } from './parsers/index.js';
+import { SemanticRiskScorer } from '../knowledge/semanticValidator.js';
 
 export const documentsRouter = Router();
 
@@ -185,6 +186,72 @@ documentsRouter.get('/batches/project/:projectId', (req: Request, res: Response)
     batchDetails: b.batchDetails ? JSON.parse(b.batchDetails) : []
   }));
   sendSuccess(res, formatted);
+});
+
+/**
+ * GET /api/v1/documents/review-queue
+ * Prioritized Human Review Queue sorted descending by Risk Score (E8-T1, E8-T2)
+ */
+documentsRouter.get('/review-queue', (req: Request, res: Response) => {
+  const projectId = req.query.projectId as string | undefined;
+  const riskFilter = req.query.riskLevel as string | undefined;
+  const categoryFilter = req.query.category as string | undefined;
+
+  let docs = dbRepository.documents.getAll(projectId);
+  // Target documents needing human review or in draft state
+  docs = docs.filter(d => d.status === 'Draft' || d.status === 'In Review' || (d as any).workflowState === 'REVIEW_REQUIRED');
+
+  if (categoryFilter && categoryFilter !== 'ALL') {
+    docs = docs.filter(d => d.category === categoryFilter);
+  }
+
+  const reviewItems = docs.map(doc => {
+    const projId = doc.projectId || 'PRJ-01';
+    const dbVersions = dbRepository.documentVersions.getByDocumentId(doc.id);
+    const latestDbVer = dbVersions.length > 0 ? dbVersions[0] : null;
+    const units = latestDbVer 
+      ? dbRepository.knowledgeUnits.getByDocumentVersion(latestDbVer.id) 
+      : (dbRepository.knowledgeUnits.getByProject(projId) as any[]);
+
+    const explicitCount = units.filter(u => u.evidenceLevel === 'Explicit').length;
+    const inferredCount = units.filter(u => u.evidenceLevel === 'Inferred' || u.evidenceLevel === 'Assumed').length;
+    const unknownCount = units.filter(u => u.evidenceLevel === 'Unknown' || u.evidenceLevel === 'Not Specified').length;
+
+    const allConflicts = dbRepository.conflicts.getUnresolvedByProject(projId);
+    const unitIds = new Set(units.map(u => u.id));
+    const docConflicts = allConflicts.filter(c => unitIds.has(c.unitAId) || unitIds.has(c.unitBId));
+    const criticalConflicts = docConflicts.filter(c => c.severity === 'Critical');
+
+    const riskResult = SemanticRiskScorer.calculate({
+      criticalConflictsCount: criticalConflicts.length,
+      ambiguitiesCount: docConflicts.filter(c => c.conflictType === 'Ambiguity').length + unknownCount,
+      unknownTermsCount: unknownCount,
+      unsupportedInferencesCount: inferredCount
+    });
+
+    return {
+      document: doc,
+      latestVersion: latestDbVer,
+      riskResult,
+      unitsCount: units.length,
+      explicitCount,
+      inferredCount,
+      conflictsCount: docConflicts.length,
+      criticalConflictsCount: criticalConflicts.length,
+      units,
+      conflicts: docConflicts
+    };
+  });
+
+  // AC-E8-1: Sort strictly descending by riskScore (highest risk first)
+  reviewItems.sort((a, b) => b.riskResult.riskScore - a.riskResult.riskScore);
+
+  let filtered = reviewItems;
+  if (riskFilter && riskFilter !== 'ALL') {
+    filtered = reviewItems.filter(item => item.riskResult.riskLevel === riskFilter);
+  }
+
+  sendSuccess(res, filtered);
 });
 
 /**

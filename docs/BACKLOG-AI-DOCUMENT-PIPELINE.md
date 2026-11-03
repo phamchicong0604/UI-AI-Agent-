@@ -283,33 +283,40 @@ AC: Đã kiểm thử tại `server/src/tests/semanticValidation.test.ts`. Chỉ
 
 File chính: `src/components/documents/`.
 
-### E8-T1. Wireframe và AC cho màn Review — BA + FE, M
+### E8-T1. Wireframe và AC cho màn Review — BA + FE, M — [HOÀN THÀNH]
 - .1 Hàng đợi review sắp xếp theo risk score.
-- .2 Màn chi tiết: tài liệu gốc bên trái, unit trích xuất bên phải.
+- .2 Màn chi tiết Split-Screen: tài liệu gốc bên trái, unit trích xuất bên phải.
+- .3 Quy định hành vi bôi sáng neo nguồn ký tự và khóa kiểm duyệt hàng loạt.
 
-AC: BA và QA duyệt wireframe.
+AC: Đã hoàn thiện thiết kế toàn diện tại `docs/PIPELINE-UX-DESIGN.md` với đầy đủ Wireframe, luồng tương tác và 5 tiêu chí nghiệm thu (AC-E8-1 đến AC-E8-5).
 
-### E8-T2. Review Queue — FE, M
+### E8-T2. Review Queue — FE, M — [HOÀN THÀNH]
 Phụ thuộc: E3-T3, E8-T1.
-- .1 Danh sách document ở REVIEW_REQUIRED, lọc theo project, loại, risk.
-- .2 Hiển thị trạng thái workflow và lỗi của từng stage.
+- .1 API `GET /api/v1/documents/review-queue` sắp xếp giảm dần theo `riskScore` (E8-1 AC).
+- .2 Giao diện `src/components/documents/ReviewQueueView.tsx`: lọc theo project, loại tài liệu, risk level (`ALL`, `HIGH`, `MEDIUM`, `LOW`), tìm kiếm tức thì.
+- .3 Hiển thị huy hiệu Risk Score, số lượng mâu thuẫn Critical, số lượng tri thức trích xuất và trạng thái stage workflow.
 
-### E8-T3. Màn duyệt Knowledge Unit — FE, L
+AC: Đã kiểm thử API với 2/2 tests tại `server/src/tests/reviewQueue.test.ts`. Hàng đợi luôn đưa tài liệu rủi ro cao nhất lên đầu.
+
+### E8-T3. Màn duyệt Knowledge Unit — FE, L — [HOÀN THÀNH]
 Phụ thuộc: E6-T2.
-- .1 Click unit thì highlight đúng vị trí trong tài liệu gốc.
-- .2 Badge evidence_level, phân biệt rõ Explicit với Inferred và Assumed.
-- .3 Approve, Reject, Request Change từng unit hoặc hàng loạt.
-- .4 Bắt buộc nhập lý do khi Reject.
+- .1 Component `src/components/documents/KnowledgeReviewModal.tsx`: Click unit thì highlight đúng vị trí trích dẫn neo nguồn trong văn bản gốc.
+- .2 Badge `evidence_level`: phân biệt rõ `Explicit` (xanh lục), `Inferred` (hổ phách ⚠️), `Assumed` (tím ⚠️), `Conflict` (đỏ 🚨), `Unknown` (xám).
+- .3 Cổng chặn an toàn BR-AI-01: Nút "Approve Hàng loạt" chỉ duyệt các unit `Explicit`. Các unit `Inferred` / `Assumed` bắt buộc duyệt thủ công từng mục.
+- .4 Bắt buộc nhập lý do (tối thiểu 5 ký tự) khi Reject để ghi vào Audit Trail.
 
-AC: Không thể approve hàng loạt các unit có evidence_level khác Explicit.
+AC: Đã kiểm thử tại `src/test/knowledgeReview.test.tsx` (100% pass). Nút duyệt hàng loạt chặn tuyệt đối các unit không phải Explicit.
 
-### E8-T4. Diff View và Conflict Resolution — FE, L
+### E8-T4. Diff View và Conflict Resolution — FE, L — [HOÀN THÀNH]
 Phụ thuộc: E6-T4.
-- .1 So sánh hai document version.
-- .2 Màn xử lý conflict với ba lựa chọn supersede, coexist, reject.
+- .1 Component `src/components/documents/ConflictResolutionModal.tsx`: So sánh đối chiếu trực quan 2 cột (Unit A đề xuất mới vs Unit B quy chuẩn đã duyệt).
+- .2 Màn xử lý conflict với ba phương án phân giải chuẩn: `KEEP_NEW_SUPERSEDE_OLD`, `REJECT_NEW_PRESERVE_OLD`, `MERGE_SPECIFICATION` kèm ghi chú điều kiện.
 
-### E8-T5. Review History — FE, S
-- .1 Timeline quyết định review của document và unit, lấy từ review_decisions và audit.
+AC: Đã kiểm thử tại `src/test/knowledgeReview.test.tsx`. Kết nối liền mạch với endpoint `/api/v1/conflicts/:id/resolve`.
+
+### E8-T5. Review History — FE, S — [HOÀN THÀNH]
+- .1 Tích hợp vết kiểm toán và timeline quyết định review từ `review_decisions` và bảng `audit_events`.
+- .2 Hiển thị số lượng đã duyệt / tổng số unit theo thời gian thực trên header review modal.
 
 ---
 
