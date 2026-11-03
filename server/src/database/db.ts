@@ -9,7 +9,10 @@ import {
   TestCaseItem, 
   TestRunItem, 
   BugItem, 
-  AuditEvent 
+  AuditEvent,
+  AiConnectionConfig,
+  AccountModelSnapshot,
+  ModelOption
 } from '../common/types.js';
 import { computeSha256, computeAuditEventHash } from '../common/crypto.js';
 
@@ -95,7 +98,63 @@ db.exec(`
     value TEXT NOT NULL,
     updated_at TEXT
   );
+
+  CREATE TABLE IF NOT EXISTS ai_connections (
+    id TEXT PRIMARY KEY DEFAULT 'primary',
+    provider TEXT NOT NULL DEFAULT 'google',
+    auth_method TEXT NOT NULL DEFAULT 'api_key',
+    api_key TEXT,
+    base_url TEXT,
+    model TEXT NOT NULL DEFAULT 'gemini-4-argon-medium',
+    effort_level TEXT DEFAULT 'medium',
+    max_output_tokens INTEGER DEFAULT 32768,
+    cli_binary TEXT DEFAULT 'claude',
+    cli_version TEXT,
+    cli_auth_status TEXT,
+    connection_status TEXT NOT NULL DEFAULT 'disconnected',
+    last_tested_at TEXT,
+    latency_ms INTEGER,
+    error_message TEXT,
+    updated_at TEXT NOT NULL
+  );
+
+  -- Models available to a specific provider account (synced from CLI subscription or API key)
+  CREATE TABLE IF NOT EXISTS ai_models (
+    provider TEXT NOT NULL,
+    auth_method TEXT NOT NULL,
+    source TEXT NOT NULL,
+    model_id TEXT NOT NULL,
+    account TEXT,
+    name TEXT NOT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    data TEXT NOT NULL,
+    synced_at TEXT NOT NULL,
+    PRIMARY KEY (provider, auth_method, source, model_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_ai_models_lookup ON ai_models (provider, auth_method, source);
+
+  -- Per-model effort level settings stored separately in SQLite
+  CREATE TABLE IF NOT EXISTS ai_model_efforts (
+    provider TEXT NOT NULL,
+    model_id TEXT NOT NULL,
+    effort_level TEXT NOT NULL DEFAULT 'medium',
+    max_output_tokens INTEGER DEFAULT 32768,
+    resolved_variant TEXT,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (provider, model_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_ai_model_efforts_lookup ON ai_model_efforts (provider, model_id);
 `);
+
+try {
+  db.exec("ALTER TABLE ai_connections ADD COLUMN effort_level TEXT DEFAULT 'medium'");
+} catch {}
+try {
+  db.exec("ALTER TABLE ai_connections ADD COLUMN max_output_tokens INTEGER DEFAULT 32768");
+} catch {}
+try {
+  db.exec("ALTER TABLE ai_connections ADD COLUMN base_model TEXT");
+} catch {}
 
 /* -------------------------------------------------------------
  * SEED BASELINE DATA IF TABLES ARE EMPTY
@@ -390,6 +449,45 @@ function seedDatabaseIfEmpty() {
 
 seedDatabaseIfEmpty();
 
+function seedAiConnectionIfEmpty() {
+  const count = (db.prepare('SELECT count(*) as count FROM ai_connections').get() as any).count;
+  if (count === 0) {
+    console.log('[SQLite DB] Seeding unified AI connection baseline...');
+    const getSetting = (k: string) => {
+      const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(k) as { value: string } | undefined;
+      return row ? row.value : undefined;
+    };
+    const provider = getSetting('AI_PROVIDER') || process.env.AI_PROVIDER || 'google';
+    const geminiKey = getSetting('GEMINI_API_KEY') || process.env.GEMINI_API_KEY || '';
+    const geminiModel = getSetting('GEMINI_MODEL') || 'gemini-1.5-pro';
+
+    db.prepare(`
+      INSERT OR IGNORE INTO ai_connections (
+        id, provider, auth_method, api_key, base_url, model,
+        cli_binary, cli_version, cli_auth_status, connection_status,
+        last_tested_at, latency_ms, error_message, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'primary',
+      provider === 'gemini' ? 'google' : provider,
+      'api_key',
+      geminiKey || null,
+      null,
+      geminiModel,
+      'claude',
+      null,
+      null,
+      geminiKey ? 'connected' : 'disconnected',
+      null,
+      null,
+      null,
+      new Date().toISOString()
+    );
+  }
+}
+
+seedAiConnectionIfEmpty();
+
 /* -------------------------------------------------------------
  * REPOSITORY HELPERS FOR ALL ENTITIES
  * ----------------------------------------------------------- */
@@ -598,6 +696,219 @@ export const dbRepository = {
         result[row.key] = row.value;
       }
       return result;
+    }
+  },
+
+  aiConnections: {
+    get(): AiConnectionConfig | null {
+      const r = db.prepare('SELECT * FROM ai_connections WHERE id = ?').get('primary') as any;
+      if (!r) return null;
+      return {
+        id: r.id,
+        provider: r.provider,
+        authMethod: r.auth_method,
+        apiKey: r.api_key || undefined,
+        baseUrl: r.base_url || undefined,
+        model: r.model,
+        effortLevel: r.effort_level || 'medium',
+        maxOutputTokens: r.max_output_tokens || 32768,
+        cliBinary: r.cli_binary || undefined,
+        cliVersion: r.cli_version || undefined,
+        cliAuthStatus: r.cli_auth_status || undefined,
+        connectionStatus: r.connection_status,
+        lastTestedAt: r.last_tested_at || undefined,
+        latencyMs: r.latency_ms || undefined,
+        errorMessage: r.error_message || undefined,
+        updatedAt: r.updated_at
+      };
+    },
+    save(config: Partial<AiConnectionConfig>): AiConnectionConfig {
+      const existing = this.get();
+      const merged: AiConnectionConfig = {
+        id: 'primary',
+        provider: config.provider ?? existing?.provider ?? 'google',
+        authMethod: config.authMethod ?? existing?.authMethod ?? 'api_key',
+        apiKey: config.apiKey !== undefined ? config.apiKey : existing?.apiKey,
+        baseUrl: config.baseUrl !== undefined ? config.baseUrl : existing?.baseUrl,
+        model: config.model ?? existing?.model ?? 'gemini-4-argon-medium',
+        effortLevel: config.effortLevel ?? existing?.effortLevel ?? 'medium',
+        maxOutputTokens: config.maxOutputTokens ?? existing?.maxOutputTokens ?? 32768,
+        cliBinary: config.cliBinary ?? existing?.cliBinary ?? 'claude',
+        cliVersion: config.cliVersion ?? existing?.cliVersion,
+        cliAuthStatus: config.cliAuthStatus ?? existing?.cliAuthStatus,
+        connectionStatus: config.connectionStatus ?? existing?.connectionStatus ?? 'disconnected',
+        lastTestedAt: config.lastTestedAt ?? existing?.lastTestedAt,
+        latencyMs: config.latencyMs ?? existing?.latencyMs,
+        errorMessage: config.errorMessage ?? existing?.errorMessage,
+        updatedAt: new Date().toISOString()
+      };
+
+      const stmt = db.prepare(`
+        INSERT INTO ai_connections (
+          id, provider, auth_method, api_key, base_url, model,
+          effort_level, max_output_tokens,
+          cli_binary, cli_version, cli_auth_status, connection_status,
+          last_tested_at, latency_ms, error_message, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          provider = excluded.provider,
+          auth_method = excluded.auth_method,
+          api_key = excluded.api_key,
+          base_url = excluded.base_url,
+          model = excluded.model,
+          effort_level = excluded.effort_level,
+          max_output_tokens = excluded.max_output_tokens,
+          cli_binary = excluded.cli_binary,
+          cli_version = excluded.cli_version,
+          cli_auth_status = excluded.cli_auth_status,
+          connection_status = excluded.connection_status,
+          last_tested_at = excluded.last_tested_at,
+          latency_ms = excluded.latency_ms,
+          error_message = excluded.error_message,
+          updated_at = excluded.updated_at
+      `);
+
+      stmt.run(
+        merged.id,
+        merged.provider,
+        merged.authMethod,
+        merged.apiKey ?? null,
+        merged.baseUrl ?? null,
+        merged.model,
+        merged.effortLevel ?? 'medium',
+        merged.maxOutputTokens ?? 32768,
+        merged.cliBinary ?? null,
+        merged.cliVersion ?? null,
+        merged.cliAuthStatus ?? null,
+        merged.connectionStatus,
+        merged.lastTestedAt ?? null,
+        merged.latencyMs ?? null,
+        merged.errorMessage ?? null,
+        merged.updatedAt
+      );
+
+      return merged;
+    },
+    updateStatus(status: AiConnectionConfig['connectionStatus'], latencyMs?: number, errorMessage?: string): void {
+      const now = new Date().toISOString();
+      const stmt = db.prepare(`
+        UPDATE ai_connections
+        SET connection_status = ?, latency_ms = ?, error_message = ?, last_tested_at = ?, updated_at = ?
+        WHERE id = 'primary'
+      `);
+      stmt.run(status, latencyMs ?? null, errorMessage ?? null, now, now);
+    }
+  },
+
+  aiModels: {
+    /**
+     * Replaces the stored model list for one (provider, authMethod, source) account atomically.
+     */
+    replaceForAccount(snapshot: AccountModelSnapshot): AccountModelSnapshot {
+      const syncedAt = snapshot.syncedAt || new Date().toISOString();
+      const del = db.prepare('DELETE FROM ai_models WHERE provider = ? AND auth_method = ? AND source = ?');
+      const ins = db.prepare(`
+        INSERT INTO ai_models (provider, auth_method, source, model_id, account, name, sort_order, data, synced_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      const tx = db.transaction(() => {
+        del.run(snapshot.provider, snapshot.authMethod, snapshot.source);
+        snapshot.models.forEach((m, idx) => {
+          const entry: ModelOption = { ...m, source: snapshot.source, account: snapshot.account, syncedAt };
+          ins.run(
+            snapshot.provider,
+            snapshot.authMethod,
+            snapshot.source,
+            m.id,
+            snapshot.account ?? null,
+            m.name,
+            idx,
+            JSON.stringify(entry),
+            syncedAt
+          );
+        });
+      });
+      tx();
+      return { ...snapshot, syncedAt };
+    },
+
+    /**
+     * Reads the stored model list for an account. Returns null when never synced.
+     */
+    getForAccount(provider: string, authMethod: string, source: string): AccountModelSnapshot | null {
+      const rows = db.prepare(`
+        SELECT account, data, synced_at FROM ai_models
+        WHERE provider = ? AND auth_method = ? AND source = ?
+        ORDER BY sort_order ASC
+      `).all(provider, authMethod, source) as Array<{ account: string | null; data: string; synced_at: string }>;
+      if (rows.length === 0) return null;
+      return {
+        provider: provider as AccountModelSnapshot['provider'],
+        authMethod: authMethod as AccountModelSnapshot['authMethod'],
+        source,
+        account: rows[0].account || undefined,
+        syncedAt: rows[0].synced_at,
+        models: rows.map(r => JSON.parse(r.data) as ModelOption)
+      };
+    }
+  },
+
+  modelEfforts: {
+    /**
+     * Reads saved effort setting for a specific model under a provider
+     */
+    get(provider: string, modelId: string): { effortLevel: string; maxOutputTokens: number; resolvedVariant?: string; updatedAt?: string } | null {
+      const row = db.prepare(`
+        SELECT effort_level, max_output_tokens, resolved_variant, updated_at
+        FROM ai_model_efforts
+        WHERE provider = ? AND model_id = ?
+      `).get(provider, modelId) as any;
+      if (!row) return null;
+      return {
+        effortLevel: row.effort_level,
+        maxOutputTokens: row.max_output_tokens,
+        resolvedVariant: row.resolved_variant || undefined,
+        updatedAt: row.updated_at
+      };
+    },
+
+    /**
+     * Reads all per-model effort settings for a provider
+     */
+    getAll(provider: string): Record<string, { effortLevel: string; maxOutputTokens: number; resolvedVariant?: string; updatedAt: string }> {
+      const rows = db.prepare(`
+        SELECT model_id, effort_level, max_output_tokens, resolved_variant, updated_at
+        FROM ai_model_efforts
+        WHERE provider = ?
+      `).all(provider) as any[];
+      const map: Record<string, any> = {};
+      for (const r of rows) {
+        map[r.model_id] = {
+          effortLevel: r.effort_level,
+          maxOutputTokens: r.max_output_tokens,
+          resolvedVariant: r.resolved_variant || undefined,
+          updatedAt: r.updated_at
+        };
+      }
+      return map;
+    },
+
+    /**
+     * Saves per-model effort setting atomically in SQLite
+     */
+    save(provider: string, modelId: string, effortLevel: string, maxOutputTokens = 32768, resolvedVariant?: string) {
+      const now = new Date().toISOString();
+      const stmt = db.prepare(`
+        INSERT INTO ai_model_efforts (provider, model_id, effort_level, max_output_tokens, resolved_variant, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(provider, model_id) DO UPDATE SET
+          effort_level = excluded.effort_level,
+          max_output_tokens = excluded.max_output_tokens,
+          resolved_variant = excluded.resolved_variant,
+          updated_at = excluded.updated_at
+      `);
+      stmt.run(provider, modelId, effortLevel, maxOutputTokens, resolvedVariant ?? null, now);
+      return { provider, modelId, effortLevel, maxOutputTokens, resolvedVariant, updatedAt: now };
     }
   }
 };

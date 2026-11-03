@@ -12,7 +12,8 @@ import {
   BugItem,
   AuditEvent,
   StatusLifecycle,
-  TestResultStatus
+  TestResultStatus,
+  ModelOption
 } from '../../types';
 
 const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:5001/api/v1';
@@ -258,36 +259,228 @@ export const aiApi = {
 };
 
 /* -------------------------------------------------------------
- * 10. SETTINGS & AI KEYS API
+ * 10. UNIFIED AI CONNECTION API
  * ----------------------------------------------------------- */
-export const settingsApi = {
-  async getAiConfig(): Promise<any> {
-    return fetchJson<any>(`${API_BASE_URL}/settings/ai`);
+export const aiConnectionApi = {
+  async getConnection(): Promise<any> {
+    return fetchJson<any>(`${API_BASE_URL}/ai/connection`);
   },
-  async saveAiConfig(data: {
-    provider: string;
-    geminiKey?: string;
-    openaiKey?: string;
-    geminiModel?: string;
-    openaiModel?: string;
+  async saveConnection(data: {
+    provider?: string;
+    authMethod?: string;
+    apiKey?: string;
+    baseUrl?: string;
+    model?: string;
+    effortLevel?: string;
+    maxOutputTokens?: number;
+    cliBinary?: string;
   }): Promise<any> {
-    return fetchJson<any>(`${API_BASE_URL}/settings/ai`, {
+    return fetchJson<any>(`${API_BASE_URL}/ai/connection`, {
       method: 'POST',
       body: JSON.stringify(data)
     });
   },
-  async testConnection(): Promise<any> {
-    return fetchJson<any>(`${API_BASE_URL}/settings/ai/test-connection`, {
+  async testConnection(data?: {
+    provider?: string;
+    authMethod?: string;
+    apiKey?: string;
+    baseUrl?: string;
+    model?: string;
+    effortLevel?: string;
+    maxOutputTokens?: number;
+    cliBinary?: string;
+  }): Promise<any> {
+    return fetchJson<any>(`${API_BASE_URL}/ai/connection/test`, {
+      method: 'POST',
+      body: JSON.stringify(data || {})
+    });
+  },
+  async detectCli(): Promise<any> {
+    return fetchJson<any>(`${API_BASE_URL}/ai/connection/cli-detect`);
+  },
+  async disconnect(): Promise<any> {
+    return fetchJson<any>(`${API_BASE_URL}/ai/connection/disconnect`, {
       method: 'POST'
+    });
+  },
+  async getModels(): Promise<any> {
+    return fetchJson<any>(`${API_BASE_URL}/ai/models`);
+  },
+  async fetchLiveModels(data?: {
+    provider?: string;
+    authMethod?: string;
+    apiKey?: string;
+    baseUrl?: string;
+    cliBinary?: string;
+  }): Promise<any> {
+    return fetchJson<any>(`${API_BASE_URL}/ai/models/fetch`, {
+      method: 'POST',
+      body: JSON.stringify(data || {})
+    });
+  },
+  async getQuota(): Promise<any> {
+    return fetchJson<any>(`${API_BASE_URL}/ai/connection/quota`);
+  },
+  async checkQuota(data?: {
+    provider?: string;
+    authMethod?: string;
+    apiKey?: string;
+    baseUrl?: string;
+    model?: string;
+    cliBinary?: string;
+  }): Promise<any> {
+    return fetchJson<any>(`${API_BASE_URL}/ai/connection/check-quota`, {
+      method: 'POST',
+      body: JSON.stringify(data || {})
+    });
+  },
+  async selectModel(data: {
+    provider?: string;
+    modelId: string;
+    effortLevel?: string;
+  }): Promise<any> {
+    return fetchJson<any>(`${API_BASE_URL}/ai/connection/select-model`, {
+      method: 'POST',
+      body: JSON.stringify(data)
+    });
+  },
+  async getModelEfforts(provider?: string): Promise<Record<string, { effortLevel: string; maxOutputTokens: number; resolvedVariant?: string; updatedAt: string }>> {
+    const qs = provider ? `?provider=${encodeURIComponent(provider)}` : '';
+    return fetchJson<any>(`${API_BASE_URL}/ai/models/efforts${qs}`);
+  },
+  async saveModelEffort(data: {
+    provider?: string;
+    modelId: string;
+    effortLevel: string;
+    maxOutputTokens?: number;
+    resolvedVariant?: string;
+  }): Promise<any> {
+    return fetchJson<any>(`${API_BASE_URL}/ai/models/effort`, {
+      method: 'POST',
+      body: JSON.stringify(data)
     });
   }
 };
 
-// Aliases for backwards compatibility with earlier components
+/* -------------------------------------------------------------
+ * 11. TERMINAL AGENT & CLI RUNNER API
+ * ----------------------------------------------------------- */
+export const agentApi = {
+  async getConfig(): Promise<any> {
+    return fetchJson<any>(`${API_BASE_URL}/agent/config`);
+  },
+  async saveConfig(data: {
+    agentName?: string;
+    persona?: string;
+    autonomyLevel?: string;
+  }): Promise<any> {
+    return fetchJson<any>(`${API_BASE_URL}/agent/config`, {
+      method: 'POST',
+      body: JSON.stringify(data)
+    });
+  },
+  async generateToken(): Promise<any> {
+    return fetchJson<any>(`${API_BASE_URL}/agent/generate-token`, {
+      method: 'POST'
+    });
+  },
+  async executeCommand(command: string): Promise<{
+    command: string;
+    stdout: string;
+    latencyMs: number;
+    exitCode: number;
+  }> {
+    return fetchJson<any>(`${API_BASE_URL}/agent/execute`, {
+      method: 'POST',
+      body: JSON.stringify({ command })
+    });
+  }
+};
+
+// Aliases for components
 export const getAiStatus = aiApi.getStatus;
 export const requestAiTestCases = aiApi.generateTestCases;
 export const requestImpactAnalysis = aiApi.analyzeImpact;
 export const verifyAuditChainOnBackend = auditApi.verifyChain;
-export const getAiSettings = settingsApi.getAiConfig;
-export const saveAiSettings = settingsApi.saveAiConfig;
-export const testAiConnection = settingsApi.testConnection;
+
+// Unified AI Connection aliases
+export const getAiConnection = aiConnectionApi.getConnection;
+export const saveAiConnection = aiConnectionApi.saveConnection;
+export const testAiConnection = aiConnectionApi.testConnection;
+export const detectCliTools = aiConnectionApi.detectCli;
+export const disconnectAiConnection = aiConnectionApi.disconnect;
+export const getAiModels = aiConnectionApi.getModels;
+export const fetchAiLiveModels = aiConnectionApi.fetchLiveModels;
+export const selectAiModel = aiConnectionApi.selectModel;
+export const getAiModelEfforts = aiConnectionApi.getModelEfforts;
+export const saveAiModelEffort = aiConnectionApi.saveModelEffort;
+
+/* -------------------------------------------------------------
+ * ACCOUNT MODELS (synced from subscription / API key, stored in SQLite)
+ * ----------------------------------------------------------- */
+export interface AccountModelsResult {
+  provider: string;
+  authMethod: string;
+  source: string;
+  synced: boolean;
+  account?: string;
+  syncedAt?: string;
+  models: ModelOption[];
+}
+
+export interface AccountModelsSyncResponse {
+  ok: boolean;
+  message: string;
+  data?: AccountModelsResult;
+  /** Present on failure */
+  code?: 'auth_required' | 'unsupported' | 'not_installed' | 'failed';
+  loginCommand?: string;
+  saved?: AccountModelsResult | null;
+}
+
+/** Reads the model list last saved in the DB for this account (does not call the provider). */
+export async function getSavedAccountModels(params: {
+  provider: string;
+  authMethod: string;
+  cliBinary?: string;
+}): Promise<AccountModelsResult> {
+  const qs = new URLSearchParams({
+    provider: params.provider,
+    authMethod: params.authMethod,
+    ...(params.cliBinary ? { cliBinary: params.cliBinary } : {})
+  });
+  return fetchJson<AccountModelsResult>(`${API_BASE_URL}/ai/models/account?${qs.toString()}`);
+}
+
+/** Queries the account for its models, saves them to the DB and returns the stored list. */
+export async function syncAccountModels(params: {
+  provider: string;
+  authMethod: string;
+  cliBinary?: string;
+  apiKey?: string;
+  baseUrl?: string;
+}): Promise<AccountModelsSyncResponse> {
+  const res = await fetch(`${API_BASE_URL}/ai/models/account/sync`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params)
+  });
+  const json = await res.json().catch(() => ({}));
+  if (res.ok) {
+    return { ok: true, message: json.message || '', data: json.data };
+  }
+  return {
+    ok: false,
+    message: json.error || `HTTP ${res.status}`,
+    code: json.data?.code,
+    loginCommand: json.data?.loginCommand,
+    saved: json.data?.saved ?? null
+  };
+}
+export const getAiQuota = aiConnectionApi.getQuota;
+export const checkAiQuota = aiConnectionApi.checkQuota;
+
+export const getAgentConfig = agentApi.getConfig;
+export const saveAgentConfig = agentApi.saveConfig;
+export const generateAgentToken = agentApi.generateToken;
+export const executeAgentCommand = agentApi.executeCommand;

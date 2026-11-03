@@ -210,3 +210,105 @@ export interface AuditEvent {
   eventHash: string;
   previousEventHash?: string;
 }
+
+export type AiProviderId = 'google' | 'anthropic' | 'openai' | 'custom';
+export type AiAuthMethod = 'api_key' | 'cli_subscription';
+export type AiConnectionStatus = 'connected' | 'disconnected' | 'auth_required' | 'error';
+
+export interface ModelOption {
+  id: string;
+  name: string;
+  description: string;
+  recommended?: boolean;
+  contextWindow: string;
+  maxOutput: string;
+  category: 'reasoning' | 'fast' | 'flagship' | 'local';
+  rateLimits: {
+    rpm: number;
+    tpm: number;
+    rpd?: number;
+  };
+  pricingType: 'token_billed' | 'subscription_included';
+  bestFor: string;
+  isLive?: boolean;
+  /** Where the model entry came from: e.g. "cli:agy", "api:google", "catalog" */
+  source?: string;
+  /** Account / subscription identity the model list was synced for */
+  account?: string;
+  /** ISO timestamp of the last successful sync from the provider account */
+  syncedAt?: string;
+}
+
+/** A persisted snapshot of the model list available to one provider account */
+export interface AccountModelSnapshot {
+  provider: AiProviderId;
+  authMethod: AiAuthMethod;
+  source: string;
+  account?: string;
+  syncedAt?: string;
+  models: ModelOption[];
+}
+
+export interface AiQuotaInfo {
+  provider: AiProviderId;
+  authMethod: AiAuthMethod;
+  model: string;
+  planName: string;
+  status: 'healthy' | 'warning' | 'exhausted' | 'auth_required';
+  statusLabel: string;
+  rateLimits: {
+    rpm: number;
+    tpm: number;
+    rpd?: number;
+    contextWindow: string;
+    maxOutput: string;
+  };
+  usage: {
+    requestsToday: number;
+    estimatedTokensToday: number;
+    remainingQuotaPercent?: number;
+    resetTimeDescription: string;
+    billingModel: 'subscription_included' | 'pay_per_token';
+  };
+  accountDetails?: {
+    account?: string;
+    tier?: string;
+    subscriptionPeriod?: string;
+    rawLimits?: Record<string, any>;
+  };
+}
+
+export type ReasoningEffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
+export interface AiConnectionConfig {
+  id: string;
+  provider: AiProviderId;
+  authMethod: AiAuthMethod;
+  apiKey?: string;
+  maskedApiKey?: string;
+  baseUrl?: string;
+  model: string;
+  effortLevel?: ReasoningEffortLevel;
+  maxOutputTokens?: number;
+  cliBinary?: string;
+  cliVersion?: string;
+  cliAuthStatus?: 'authenticated' | 'unauthenticated' | 'not_found';
+  connectionStatus: AiConnectionStatus;
+  lastTestedAt?: string;
+  latencyMs?: number;
+  errorMessage?: string;
+  updatedAt: string;
+}
+
+export interface CliDetectionInfo {
+  id: string;
+  provider: AiProviderId;
+  name: string;
+  binary: string;
+  installed: boolean;
+  version?: string;
+  path?: string;
+  authStatus: 'authenticated' | 'unauthenticated' | 'unknown' | 'not_installed';
+  account?: string;
+  loginCommand: string;
+}
