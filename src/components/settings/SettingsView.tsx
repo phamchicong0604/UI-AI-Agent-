@@ -76,6 +76,7 @@ export const SettingsView: React.FC = () => {
   const [isDetectingClis, setIsDetectingClis] = useState<boolean>(false);
   const [isFetchingModels, setIsFetchingModels] = useState<boolean>(false);
   const [modelsSyncStatus, setModelsSyncStatus] = useState<string | null>(null);
+  const [modelSearch, setModelSearch] = useState<string>('');
 
   // Quota & Rate limits
   const [quotaInfo, setQuotaInfo] = useState<AiQuotaInfo | null>(null);
@@ -839,7 +840,7 @@ export const SettingsView: React.FC = () => {
               )}
 
               {/* 4. CHỌN LỰA MÔ HÌNH AI (SELECT AI MODEL) */}
-              <div className="space-y-3 pt-2">
+              <div className="space-y-4 pt-2">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                   <div>
                     <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-2">
@@ -884,94 +885,218 @@ export const SettingsView: React.FC = () => {
                   </div>
                 )}
 
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {(availableModels[provider] || []).map((m) => {
-                    const isSelected = model === m.id;
-                    return (
-                      <div
-                        key={m.id}
-                        onClick={() => {
-                          setModel(m.id);
-                          handleCheckQuota({ model: m.id });
-                        }}
-                        className={`p-3.5 rounded-xl border cursor-pointer transition-all flex flex-col justify-between ${
-                          isSelected
-                            ? 'bg-purple-950/30 border-purple-500 shadow-md ring-1 ring-purple-500/40'
-                            : 'bg-slate-900/60 border-slate-800 hover:border-slate-700'
-                        }`}
-                      >
-                        <div>
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="flex flex-wrap items-center gap-1.5 font-bold text-white text-xs">
-                              <span>{m.name}</span>
-                              {m.recommended && (
-                                <span className="px-1.5 py-0.5 rounded text-[9px] bg-purple-500/20 text-purple-300 border border-purple-500/30 font-semibold">
-                                  Khuyên dùng
-                                </span>
-                              )}
-                              {m.isLive && (
-                                <span className="px-1.5 py-0.5 rounded text-[9px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-mono flex items-center gap-1">
-                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                                  API Live
-                                </span>
-                              )}
-                            </div>
-                            <div className={`w-4 h-4 rounded-full border flex items-center justify-center shrink-0 ${
-                              isSelected ? 'border-purple-500 bg-purple-500' : 'border-slate-600'
-                            }`}>
-                              {isSelected && <Check className="w-2.5 h-2.5 text-white" />}
-                            </div>
-                          </div>
+                {/* FULL MODEL SELECT DROPDOWN & SEARCH PICKER */}
+                {(() => {
+                  const providerModels = availableModels[provider] || [];
+                  const filteredModels = modelSearch
+                    ? providerModels.filter(m => m.id.toLowerCase().includes(modelSearch.toLowerCase()) || m.name.toLowerCase().includes(modelSearch.toLowerCase()))
+                    : providerModels;
+                  const selectedModelMeta = providerModels.find(m => m.id === model) || {
+                    id: model,
+                    name: model,
+                    description: 'Mô hình được cấu hình sử dụng trực tiếp',
+                    contextWindow: '128,000 tokens',
+                    maxOutput: '8,192 tokens',
+                    category: 'flagship',
+                    rateLimits: { rpm: 500, tpm: 800000 },
+                    pricingType: 'token_billed',
+                    bestFor: 'Tác vụ phân tích & kiểm thử tổng quát',
+                    isLive: false
+                  };
 
-                          <p className="text-[11px] text-slate-300 mt-2 leading-relaxed">
-                            {m.description}
-                          </p>
+                  return (
+                    <div className="space-y-3">
+                      <div className="p-4 rounded-xl bg-slate-900/90 border border-slate-800 space-y-3">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                          <label className="text-xs font-bold text-white flex items-center gap-2">
+                            <Layers className="w-4 h-4 text-purple-400" />
+                            <span>{t('aiSelectModelDropdownLabel')}</span>
+                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30 font-normal">
+                              {providerModels.length} models từ {provider.toUpperCase()}
+                            </span>
+                          </label>
+
+                          {/* Quick Search Filter */}
+                          <div className="relative w-full sm:w-72">
+                            <input
+                              type="text"
+                              value={modelSearch}
+                              onChange={(e) => setModelSearch(e.target.value)}
+                              placeholder={t('aiModelSearchPlaceholder')}
+                              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-purple-500"
+                            />
+                            {modelSearch && (
+                              <button
+                                type="button"
+                                onClick={() => setModelSearch('')}
+                                className="absolute right-2.5 top-1.5 text-slate-500 hover:text-slate-300 text-xs"
+                              >
+                                ✕
+                              </button>
+                            )}
+                          </div>
                         </div>
 
-                        <div className="mt-3 pt-2.5 border-t border-slate-800/80 space-y-1.5 text-[10px]">
-                          <div className="flex items-center justify-between text-slate-400">
-                            <span className="flex items-center gap-1">
-                              <Layers className="w-3 h-3 text-indigo-400" />
-                              Context Window:
-                            </span>
-                            <span className="text-slate-200 font-mono font-medium">{m.contextWindow || '128K'}</span>
-                          </div>
-                          <div className="flex items-center justify-between text-slate-400">
-                            <span className="flex items-center gap-1">
-                              <Gauge className="w-3 h-3 text-cyan-400" />
-                              Tốc độ xử lý:
-                            </span>
-                            <span className="text-slate-200 font-mono">{m.rateLimits?.rpm || 500} RPM</span>
-                          </div>
-                          {m.bestFor && (
-                            <div className="text-[10px] text-slate-400 bg-slate-950/60 p-1.5 rounded border border-slate-800/60 truncate">
-                              <span className="text-purple-300 font-semibold">Tối ưu:</span> {m.bestFor}
+                        {/* Full Native Select Element */}
+                        <select
+                          value={model}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setModel(val);
+                            handleCheckQuota({ model: val });
+                          }}
+                          className="w-full bg-slate-950 border border-purple-500/50 rounded-xl px-4 py-3 text-xs text-white font-medium focus:outline-none focus:ring-2 focus:ring-purple-500/40 cursor-pointer shadow-inner"
+                        >
+                          <optgroup label="⭐ Mô hình Khuyên dùng (Recommended)">
+                            {providerModels.filter(m => m.recommended).map((m) => (
+                              <option key={`rec-${m.id}`} value={m.id}>
+                                ⭐ {m.name} ({m.id}) • Ngữ cảnh: {m.contextWindow} • {m.rateLimits?.rpm || 500} RPM
+                              </option>
+                            ))}
+                          </optgroup>
+                          <optgroup label={`📋 Toàn bộ danh sách (${filteredModels.length} models)`}>
+                            {filteredModels.map((m) => (
+                              <option key={`all-${m.id}`} value={m.id}>
+                                {m.isLive ? '🟢' : '⚪'} {m.name} ({m.id}) — Ngữ cảnh: {m.contextWindow || '128K'} • {m.rateLimits?.rpm || 500} RPM
+                              </option>
+                            ))}
+                          </optgroup>
+                        </select>
+
+                        {/* Selected Model Detailed Inspector */}
+                        {selectedModelMeta && (
+                          <div className="p-3.5 rounded-xl bg-purple-950/20 border border-purple-800/40 text-xs space-y-2.5 mt-2">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="flex items-center gap-2">
+                                <span className="font-bold text-white text-sm">{selectedModelMeta.name}</span>
+                                <code className="text-purple-300 font-mono text-[11px] px-2 py-0.5 rounded bg-purple-900/40 border border-purple-700/50">
+                                  {selectedModelMeta.id}
+                                </code>
+                                {selectedModelMeta.recommended && (
+                                  <span className="px-1.5 py-0.5 rounded text-[9px] bg-purple-500/20 text-purple-300 border border-purple-500/30 font-semibold">
+                                    Khuyên dùng
+                                  </span>
+                                )}
+                                {selectedModelMeta.isLive && (
+                                  <span className="px-1.5 py-0.5 rounded text-[9px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-mono flex items-center gap-1">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                                    API Live
+                                  </span>
+                                )}
+                              </div>
+                              <span className="text-[10px] text-slate-400">
+                                Nhóm: <strong className="text-purple-300 uppercase">{selectedModelMeta.category}</strong>
+                              </span>
                             </div>
-                          )}
+
+                            <p className="text-[11px] text-slate-300 leading-relaxed">
+                              {selectedModelMeta.description}
+                            </p>
+
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 border-t border-purple-900/30 text-[10px]">
+                              <div>
+                                <span className="text-slate-400 block">Context Window:</span>
+                                <span className="font-mono text-slate-200 font-semibold">{selectedModelMeta.contextWindow}</span>
+                              </div>
+                              <div>
+                                <span className="text-slate-400 block">Max Output:</span>
+                                <span className="font-mono text-slate-200 font-semibold">{selectedModelMeta.maxOutput || '8,192 tokens'}</span>
+                              </div>
+                              <div>
+                                <span className="text-slate-400 block">Tốc độ tối đa:</span>
+                                <span className="font-mono text-cyan-400 font-semibold">{selectedModelMeta.rateLimits?.rpm || 500} RPM</span>
+                              </div>
+                              <div>
+                                <span className="text-slate-400 block">Tối ưu cho QA:</span>
+                                <span className="text-purple-200 truncate block font-medium">{selectedModelMeta.bestFor || 'Tổng hợp tài liệu'}</span>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Quick Cards Grid (Top models or filtered) */}
+                      <div className="space-y-2">
+                        <div className="text-[11px] text-slate-400 font-medium">
+                          Chọn nhanh 1-chạm hoặc bấm thẻ bên dưới:
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                          {filteredModels.slice(0, 6).map((m) => {
+                            const isSelected = model === m.id;
+                            return (
+                              <div
+                                key={m.id}
+                                onClick={() => {
+                                  setModel(m.id);
+                                  handleCheckQuota({ model: m.id });
+                                }}
+                                className={`p-3.5 rounded-xl border cursor-pointer transition-all flex flex-col justify-between ${
+                                  isSelected
+                                    ? 'bg-purple-950/30 border-purple-500 shadow-md ring-1 ring-purple-500/40'
+                                    : 'bg-slate-900/60 border-slate-800 hover:border-slate-700'
+                                }`}
+                              >
+                                <div>
+                                  <div className="flex items-start justify-between gap-2">
+                                    <div className="flex flex-wrap items-center gap-1.5 font-bold text-white text-xs">
+                                      <span>{m.name}</span>
+                                      {m.recommended && (
+                                        <span className="px-1.5 py-0.5 rounded text-[9px] bg-purple-500/20 text-purple-300 border border-purple-500/30 font-semibold">
+                                          Khuyên dùng
+                                        </span>
+                                      )}
+                                      {m.isLive && (
+                                        <span className="px-1.5 py-0.5 rounded text-[9px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-mono flex items-center gap-1">
+                                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                                          API Live
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className={`w-4 h-4 rounded-full border flex items-center justify-center shrink-0 ${
+                                      isSelected ? 'border-purple-500 bg-purple-500' : 'border-slate-600'
+                                    }`}>
+                                      {isSelected && <Check className="w-2.5 h-2.5 text-white" />}
+                                    </div>
+                                  </div>
+
+                                  <p className="text-[11px] text-slate-300 mt-2 leading-relaxed line-clamp-2">
+                                    {m.description}
+                                  </p>
+                                </div>
+
+                                <div className="mt-3 pt-2.5 border-t border-slate-800/80 space-y-1 text-[10px]">
+                                  <div className="flex items-center justify-between text-slate-400">
+                                    <span>Context: <strong className="text-slate-200 font-mono">{m.contextWindow || '128K'}</strong></span>
+                                    <span>Tốc độ: <strong className="text-cyan-400 font-mono">{m.rateLimits?.rpm || 500} RPM</strong></span>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
                         </div>
                       </div>
-                    );
-                  })}
-                </div>
 
-                {/* Custom / Specific Model ID input */}
-                <div className="p-3.5 rounded-xl bg-slate-900/60 border border-slate-800/80 space-y-1.5 mt-2">
-                  <div className="flex items-center justify-between text-[11px] text-slate-300">
-                    <span className="font-semibold">{t('aiCustomModelLabel')}</span>
-                    <span className="text-[10px] text-slate-500">Cho phép nhập bất kỳ model ID nào vừa phát hành hoặc model riêng</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="text"
-                      value={model}
-                      onChange={(e) => {
-                        setModel(e.target.value.trim());
-                      }}
-                      placeholder={t('aiCustomModelPlaceholder')}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3.5 py-2 text-xs text-white font-mono focus:outline-none focus:border-purple-500"
-                    />
-                  </div>
-                </div>
+                      {/* Custom / Specific Model ID input */}
+                      <div className="p-3.5 rounded-xl bg-slate-900/60 border border-slate-800/80 space-y-1.5">
+                        <div className="flex items-center justify-between text-[11px] text-slate-300">
+                          <span className="font-semibold">{t('aiCustomModelLabel')}</span>
+                          <span className="text-[10px] text-slate-500">Cho phép nhập bất kỳ model ID nào vừa phát hành hoặc model riêng</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={model}
+                            onChange={(e) => {
+                              setModel(e.target.value.trim());
+                            }}
+                            placeholder={t('aiCustomModelPlaceholder')}
+                            className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3.5 py-2 text-xs text-white font-mono focus:outline-none focus:border-purple-500"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* 5. THÔNG TIN HẠN MỨC & DUNG LƯỢNG (QUOTA & RATE LIMITS) */}
