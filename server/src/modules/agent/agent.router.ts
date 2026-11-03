@@ -3,7 +3,6 @@ import { sendSuccess, sendError } from '../../common/response.js';
 import { dbRepository } from '../../database/db.js';
 import { computeSha256 } from '../../common/crypto.js';
 import { AiService } from '../ai/ai.service.js';
-import { daemonService } from './daemon.service.js';
 
 export const agentRouter = Router();
 const aiService = new AiService();
@@ -60,61 +59,6 @@ agentRouter.post('/generate-token', (req: Request, res: Response) => {
   sendSuccess(res, { cliToken: newToken }, 'New CLI token generated successfully');
 });
 
-/* -------------------------------------------------------------
- * BACKGROUND AGENTS / DAEMON WORKERS API
- * ----------------------------------------------------------- */
-
-/**
- * GET /api/v1/agent/background
- * Retrieves all registered background agents and their live worker statuses
- */
-agentRouter.get('/background', (req: Request, res: Response) => {
-  const agents = dbRepository.backgroundAgents.getAll();
-  sendSuccess(res, agents);
-});
-
-/**
- * POST /api/v1/agent/background/:id/start
- * Starts a background agent daemon worker
- */
-agentRouter.post('/background/:id/start', (req: Request, res: Response) => {
-  const result = daemonService.startAgent(req.params.id);
-  if (!result.success) {
-    return sendError(res, result.message, 400);
-  }
-  const updated = dbRepository.backgroundAgents.getById(req.params.id);
-  sendSuccess(res, updated, result.message);
-});
-
-/**
- * POST /api/v1/agent/background/:id/stop
- * Stops a background agent daemon worker
- */
-agentRouter.post('/background/:id/stop', (req: Request, res: Response) => {
-  const result = daemonService.stopAgent(req.params.id);
-  const updated = dbRepository.backgroundAgents.getById(req.params.id);
-  sendSuccess(res, updated, result.message);
-});
-
-/**
- * POST /api/v1/agent/background/:id/trigger
- * Triggers an immediate execution cycle for a background agent
- */
-agentRouter.post('/background/:id/trigger', async (req: Request, res: Response) => {
-  const result = await daemonService.triggerNow(req.params.id);
-  const updated = dbRepository.backgroundAgents.getById(req.params.id);
-  sendSuccess(res, { agent: updated, log: result.log }, 'Agent iteration triggered');
-});
-
-/**
- * GET /api/v1/agent/background/:id/logs
- * Retrieves tail logs for a background agent
- */
-agentRouter.get('/background/:id/logs', (req: Request, res: Response) => {
-  const logs = daemonService.getLogs(req.params.id);
-  sendSuccess(res, logs);
-});
-
 /**
  * POST /api/v1/agent/execute
  * Direct in-browser terminal command executor for the interactive CLI emulator
@@ -128,54 +72,20 @@ agentRouter.post('/execute', async (req: Request, res: Response) => {
   const trimmed = command.trim();
   const parts = trimmed.split(/\s+/);
   const action = parts[0]?.toLowerCase();
-  const subAction = parts[1]?.toLowerCase();
-  const targetId = parts[2] || parts[1];
   const startMs = Date.now();
 
   try {
     let output = '';
 
-    if (action === 'daemon' || action === 'worker') {
-      if (subAction === 'list' || subAction === 'status' || !subAction) {
-        const agents = dbRepository.backgroundAgents.getAll();
-        output = [
-          '========================================================================',
-          '               ⚙️  DOCQA BACKGROUND AGENTS DAEMON STATUS',
-          '========================================================================',
-          ...agents.map(a => 
-            `[${a.status.toUpperCase() === 'RUNNING' ? '🟢 RUNNING' : '⏹️ STOPPED'}] ${a.id} (${a.name})\n` +
-            `  • Role: ${a.role}\n` +
-            `  • PID: ${a.pid || 'N/A'} | Interval: Every ${a.intervalSeconds}s | Completed Cycles: ${a.runsCount}\n` +
-            `  • Last Run: ${a.lastRun || 'Never'} | Next Run: ${a.nextRun || 'N/A'}\n` +
-            `  • Latest Log: ${a.lastLog || 'No activity recorded yet.'}\n`
-          ),
-          '========================================================================'
-        ].join('\n');
-      } else if (subAction === 'start') {
-        const resDaemon = daemonService.startAgent(targetId);
-        output = resDaemon.message;
-      } else if (subAction === 'stop') {
-        const resDaemon = daemonService.stopAgent(targetId);
-        output = resDaemon.message;
-      } else if (subAction === 'trigger' || subAction === 'run') {
-        const resDaemon = await daemonService.triggerNow(targetId);
-        output = `Triggered execution for ${targetId}:\n${resDaemon.log}`;
-      } else if (subAction === 'logs') {
-        const logs = daemonService.getLogs(targetId);
-        output = logs.map(l => `[${l.timestamp}] [${l.level.toUpperCase()}] ${l.message}`).join('\n') || 'No logs recorded.';
-      } else {
-        output = `Unknown daemon command: "${subAction}". Usage: daemon [status|start <ID>|stop <ID>|trigger <ID>|logs <ID>]`;
-      }
-    } else if (action === 'status') {
+    if (action === 'status') {
       const docs = dbRepository.documents.getAll();
       const reqs = dbRepository.requirements.getAll();
       const tcs = dbRepository.testCases.getAll();
       const runs = dbRepository.testRuns.getAll();
       const bugs = dbRepository.bugs.getAll();
       const audits = dbRepository.auditEvents.getAll();
-      const backgroundAgents = dbRepository.backgroundAgents.getAll();
-      const runningAgents = backgroundAgents.filter(a => a.status === 'running').length;
-      const provider = dbRepository.settings.get('AI_PROVIDER') || 'gemini';
+      const aiConn = dbRepository.aiConnections.get();
+      const provider = aiConn?.provider || 'google';
 
       output = [
         '===============================================================',
@@ -184,8 +94,8 @@ agentRouter.post('/execute', async (req: Request, res: Response) => {
         '===============================================================',
         `[STATUS] Platform: DocQA Enterprise Platform (v0.1.0)`,
         `[STATUS] Database: SQLite (WAL Mode) • Connection Active`,
-        `[STATUS] AI Engine: ${provider.toUpperCase()}`,
-        `[STATUS] Background Daemon Workers: ${runningAgents}/${backgroundAgents.length} Running`,
+        `[STATUS] AI Provider: ${provider.toUpperCase()} (${aiConn?.authMethod === 'cli_subscription' ? 'CLI Subscription' : 'API Key'})`,
+        `[STATUS] AI Status: ${aiConn?.connectionStatus.toUpperCase() || 'DISCONNECTED'}`,
         '---------------------------------------------------------------',
         `  📄 Documents:        ${docs.length}`,
         `  📋 Requirements:     ${reqs.length}`,
@@ -245,11 +155,6 @@ agentRouter.post('/execute', async (req: Request, res: Response) => {
     } else if (action === 'help') {
       output = [
         'Available DocQA CLI commands:',
-        '  daemon status              Display all background agents and worker PIDs',
-        '  daemon start <ID>          Start a background agent worker',
-        '  daemon stop <ID>           Stop a background agent worker',
-        '  daemon trigger <ID>        Trigger immediate execution for an agent',
-        '  daemon logs <ID>           View live tail logs of a background worker',
         '  status                     Display platform metrics and database health',
         '  generate <REQ_ID>          Generate grounded test cases for requirement',
         '  impact <DOC_ID>            Calculate blast radius for revised document',
@@ -258,7 +163,7 @@ agentRouter.post('/execute', async (req: Request, res: Response) => {
         '  help                       Display this help menu'
       ].join('\n');
     } else {
-      output = `Command not recognized: "${trimmed}". Type "help" or "daemon status" for command list.`;
+      output = `Command not recognized: "${trimmed}". Type "help" for command list.`;
     }
 
     sendSuccess(res, {

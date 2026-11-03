@@ -10,7 +10,7 @@ import {
   TestRunItem, 
   BugItem, 
   AuditEvent,
-  BackgroundAgentRecord 
+  AiConnectionConfig 
 } from '../common/types.js';
 import { computeSha256, computeAuditEventHash } from '../common/crypto.js';
 
@@ -97,19 +97,21 @@ db.exec(`
     updated_at TEXT
   );
 
-  CREATE TABLE IF NOT EXISTS background_agents (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    description TEXT,
-    role TEXT NOT NULL,
-    interval_seconds INTEGER NOT NULL DEFAULT 30,
-    status TEXT NOT NULL DEFAULT 'stopped',
-    pid INTEGER,
-    last_run TEXT,
-    next_run TEXT,
-    runs_count INTEGER DEFAULT 0,
-    last_log TEXT,
-    config TEXT
+  CREATE TABLE IF NOT EXISTS ai_connections (
+    id TEXT PRIMARY KEY DEFAULT 'primary',
+    provider TEXT NOT NULL DEFAULT 'google',
+    auth_method TEXT NOT NULL DEFAULT 'api_key',
+    api_key TEXT,
+    base_url TEXT,
+    model TEXT NOT NULL DEFAULT 'gemini-1.5-pro',
+    cli_binary TEXT DEFAULT 'claude',
+    cli_version TEXT,
+    cli_auth_status TEXT,
+    connection_status TEXT NOT NULL DEFAULT 'disconnected',
+    last_tested_at TEXT,
+    latency_ms INTEGER,
+    error_message TEXT,
+    updated_at TEXT NOT NULL
   );
 `);
 
@@ -406,90 +408,44 @@ function seedDatabaseIfEmpty() {
 
 seedDatabaseIfEmpty();
 
-function seedBackgroundAgentsIfEmpty() {
-  const count = (db.prepare('SELECT count(*) as count FROM background_agents').get() as any).count;
+function seedAiConnectionIfEmpty() {
+  const count = (db.prepare('SELECT count(*) as count FROM ai_connections').get() as any).count;
   if (count === 0) {
-    console.log('[SQLite DB] Seeding 4 baseline background agents...');
-    const initialAgents: BackgroundAgentRecord[] = [
-      {
-        id: 'AGENT-DOC-WATCHER',
-        name: 'Document Revision & Blast-Radius Watcher',
-        description: 'Chạy nền tự động quét thay đổi trong 8 thư mục tài liệu; khi phát hiện phiên bản mới, tự động chạy Blast-Radius Analysis và gắn cờ In Review cho các Test Case liên quan.',
-        role: 'Document Governance & Blast-Radius Daemon',
-        intervalSeconds: 45,
-        status: 'running',
-        pid: process.pid,
-        lastRun: new Date().toISOString().replace('T', ' ').slice(0, 16),
-        nextRun: new Date(Date.now() + 45000).toISOString().replace('T', ' ').slice(0, 16),
-        runsCount: 14,
-        lastLog: '[WATCHER] Scanned 8 folders. Document DOC-02 checksum sha256:7bc5... verified valid.'
-      },
-      {
-        id: 'AGENT-QA-SYNTH',
-        name: 'Continuous Grounded QA Synthesizer',
-        description: 'Chạy nền tự động phát hiện các Yêu cầu mới chuyển sang trạng thái Approved; dùng AI sinh kịch bản kiểm thử có trích dẫn SHA-256 dưới dạng Draft.',
-        role: 'QA Test Case Drafting Daemon',
-        intervalSeconds: 30,
-        status: 'running',
-        pid: process.pid,
-        lastRun: new Date().toISOString().replace('T', ' ').slice(0, 16),
-        nextRun: new Date(Date.now() + 30000).toISOString().replace('T', ' ').slice(0, 16),
-        runsCount: 28,
-        lastLog: '[QA-SYNTH] Checked 2 requirements. Grounded 1 test case against BRD v1.2 specifications.'
-      },
-      {
-        id: 'AGENT-AUDIT-GUARDIAN',
-        name: 'Tamper-Evident SHA-256 Audit Guardian',
-        description: 'Định kỳ quét toàn bộ chuỗi khối kiểm toán liên kết; cảnh báo tức thì nếu có bất kỳ block hash nào bị sửa đổi trái phép.',
-        role: 'Security & Cryptographic Audit Daemon',
-        intervalSeconds: 60,
-        status: 'running',
-        pid: process.pid,
-        lastRun: new Date().toISOString().replace('T', ' ').slice(0, 16),
-        nextRun: new Date(Date.now() + 60000).toISOString().replace('T', ' ').slice(0, 16),
-        runsCount: 42,
-        lastLog: '[GUARDIAN] Cryptographic audit chain verified: 4 blocks active, algorithm SHA-256.'
-      },
-      {
-        id: 'AGENT-GAP-SCANNER',
-        name: 'Traceability Gap & Defect Triage Scanner',
-        description: 'Tự động tính toán ma trận truy vết 5 tầng; cảnh báo Coverage Gaps (AC-08) và phát hiện các đợt chạy Test Run bị Fail để tự động liên kết Bug.',
-        role: 'Traceability & Coverage Assurance Daemon',
-        intervalSeconds: 30,
-        status: 'running',
-        pid: process.pid,
-        lastRun: new Date().toISOString().replace('T', ' ').slice(0, 16),
-        nextRun: new Date(Date.now() + 30000).toISOString().replace('T', ' ').slice(0, 16),
-        runsCount: 19,
-        lastLog: '[GAP-SCANNER] Recalculated matrix: 100% covered requirements, 1 active defect triaged.'
-      }
-    ];
+    console.log('[SQLite DB] Seeding unified AI connection baseline...');
+    const getSetting = (k: string) => {
+      const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(k) as { value: string } | undefined;
+      return row ? row.value : undefined;
+    };
+    const provider = getSetting('AI_PROVIDER') || process.env.AI_PROVIDER || 'google';
+    const geminiKey = getSetting('GEMINI_API_KEY') || process.env.GEMINI_API_KEY || '';
+    const geminiModel = getSetting('GEMINI_MODEL') || 'gemini-1.5-pro';
 
-    const insertAgent = db.prepare(`
-      INSERT INTO background_agents (id, name, description, role, interval_seconds, status, pid, last_run, next_run, runs_count, last_log, config)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-
-    for (const a of initialAgents) {
-      insertAgent.run(
-        a.id,
-        a.name,
-        a.description,
-        a.role,
-        a.intervalSeconds,
-        a.status,
-        a.pid || null,
-        a.lastRun || null,
-        a.nextRun || null,
-        a.runsCount,
-        a.lastLog || null,
-        a.config ? JSON.stringify(a.config) : null
-      );
-    }
+    db.prepare(`
+      INSERT OR IGNORE INTO ai_connections (
+        id, provider, auth_method, api_key, base_url, model,
+        cli_binary, cli_version, cli_auth_status, connection_status,
+        last_tested_at, latency_ms, error_message, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'primary',
+      provider === 'gemini' ? 'google' : provider,
+      'api_key',
+      geminiKey || null,
+      null,
+      geminiModel,
+      'claude',
+      null,
+      null,
+      geminiKey ? 'connected' : 'disconnected',
+      null,
+      null,
+      null,
+      new Date().toISOString()
+    );
   }
 }
 
-seedBackgroundAgentsIfEmpty();
+seedAiConnectionIfEmpty();
 
 /* -------------------------------------------------------------
  * REPOSITORY HELPERS FOR ALL ENTITIES
@@ -702,85 +658,95 @@ export const dbRepository = {
     }
   },
 
-  backgroundAgents: {
-    getAll(): BackgroundAgentRecord[] {
-      const rows = db.prepare('SELECT * FROM background_agents ORDER BY id ASC').all() as any[];
-      return rows.map(r => ({
-        id: r.id,
-        name: r.name,
-        description: r.description,
-        role: r.role,
-        intervalSeconds: r.interval_seconds,
-        status: r.status,
-        pid: r.pid,
-        lastRun: r.last_run,
-        nextRun: r.next_run,
-        runsCount: r.runs_count || 0,
-        lastLog: r.last_log,
-        config: r.config ? JSON.parse(r.config) : undefined
-      }));
-    },
-    getById(id: string): BackgroundAgentRecord | null {
-      const r = db.prepare('SELECT * FROM background_agents WHERE id = ?').get(id) as any;
+  aiConnections: {
+    get(): AiConnectionConfig | null {
+      const r = db.prepare('SELECT * FROM ai_connections WHERE id = ?').get('primary') as any;
       if (!r) return null;
       return {
         id: r.id,
-        name: r.name,
-        description: r.description,
-        role: r.role,
-        intervalSeconds: r.interval_seconds,
-        status: r.status,
-        pid: r.pid,
-        lastRun: r.last_run,
-        nextRun: r.next_run,
-        runsCount: r.runs_count || 0,
-        lastLog: r.last_log,
-        config: r.config ? JSON.parse(r.config) : undefined
+        provider: r.provider,
+        authMethod: r.auth_method,
+        apiKey: r.api_key || undefined,
+        baseUrl: r.base_url || undefined,
+        model: r.model,
+        cliBinary: r.cli_binary || undefined,
+        cliVersion: r.cli_version || undefined,
+        cliAuthStatus: r.cli_auth_status || undefined,
+        connectionStatus: r.connection_status,
+        lastTestedAt: r.last_tested_at || undefined,
+        latencyMs: r.latency_ms || undefined,
+        errorMessage: r.error_message || undefined,
+        updatedAt: r.updated_at
       };
     },
-    updateStatus(id: string, status: 'running' | 'stopped' | 'error', pid?: number, lastLog?: string): void {
+    save(config: Partial<AiConnectionConfig>): AiConnectionConfig {
+      const existing = this.get();
+      const merged: AiConnectionConfig = {
+        id: 'primary',
+        provider: config.provider ?? existing?.provider ?? 'google',
+        authMethod: config.authMethod ?? existing?.authMethod ?? 'api_key',
+        apiKey: config.apiKey !== undefined ? config.apiKey : existing?.apiKey,
+        baseUrl: config.baseUrl !== undefined ? config.baseUrl : existing?.baseUrl,
+        model: config.model ?? existing?.model ?? 'gemini-1.5-pro',
+        cliBinary: config.cliBinary ?? existing?.cliBinary ?? 'claude',
+        cliVersion: config.cliVersion ?? existing?.cliVersion,
+        cliAuthStatus: config.cliAuthStatus ?? existing?.cliAuthStatus,
+        connectionStatus: config.connectionStatus ?? existing?.connectionStatus ?? 'disconnected',
+        lastTestedAt: config.lastTestedAt ?? existing?.lastTestedAt,
+        latencyMs: config.latencyMs ?? existing?.latencyMs,
+        errorMessage: config.errorMessage ?? existing?.errorMessage,
+        updatedAt: new Date().toISOString()
+      };
+
       const stmt = db.prepare(`
-        UPDATE background_agents 
-        SET status = ?, pid = ?, last_log = COALESCE(?, last_log)
-        WHERE id = ?
-      `);
-      stmt.run(status, pid ?? null, lastLog ?? null, id);
-    },
-    recordExecution(id: string, logMessage: string, nextRunIso: string): void {
-      const now = new Date().toISOString().replace('T', ' ').slice(0, 16);
-      const stmt = db.prepare(`
-        UPDATE background_agents 
-        SET runs_count = runs_count + 1, last_run = ?, next_run = ?, last_log = ?
-        WHERE id = ?
-      `);
-      stmt.run(now, nextRunIso, logMessage, id);
-    },
-    upsert(agent: BackgroundAgentRecord): void {
-      const stmt = db.prepare(`
-        INSERT INTO background_agents (id, name, description, role, interval_seconds, status, pid, last_run, next_run, runs_count, last_log, config)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO ai_connections (
+          id, provider, auth_method, api_key, base_url, model,
+          cli_binary, cli_version, cli_auth_status, connection_status,
+          last_tested_at, latency_ms, error_message, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
-          name = excluded.name,
-          description = excluded.description,
-          role = excluded.role,
-          interval_seconds = excluded.interval_seconds,
-          status = excluded.status,
-          config = excluded.config
+          provider = excluded.provider,
+          auth_method = excluded.auth_method,
+          api_key = excluded.api_key,
+          base_url = excluded.base_url,
+          model = excluded.model,
+          cli_binary = excluded.cli_binary,
+          cli_version = excluded.cli_version,
+          cli_auth_status = excluded.cli_auth_status,
+          connection_status = excluded.connection_status,
+          last_tested_at = excluded.last_tested_at,
+          latency_ms = excluded.latency_ms,
+          error_message = excluded.error_message,
+          updated_at = excluded.updated_at
       `);
+
       stmt.run(
-        agent.id,
-        agent.name,
-        agent.description,
-        agent.role,
-        agent.intervalSeconds,
-        agent.status,
-        agent.pid || null,
-        agent.lastRun || null,
-        agent.nextRun || null,
-        agent.runsCount || 0,
-        agent.lastLog || null,
-        agent.config ? JSON.stringify(agent.config) : null
+        merged.id,
+        merged.provider,
+        merged.authMethod,
+        merged.apiKey ?? null,
+        merged.baseUrl ?? null,
+        merged.model,
+        merged.cliBinary ?? null,
+        merged.cliVersion ?? null,
+        merged.cliAuthStatus ?? null,
+        merged.connectionStatus,
+        merged.lastTestedAt ?? null,
+        merged.latencyMs ?? null,
+        merged.errorMessage ?? null,
+        merged.updatedAt
       );
+
+      return merged;
+    },
+    updateStatus(status: AiConnectionConfig['connectionStatus'], latencyMs?: number, errorMessage?: string): void {
+      const now = new Date().toISOString();
+      const stmt = db.prepare(`
+        UPDATE ai_connections
+        SET connection_status = ?, latency_ms = ?, error_message = ?, last_tested_at = ?, updated_at = ?
+        WHERE id = 'primary'
+      `);
+      stmt.run(status, latencyMs ?? null, errorMessage ?? null, now, now);
     }
   }
 };

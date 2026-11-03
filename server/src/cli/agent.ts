@@ -24,8 +24,7 @@ function printHelp() {
   npm run agent <command> [options]
 
 Commands:
-  status                     Display platform health, SQLite stats, and AI engine status
-  daemon [status|start|stop] Manage background daemon agent workers
+  status                     Display platform health, SQLite stats, and AI connection status
   generate --req <ID>        Synthesize grounded test cases for a requirement
   impact --doc <ID>          Calculate change impact blast radius for revised document
   verify                     Cryptographically verify chained SHA-256 audit log integrity
@@ -38,12 +37,10 @@ Options:
   --save                     Persist AI-generated draft test cases to SQLite
 
 Examples:
-  npm run agent daemon status
-  npm run agent daemon start AGENT-QA-SYNTH
-  npm run agent daemon stop AGENT-DOC-WATCHER
-  npm run agent daemon trigger AGENT-GAP-SCANNER
   npm run agent status
   npm run agent generate --req REQ-001 --save
+  npm run agent impact --doc DOC-01
+  npm run agent verify
 `);
 }
 
@@ -314,68 +311,6 @@ async function handleInteractive() {
   });
 }
 
-async function handleDaemon(subCommand: string, targetId: string, isJson: boolean) {
-  const sub = subCommand?.toLowerCase() || 'status';
-
-  if (sub === 'status' || sub === 'list') {
-    const agents = dbRepository.backgroundAgents.getAll();
-    if (isJson) {
-      console.log(JSON.stringify(agents, null, 2));
-      return;
-    }
-    console.log(BANNER);
-    console.log(`[DAEMON] Active Background Agent Workers in SQLite:\n`);
-    agents.forEach((a, i) => {
-      const statusIcon = a.status === 'running' ? '🟢 RUNNING' : '⏹️ STOPPED';
-      console.log(`#${i + 1} [${statusIcon}] ${a.id} - "${a.name}"`);
-      console.log(`   Role: ${a.role}`);
-      console.log(`   Loop Interval: Every ${a.intervalSeconds}s | Total Cycles: ${a.runsCount} | PID: ${a.pid || 'N/A'}`);
-      console.log(`   Last Run: ${a.lastRun || 'Never'} | Next Run: ${a.nextRun || 'N/A'}`);
-      console.log(`   Latest Activity: ${a.lastLog || 'None'}\n`);
-    });
-    console.log(`Usage: npm run agent daemon [start|stop|trigger] <AGENT_ID>`);
-    return;
-  }
-
-  if (!targetId) {
-    console.error(`Error: Missing AGENT_ID. Usage: npm run agent daemon ${sub} <AGENT_ID>`);
-    console.error(`Available IDs: AGENT-DOC-WATCHER, AGENT-QA-SYNTH, AGENT-AUDIT-GUARDIAN, AGENT-GAP-SCANNER`);
-    process.exit(1);
-  }
-
-  const agent = dbRepository.backgroundAgents.getById(targetId);
-  if (!agent) {
-    console.error(`Error: Agent "${targetId}" not found in database.`);
-    process.exit(1);
-  }
-
-  if (sub === 'start') {
-    dbRepository.backgroundAgents.updateStatus(targetId, 'running', process.pid, `Daemon worker activated via CLI`);
-    console.log(`✅ [DAEMON] Agent "${targetId}" marked as RUNNING in SQLite background pool.`);
-  } else if (sub === 'stop') {
-    dbRepository.backgroundAgents.updateStatus(targetId, 'stopped', undefined, `Daemon worker stopped via CLI`);
-    console.log(`⏹️ [DAEMON] Agent "${targetId}" marked as STOPPED.`);
-  } else if (sub === 'trigger' || sub === 'run') {
-    const now = new Date().toISOString().replace('T', ' ').slice(0, 16);
-    const log = `[CLI-TRIGGER] Triggered immediate iteration cycle for ${agent.name}.`;
-    dbRepository.backgroundAgents.recordExecution(targetId, log, now);
-    console.log(`⚡ [DAEMON] Immediate execution triggered for "${targetId}".`);
-    console.log(`   Log: ${log}`);
-  } else if (sub === 'logs' || sub === 'log') {
-    console.log(BANNER);
-    console.log(`[DAEMON LOGS] Live Log Tail for "${agent.name}" (${agent.id}):`);
-    console.log(`   Status:       ${agent.status.toUpperCase()}`);
-    console.log(`   Loop Interval: Every ${agent.intervalSeconds}s`);
-    console.log(`   Total Runs:   ${agent.runsCount}`);
-    console.log(`   Last Run:     ${agent.lastRun || 'Never'}`);
-    console.log('---------------------------------------------------------------');
-    console.log(`   ${agent.lastLog || 'No log entries recorded yet.'}`);
-    console.log('===============================================================\n');
-  } else {
-    console.error(`Unknown daemon command: "${sub}". Use status, start, stop, trigger, or logs.`);
-  }
-}
-
 // Main CLI Entry Point
 async function main() {
   const args = process.argv.slice(2);
@@ -390,10 +325,6 @@ async function main() {
 
   try {
     switch (command) {
-      case 'daemon':
-      case 'worker':
-        await handleDaemon(args[1], args[2], isJson);
-        break;
       case 'status':
         await handleStatus(isJson);
         break;

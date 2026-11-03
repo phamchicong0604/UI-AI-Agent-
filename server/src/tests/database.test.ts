@@ -69,4 +69,22 @@ describe('SQLite Database Layer & Repository CRUD', () => {
     expect(latestHash).toBeDefined();
     expect(latestHash.startsWith('sha256:')).toBe(true);
   });
+
+  it('should persist and retrieve unified AI connections', () => {
+    const conn = dbRepository.aiConnections.get();
+    expect(conn).toBeDefined();
+    expect(conn?.id).toBe('primary');
+
+    dbRepository.aiConnections.save({
+      provider: 'anthropic',
+      authMethod: 'cli_subscription',
+      cliBinary: 'claude',
+      model: 'claude-3-7-sonnet'
+    });
+
+    const updated = dbRepository.aiConnections.get();
+    expect(updated?.provider).toBe('anthropic');
+    expect(updated?.authMethod).toBe('cli_subscription');
+    expect(updated?.cliBinary).toBe('claude');
+  });
 });

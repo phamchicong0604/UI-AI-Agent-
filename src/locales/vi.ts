@@ -261,6 +261,27 @@ export const vi = {
   aiConfigSuccess: 'Đã lưu cấu hình AI vào SQLite thành công!',
   aiZeroKeyNotice: 'Chế độ Zero-Key Fallback Engine: Nếu không nhập API key, hệ thống sẽ tự động dùng bộ sinh kịch bản cục bộ không cần Internet, đảm bảo 100% tuân thủ Proposal.',
 
+  // Unified AI Connection Settings
+  settingsTabAiConnection: 'Kết nối AI (Unified Connection)',
+  aiConnectionTitle: 'Thiết lập Kết nối AI Tập trung (Unified AI Connection Settings)',
+  aiConnectionSubtitle: 'Quản lý tập trung kết nối AI toàn hệ thống. Chọn 1 trong 2 phương thức: API Key hoặc CLI Subscription.',
+  aiSelectProvider: '1. Chọn Nhà Cung Cấp AI (Select AI Provider)',
+  aiConnectionMethod: '2. Phương Thức Kết Nối (Connection Method)',
+  aiMethodApiKey: 'API Key',
+  aiMethodApiKeyDesc: 'Kết nối thông qua API Key do nhà cung cấp AI cấp.',
+  aiMethodCli: 'CLI Subscription',
+  aiMethodCliDesc: 'Kết nối thông qua CLI đã đăng nhập bằng tài khoản Subscription của bạn.',
+  aiConfigSectionTitle: '3. Cấu hình Chi tiết (Configuration)',
+  aiCliSelectLabel: 'Chọn Công cụ CLI phát hiện trên máy:',
+  aiCliScanBtn: 'Quét lại công cụ CLI',
+  aiBaseUrlLabel: 'API Base URL (Tuỳ chọn - dùng cho OpenAI Compatible hoặc Local):',
+  aiDisconnectBtn: 'Ngắt kết nối',
+  aiStatusConnected: 'Đã kết nối (Connected)',
+  aiStatusDisconnected: 'Chưa kết nối (Disconnected)',
+  aiStatusAuthRequired: 'Yêu cầu đăng nhập CLI (Authentication Required)',
+  aiStatusError: 'Lỗi kết nối (Error)',
+  aiSharedScopeNotice: 'Lưu ý: Tất cả module AI trong hệ thống (Tạo kịch bản kiểm thử, Phân tích Blast-Radius, Rà soát lỗ hổng, v.v.) sẽ sử dụng chung cấu hình kết nối tập trung này.',
+
   // Terminal & CLI Agent Settings
   settingsTabAgent: 'Terminal & CLI Agent',
   agentTitle: 'Cấu hình AI Agent & Trình chạy Dòng lệnh (Terminal CLI Runner)',

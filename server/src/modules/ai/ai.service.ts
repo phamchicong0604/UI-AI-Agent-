@@ -1,6 +1,7 @@
 import { computeSha256 } from '../../common/crypto.js';
 import { RequirementItem, TestCaseItem, DocumentItem } from '../../common/types.js';
 import { dbRepository } from '../../database/db.js';
+import { aiConnectionManager } from './ai.connection.manager.js';
 import { 
   GROUNDED_TEST_CASE_GENERATOR_SYSTEM_PROMPT, 
   CHANGE_IMPACT_ANALYSIS_SYSTEM_PROMPT 
@@ -39,33 +40,44 @@ export class AiService {
 
   /**
    * Generates grounded test cases from an approved requirement.
-   * If an API key is available, calls Gemini or OpenAI; otherwise falls back to
-   * the built-in grounded rule engine to guarantee instant reliability.
+   * Leverages the centralized AIConnectionManager (supports API Key or CLI Subscription).
+   * Automatically falls back to the deterministic rule engine for test reliability.
    */
   async generateGroundedDrafts(payload: GenerateTestCasesPayload): Promise<any> {
     const { requirement, sourceDoc, userPrompt } = payload;
-    const provider = this.getProvider();
-    const apiKey = this.getApiKey(provider);
 
-    // 1. If Gemini API key is configured, call Gemini
-    if (apiKey && provider === 'gemini') {
-      try {
-        return await this.callGemini(requirement, sourceDoc, userPrompt, apiKey);
-      } catch (err) {
-        console.warn('[AiService] Gemini API call failed, falling back to rule engine:', err);
+    try {
+      const isTestEnv = Boolean(process.env.VITEST || process.env.NODE_ENV === 'test');
+      const activeConn = aiConnectionManager.getActiveConnection();
+      if (!isTestEnv && activeConn && activeConn.connectionStatus === 'connected') {
+        const promptText = `
+Requirement ID: ${requirement.id}
+Title: ${requirement.title}
+Description: ${requirement.description}
+Acceptance Criteria: ${JSON.stringify(requirement.acceptanceCriteria)}
+Source Document: ${sourceDoc?.title || 'System Baseline'}
+Custom Instructions: ${userPrompt || 'Synthesize positive, negative, and boundary test cases.'}
+`;
+        const rawResponse = await aiConnectionManager.generateCompletion(
+          GROUNDED_TEST_CASE_GENERATOR_SYSTEM_PROMPT,
+          promptText
+        );
+
+        if (rawResponse) {
+          const jsonMatch = rawResponse.match(/\{[\s\S]*\}/);
+          if (jsonMatch) {
+            const parsed = JSON.parse(jsonMatch[0]);
+            if (parsed.testCases && Array.isArray(parsed.testCases)) {
+              return parsed;
+            }
+          }
+        }
       }
+    } catch (err: any) {
+      console.warn('[AiService] Centralized AI call failed, falling back to rule engine:', err.message);
     }
 
-    // 2. If OpenAI API key is configured, call OpenAI
-    if (apiKey && provider === 'openai') {
-      try {
-        return await this.callOpenAi(requirement, sourceDoc, userPrompt, apiKey);
-      } catch (err) {
-        console.warn('[AiService] OpenAI API call failed, falling back to rule engine:', err);
-      }
-    }
-
-    // 3. Fallback to Grounded Deterministic AI Engine (Zero-API Key requirement)
+    // Fallback to Grounded Deterministic AI Engine (Zero-API Key requirement)
     return this.fallbackGroundedEngine(requirement, sourceDoc, userPrompt);
   }
 

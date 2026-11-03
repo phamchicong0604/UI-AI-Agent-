@@ -211,17 +211,36 @@ export interface AuditEvent {
   previousEventHash?: string;
 }
 
-export interface BackgroundAgentRecord {
+export type AiProviderId = 'google' | 'anthropic' | 'openai' | 'custom';
+export type AiAuthMethod = 'api_key' | 'cli_subscription';
+export type AiConnectionStatus = 'connected' | 'disconnected' | 'auth_required' | 'error';
+
+export interface AiConnectionConfig {
+  id: string;
+  provider: AiProviderId;
+  authMethod: AiAuthMethod;
+  apiKey?: string;
+  maskedApiKey?: string;
+  baseUrl?: string;
+  model: string;
+  cliBinary?: string;
+  cliVersion?: string;
+  cliAuthStatus?: 'authenticated' | 'unauthenticated' | 'not_found';
+  connectionStatus: AiConnectionStatus;
+  lastTestedAt?: string;
+  latencyMs?: number;
+  errorMessage?: string;
+  updatedAt: string;
+}
+
+export interface CliDetectionInfo {
   id: string;
   name: string;
-  description: string;
-  role: string;
-  intervalSeconds: number;
-  status: 'running' | 'stopped' | 'error';
-  pid?: number;
-  lastRun?: string;
-  nextRun?: string;
-  runsCount: number;
-  lastLog?: string;
-  config?: Record<string, any>;
+  binary: string;
+  installed: boolean;
+  version?: string;
+  path?: string;
+  authStatus: 'authenticated' | 'unauthenticated' | 'unknown' | 'not_installed';
+  account?: string;
+  loginCommand: string;
 }

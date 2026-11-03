@@ -121,7 +121,37 @@ const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // Navigation & Role
-  const [activeTab, setActiveTab] = useState<NavigationTab>('dashboard');
+  const getInitialTab = (): NavigationTab => {
+    const hash = window.location.hash.replace('#', '') as NavigationTab;
+    const validTabs: NavigationTab[] = [
+      'dashboard', 'documents', 'requirements', 'evidence',
+      'testcases', 'testruns', 'bugs', 'traceability', 'settings'
+    ];
+    if (validTabs.includes(hash)) return hash;
+    return 'dashboard';
+  };
+
+  const [activeTab, setActiveTabState] = useState<NavigationTab>(getInitialTab);
+  const setActiveTab = (tab: NavigationTab) => {
+    setActiveTabState(tab);
+    window.location.hash = tab;
+  };
+
+  useEffect(() => {
+    const onHashChange = () => {
+      const hash = window.location.hash.replace('#', '') as NavigationTab;
+      const validTabs: NavigationTab[] = [
+        'dashboard', 'documents', 'requirements', 'evidence',
+        'testcases', 'testruns', 'bugs', 'traceability', 'settings'
+      ];
+      if (validTabs.includes(hash)) {
+        setActiveTabState(hash);
+      }
+    };
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
+
   const [currentRole, setCurrentRole] = useState<UserRole>('QA');
   const [currentUser] = useState<string>('Duc Pham');
 

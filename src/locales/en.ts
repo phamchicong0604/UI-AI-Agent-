@@ -261,6 +261,27 @@ export const en = {
   aiConfigSuccess: 'AI settings saved to SQLite database successfully!',
   aiZeroKeyNotice: 'Zero-Key Fallback Engine: If no API key is configured, the system automatically uses the deterministic local rule engine without requiring external network connectivity.',
 
+  // Unified AI Connection Settings
+  settingsTabAiConnection: 'AI Connection (Unified)',
+  aiConnectionTitle: 'Unified AI Connection Settings',
+  aiConnectionSubtitle: 'Centralized AI provider connection. Choose one of two methods: API Key or CLI Subscription.',
+  aiSelectProvider: '1. Select AI Provider',
+  aiConnectionMethod: '2. Connection Method',
+  aiMethodApiKey: 'API Key',
+  aiMethodApiKeyDesc: 'Connect using API credentials provided by the AI provider.',
+  aiMethodCli: 'CLI Subscription',
+  aiMethodCliDesc: 'Connect using your subscribed CLI tool logged into your provider account.',
+  aiConfigSectionTitle: '3. Configuration',
+  aiCliSelectLabel: 'Select Supported CLI detected on machine:',
+  aiCliScanBtn: 'Re-scan CLI Tools',
+  aiBaseUrlLabel: 'API Base URL (Optional - for OpenAI Compatible / Local):',
+  aiDisconnectBtn: 'Disconnect',
+  aiStatusConnected: 'Connected',
+  aiStatusDisconnected: 'Disconnected',
+  aiStatusAuthRequired: 'Authentication Required (Run CLI Login)',
+  aiStatusError: 'Connection Error',
+  aiSharedScopeNotice: 'Note: All AI modules across the system (Test Case Generation, Blast Radius Analysis, Bug Analysis, etc.) use this centralized connection.',
+
   // Terminal & CLI Agent Settings
   settingsTabAgent: 'Terminal & CLI Agent',
   agentTitle: 'AI Agent Profile & Terminal CLI Runner Configuration',

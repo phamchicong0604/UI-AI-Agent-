@@ -258,28 +258,48 @@ export const aiApi = {
 };
 
 /* -------------------------------------------------------------
- * 10. SETTINGS & AI KEYS API
+ * 10. UNIFIED AI CONNECTION API
  * ----------------------------------------------------------- */
-export const settingsApi = {
-  async getAiConfig(): Promise<any> {
-    return fetchJson<any>(`${API_BASE_URL}/settings/ai`);
+export const aiConnectionApi = {
+  async getConnection(): Promise<any> {
+    return fetchJson<any>(`${API_BASE_URL}/ai/connection`);
   },
-  async saveAiConfig(data: {
-    provider: string;
-    geminiKey?: string;
-    openaiKey?: string;
-    geminiModel?: string;
-    openaiModel?: string;
+  async saveConnection(data: {
+    provider?: string;
+    authMethod?: string;
+    apiKey?: string;
+    baseUrl?: string;
+    model?: string;
+    cliBinary?: string;
   }): Promise<any> {
-    return fetchJson<any>(`${API_BASE_URL}/settings/ai`, {
+    return fetchJson<any>(`${API_BASE_URL}/ai/connection`, {
       method: 'POST',
       body: JSON.stringify(data)
     });
   },
-  async testConnection(): Promise<any> {
-    return fetchJson<any>(`${API_BASE_URL}/settings/ai/test-connection`, {
+  async testConnection(data?: {
+    provider?: string;
+    authMethod?: string;
+    apiKey?: string;
+    baseUrl?: string;
+    model?: string;
+    cliBinary?: string;
+  }): Promise<any> {
+    return fetchJson<any>(`${API_BASE_URL}/ai/connection/test`, {
+      method: 'POST',
+      body: JSON.stringify(data || {})
+    });
+  },
+  async detectCli(): Promise<any> {
+    return fetchJson<any>(`${API_BASE_URL}/ai/connection/cli-detect`);
+  },
+  async disconnect(): Promise<any> {
+    return fetchJson<any>(`${API_BASE_URL}/ai/connection/disconnect`, {
       method: 'POST'
     });
+  },
+  async getModels(): Promise<any> {
+    return fetchJson<any>(`${API_BASE_URL}/ai/models`);
   }
 };
 
@@ -315,44 +335,24 @@ export const agentApi = {
       method: 'POST',
       body: JSON.stringify({ command })
     });
-  },
-  async getBackgroundAgents(): Promise<any[]> {
-    return fetchJson<any[]>(`${API_BASE_URL}/agent/background`);
-  },
-  async startBackgroundAgent(id: string): Promise<any> {
-    return fetchJson<any>(`${API_BASE_URL}/agent/background/${id}/start`, {
-      method: 'POST'
-    });
-  },
-  async stopBackgroundAgent(id: string): Promise<any> {
-    return fetchJson<any>(`${API_BASE_URL}/agent/background/${id}/stop`, {
-      method: 'POST'
-    });
-  },
-  async triggerBackgroundAgent(id: string): Promise<any> {
-    return fetchJson<any>(`${API_BASE_URL}/agent/background/${id}/trigger`, {
-      method: 'POST'
-    });
-  },
-  async getBackgroundAgentLogs(id: string): Promise<any[]> {
-    return fetchJson<any[]>(`${API_BASE_URL}/agent/background/${id}/logs`);
   }
 };
 
-// Aliases for backwards compatibility with earlier components
+// Aliases for components
 export const getAiStatus = aiApi.getStatus;
 export const requestAiTestCases = aiApi.generateTestCases;
 export const requestImpactAnalysis = aiApi.analyzeImpact;
 export const verifyAuditChainOnBackend = auditApi.verifyChain;
-export const getAiSettings = settingsApi.getAiConfig;
-export const saveAiSettings = settingsApi.saveAiConfig;
-export const testAiConnection = settingsApi.testConnection;
+
+// Unified AI Connection aliases
+export const getAiConnection = aiConnectionApi.getConnection;
+export const saveAiConnection = aiConnectionApi.saveConnection;
+export const testAiConnection = aiConnectionApi.testConnection;
+export const detectCliTools = aiConnectionApi.detectCli;
+export const disconnectAiConnection = aiConnectionApi.disconnect;
+export const getAiModels = aiConnectionApi.getModels;
+
 export const getAgentConfig = agentApi.getConfig;
 export const saveAgentConfig = agentApi.saveConfig;
 export const generateAgentToken = agentApi.generateToken;
 export const executeAgentCommand = agentApi.executeCommand;
-export const getBackgroundAgents = agentApi.getBackgroundAgents;
-export const startBackgroundAgent = agentApi.startBackgroundAgent;
-export const stopBackgroundAgent = agentApi.stopBackgroundAgent;
-export const triggerBackgroundAgent = agentApi.triggerBackgroundAgent;
-export const getBackgroundAgentLogs = agentApi.getBackgroundAgentLogs;
