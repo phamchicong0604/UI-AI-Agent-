@@ -60,7 +60,7 @@ export const SettingsView: React.FC = () => {
   const [apiKey, setApiKey] = useState<string>('');
   const [maskedKey, setMaskedKey] = useState<string>('');
   const [showKey, setShowKey] = useState<boolean>(false);
-  const [model, setModel] = useState<string>('gemini-1.5-pro');
+  const [model, setModel] = useState<string>('gemini-4-argon-medium');
   const [baseUrl, setBaseUrl] = useState<string>('');
   const [cliBinary, setCliBinary] = useState<string>('claude');
 
@@ -109,7 +109,7 @@ export const SettingsView: React.FC = () => {
         setProvider(c.provider || 'google');
         setAuthMethod(c.authMethod || 'api_key');
         setMaskedKey(c.maskedApiKey || '');
-        setModel(c.model || 'gemini-1.5-pro');
+        setModel(c.model || 'gemini-4-argon-medium');
         setBaseUrl(c.baseUrl || '');
         setCliBinary(c.cliBinary || 'claude');
         setConnectionStatus(c.connectionStatus || 'disconnected');

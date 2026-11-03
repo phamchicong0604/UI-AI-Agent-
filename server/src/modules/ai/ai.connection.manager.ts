@@ -29,7 +29,7 @@ export class AIConnectionManager {
       conn = dbRepository.aiConnections.save({
         provider: 'google',
         authMethod: 'api_key',
-        model: 'gemini-1.5-pro',
+        model: 'gemini-4-argon-medium',
         connectionStatus: 'disconnected'
       });
     }
@@ -65,7 +65,7 @@ export class AIConnectionManager {
     let targetModel = payload.model || existing?.model;
     const availableModels = PROVIDER_MODELS[targetProvider] || [];
     if (!targetModel || !availableModels.some(m => m.id === targetModel)) {
-      targetModel = availableModels[0]?.id || 'gemini-1.5-pro';
+      targetModel = availableModels[0]?.id || 'gemini-4-argon-medium';
     }
 
     const updated = dbRepository.aiConnections.save({
@@ -115,7 +115,7 @@ export class AIConnectionManager {
     const active = dbRepository.aiConnections.get();
     const provider = override?.provider || active?.provider || 'google';
     const authMethod = override?.authMethod || active?.authMethod || 'api_key';
-    const model = override?.model || active?.model || 'gemini-1.5-pro';
+    const model = override?.model || active?.model || 'gemini-4-argon-medium';
     const baseUrl = override?.baseUrl !== undefined ? override.baseUrl : active?.baseUrl;
     const cliBinary = override?.cliBinary || active?.cliBinary || 'claude';
 
