@@ -104,6 +104,8 @@ db.exec(`
     api_key TEXT,
     base_url TEXT,
     model TEXT NOT NULL DEFAULT 'gemini-4-argon-medium',
+    effort_level TEXT DEFAULT 'medium',
+    max_output_tokens INTEGER DEFAULT 32768,
     cli_binary TEXT DEFAULT 'claude',
     cli_version TEXT,
     cli_auth_status TEXT,
@@ -114,6 +116,13 @@ db.exec(`
     updated_at TEXT NOT NULL
   );
 `);
+
+try {
+  db.exec("ALTER TABLE ai_connections ADD COLUMN effort_level TEXT DEFAULT 'medium'");
+} catch {}
+try {
+  db.exec("ALTER TABLE ai_connections ADD COLUMN max_output_tokens INTEGER DEFAULT 32768");
+} catch {}
 
 /* -------------------------------------------------------------
  * SEED BASELINE DATA IF TABLES ARE EMPTY
@@ -669,6 +678,8 @@ export const dbRepository = {
         apiKey: r.api_key || undefined,
         baseUrl: r.base_url || undefined,
         model: r.model,
+        effortLevel: r.effort_level || 'medium',
+        maxOutputTokens: r.max_output_tokens || 32768,
         cliBinary: r.cli_binary || undefined,
         cliVersion: r.cli_version || undefined,
         cliAuthStatus: r.cli_auth_status || undefined,
@@ -688,6 +699,8 @@ export const dbRepository = {
         apiKey: config.apiKey !== undefined ? config.apiKey : existing?.apiKey,
         baseUrl: config.baseUrl !== undefined ? config.baseUrl : existing?.baseUrl,
         model: config.model ?? existing?.model ?? 'gemini-4-argon-medium',
+        effortLevel: config.effortLevel ?? existing?.effortLevel ?? 'medium',
+        maxOutputTokens: config.maxOutputTokens ?? existing?.maxOutputTokens ?? 32768,
         cliBinary: config.cliBinary ?? existing?.cliBinary ?? 'claude',
         cliVersion: config.cliVersion ?? existing?.cliVersion,
         cliAuthStatus: config.cliAuthStatus ?? existing?.cliAuthStatus,
@@ -701,15 +714,18 @@ export const dbRepository = {
       const stmt = db.prepare(`
         INSERT INTO ai_connections (
           id, provider, auth_method, api_key, base_url, model,
+          effort_level, max_output_tokens,
           cli_binary, cli_version, cli_auth_status, connection_status,
           last_tested_at, latency_ms, error_message, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           provider = excluded.provider,
           auth_method = excluded.auth_method,
           api_key = excluded.api_key,
           base_url = excluded.base_url,
           model = excluded.model,
+          effort_level = excluded.effort_level,
+          max_output_tokens = excluded.max_output_tokens,
           cli_binary = excluded.cli_binary,
           cli_version = excluded.cli_version,
           cli_auth_status = excluded.cli_auth_status,
@@ -727,6 +743,8 @@ export const dbRepository = {
         merged.apiKey ?? null,
         merged.baseUrl ?? null,
         merged.model,
+        merged.effortLevel ?? 'medium',
+        merged.maxOutputTokens ?? 32768,
         merged.cliBinary ?? null,
         merged.cliVersion ?? null,
         merged.cliAuthStatus ?? null,

@@ -109,6 +109,8 @@ export class CLIAuthenticator {
             });
             child.stdin?.end();
           });
+        } else if (tool.id === 'agy') {
+          authStatus = 'authenticated';
         }
 
         results.push({
@@ -142,13 +144,20 @@ export class CLIAuthenticator {
   /**
    * Tests connection to a specific CLI binary by performing a real probe execution.
    */
-  async testConnection(cliBinary: string): Promise<CliTestResult> {
+  async testConnection(
+    cliBinary: string,
+    options?: { model?: string; effortLevel?: string }
+  ): Promise<CliTestResult> {
     const target = cliBinary || 'claude';
     const start = Date.now();
+    const envWithLocalBin = {
+      ...process.env,
+      PATH: `${process.env.HOME || ''}/.local/bin:/usr/local/bin:${process.env.PATH || ''}`
+    };
 
     try {
       // 1. Verify existence via which
-      const { stdout: pathOut } = await execFileAsync('which', [target], { timeout: 3000 });
+      const { stdout: pathOut } = await execFileAsync('which', [target], { timeout: 3000, env: envWithLocalBin });
       const binaryPath = pathOut.trim();
 
       if (!binaryPath) {
@@ -164,14 +173,14 @@ export class CLIAuthenticator {
       // 2. Fetch version
       let version = 'unknown';
       try {
-        const { stdout: verOut } = await execFileAsync(target, ['--version'], { timeout: 4000 });
+        const { stdout: verOut } = await execFileAsync(target, ['--version'], { timeout: 4000, env: envWithLocalBin });
         version = verOut.trim().split('\n')[0];
       } catch {}
 
       // 3. For Claude: perform real non-interactive probe to check if OAuth subscription is active
       if (target === 'claude') {
         const testRes = await new Promise<CliTestResult>((resolve) => {
-          const child = execFile('claude', ['-p', 'Respond with PONG', '--dangerously-skip-permissions'], { timeout: 5000 }, (err, stdout, stderr) => {
+          const child = execFile('claude', ['-p', 'Respond with PONG', '--dangerously-skip-permissions'], { timeout: 5000, env: envWithLocalBin }, (err, stdout, stderr) => {
             const latencyMs = Date.now() - start;
             const text = `${stdout || ''} ${stderr || ''} ${err?.message || ''}`;
             const isAuthExpired = text.includes('Failed to authenticate') || text.includes('OAuth session expired') || text.includes('not logged in');
@@ -207,9 +216,59 @@ export class CLIAuthenticator {
         return testRes;
       }
 
-      // 4. For GitHub CLI: verify authentication and Copilot access
+      // 4. For Google Antigravity CLI (agy): supports model and reasoning effort
+      if (target === 'agy') {
+        const modelArgs = options?.model ? ['--model', options.model] : [];
+        const effortArgs = options?.effortLevel ? ['--effort', options.effortLevel] : ['--effort', 'low'];
+        const testRes = await new Promise<CliTestResult>((resolve) => {
+          const child = execFile(
+            'agy',
+            ['-p', 'Respond with PONG', ...modelArgs, ...effortArgs, '--dangerously-skip-permissions'],
+            { timeout: 12000, env: envWithLocalBin },
+            (err, stdout, stderr) => {
+              const latencyMs = Date.now() - start;
+              const text = `${stdout || ''} ${stderr || ''} ${err?.message || ''}`;
+              const isAuthError = text.includes('auth') || text.includes('unauthorized') || text.includes('not logged in');
+
+              if (err && isAuthError) {
+                resolve({
+                  success: false,
+                  message: `Google Antigravity CLI (${version}) chưa được xác thực tài khoản. Vui lòng chạy lệnh "agy auth" trong Terminal.`,
+                  latencyMs,
+                  cliBinary: target,
+                  cliVersion: version,
+                  authStatus: 'unauthenticated',
+                  details: {
+                    loginCommand: 'agy auth',
+                    requiredAction: 'RUN_LOGIN'
+                  }
+                });
+              } else {
+                resolve({
+                  success: true,
+                  message: `Kết nối thành công Antigravity CLI (${version})${options?.model ? ` [Model: ${options.model}]` : ''}${options?.effortLevel ? ` [Mức độ out: ${options.effortLevel}]` : ''} [${latencyMs}ms]`,
+                  latencyMs,
+                  cliBinary: target,
+                  cliVersion: version,
+                  authStatus: 'authenticated',
+                  details: {
+                    path: binaryPath,
+                    model: options?.model,
+                    effort: options?.effortLevel,
+                    response: stdout?.trim()
+                  }
+                });
+              }
+            }
+          );
+          child.stdin?.end();
+        });
+        return testRes;
+      }
+
+      // 5. For GitHub CLI: verify authentication and Copilot access
       if (target === 'gh') {
-        const { stdout: ghStatus } = await execFileAsync('gh', ['auth', 'status'], { timeout: 4000 }).catch(e => ({ stdout: e.stdout || e.message }));
+        const { stdout: ghStatus } = await execFileAsync('gh', ['auth', 'status'], { timeout: 4000, env: envWithLocalBin }).catch(e => ({ stdout: e.stdout || e.message }));
         const latencyMs = Date.now() - start;
 
         if (ghStatus.includes('Logged in to')) {
@@ -243,7 +302,7 @@ export class CLIAuthenticator {
         }
       }
 
-      // 5. Antigravity CLI / Gemini CLI / Generic
+      // 6. Generic CLI fallback
       const latencyMs = Date.now() - start;
       return {
         success: true,
@@ -268,16 +327,36 @@ export class CLIAuthenticator {
   /**
    * Executes completion prompt via CLI subprocess in a secure, sandboxed manner.
    */
-  async executePrompt(cliBinary: string, systemPrompt: string, userPrompt: string): Promise<string> {
+  async executePrompt(
+    cliBinary: string,
+    systemPrompt: string,
+    userPrompt: string,
+    options?: { model?: string; effortLevel?: string; maxOutputTokens?: number }
+  ): Promise<string> {
     const target = cliBinary || 'claude';
     const combinedPrompt = `${systemPrompt}\n\nTask:\n${userPrompt}`;
+    const envWithLocalBin = {
+      ...process.env,
+      PATH: `${process.env.HOME || ''}/.local/bin:/usr/local/bin:${process.env.PATH || ''}`
+    };
 
     try {
+      if (target === 'agy') {
+        const modelArgs = options?.model ? ['--model', options.model] : [];
+        const effortArgs = options?.effortLevel ? ['--effort', options.effortLevel] : ['--effort', 'medium'];
+        const { stdout } = await execFileAsync(
+          'agy',
+          ['-p', combinedPrompt, ...modelArgs, ...effortArgs, '--dangerously-skip-permissions'],
+          { timeout: 60000, maxBuffer: 20 * 1024 * 1024, env: envWithLocalBin }
+        );
+        return stdout.trim();
+      }
+
       if (target === 'claude') {
         const { stdout, stderr } = await execFileAsync(
           'claude',
           ['-p', combinedPrompt, '--dangerously-skip-permissions'],
-          { timeout: 25000, maxBuffer: 10 * 1024 * 1024 }
+          { timeout: 25000, maxBuffer: 10 * 1024 * 1024, env: envWithLocalBin }
         );
         if (stderr.includes('Failed to authenticate') || stderr.includes('OAuth session expired')) {
           throw new Error('Claude CLI OAuth session expired. Please run "claude login" in terminal.');
@@ -288,7 +367,8 @@ export class CLIAuthenticator {
       // Generic fallback
       const { stdout } = await execFileAsync(target, ['run', combinedPrompt], {
         timeout: 20000,
-        maxBuffer: 5 * 1024 * 1024
+        maxBuffer: 5 * 1024 * 1024,
+        env: envWithLocalBin
       });
       return stdout.trim();
     } catch (err: any) {

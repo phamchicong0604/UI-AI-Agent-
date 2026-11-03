@@ -163,8 +163,11 @@ export class APIKeyAuthenticator {
     model: string,
     systemPrompt: string,
     userPrompt: string,
-    baseUrl?: string
+    baseUrl?: string,
+    options?: { maxTokens?: number; effortLevel?: string }
   ): Promise<string> {
+    const maxTokens = options?.maxTokens || 4096;
+
     if (provider === 'google') {
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${model || 'gemini-1.5-pro'}:generateContent?key=${apiKey}`;
       const res = await fetch(url, {
@@ -173,7 +176,11 @@ export class APIKeyAuthenticator {
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: systemPrompt }] },
           contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
-          generationConfig: { temperature: 0.2, responseMimeType: 'application/json' }
+          generationConfig: {
+            temperature: 0.2,
+            maxOutputTokens: maxTokens,
+            responseMimeType: 'application/json'
+          }
         })
       });
 
@@ -197,7 +204,7 @@ export class APIKeyAuthenticator {
         body: JSON.stringify({
           model: model || 'claude-3-5-sonnet-20241022',
           system: systemPrompt,
-          max_tokens: 4096,
+          max_tokens: maxTokens,
           messages: [{ role: 'user', content: userPrompt }]
         })
       });
@@ -224,6 +231,7 @@ export class APIKeyAuthenticator {
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt }
         ],
+        max_tokens: maxTokens,
         temperature: 0.2
       })
     });

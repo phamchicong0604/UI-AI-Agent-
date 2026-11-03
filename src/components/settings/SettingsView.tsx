@@ -24,7 +24,8 @@ import {
   Gauge,
   Activity,
   Zap,
-  Clock
+  Clock,
+  Sliders
 } from 'lucide-react';
 import { Card, Badge, Button } from '../../common/components';
 import {
@@ -45,7 +46,8 @@ import {
   AiConnectionStatus, 
   CliDetectionInfo,
   ModelOption,
-  AiQuotaInfo
+  AiQuotaInfo,
+  ReasoningEffortLevel
 } from '../../types';
 
 export const SettingsView: React.FC = () => {
@@ -61,6 +63,8 @@ export const SettingsView: React.FC = () => {
   const [maskedKey, setMaskedKey] = useState<string>('');
   const [showKey, setShowKey] = useState<boolean>(false);
   const [model, setModel] = useState<string>('gemini-4-argon-medium');
+  const [effortLevel, setEffortLevel] = useState<ReasoningEffortLevel>('medium');
+  const [maxOutputTokens, setMaxOutputTokens] = useState<number>(32768);
   const [baseUrl, setBaseUrl] = useState<string>('');
   const [cliBinary, setCliBinary] = useState<string>('claude');
 
@@ -110,6 +114,8 @@ export const SettingsView: React.FC = () => {
         setAuthMethod(c.authMethod || 'api_key');
         setMaskedKey(c.maskedApiKey || '');
         setModel(c.model || 'gemini-4-argon-medium');
+        if (c.effortLevel) setEffortLevel(c.effortLevel);
+        if (c.maxOutputTokens) setMaxOutputTokens(c.maxOutputTokens);
         setBaseUrl(c.baseUrl || '');
         setCliBinary(c.cliBinary || 'claude');
         setConnectionStatus(c.connectionStatus || 'disconnected');
@@ -265,6 +271,8 @@ export const SettingsView: React.FC = () => {
         apiKey: apiKey ? apiKey.trim() : undefined,
         baseUrl: baseUrl ? baseUrl.trim() : undefined,
         model,
+        effortLevel,
+        maxOutputTokens,
         cliBinary
       });
 
@@ -293,6 +301,8 @@ export const SettingsView: React.FC = () => {
         apiKey: apiKey ? apiKey.trim() : undefined,
         baseUrl: baseUrl ? baseUrl.trim() : undefined,
         model,
+        effortLevel,
+        maxOutputTokens,
         cliBinary
       });
 
@@ -1097,6 +1107,131 @@ export const SettingsView: React.FC = () => {
                     </div>
                   );
                 })()}
+              </div>
+
+              {/* 5. MỨC ĐỘ OUT & DUNG LƯỢNG OUTPUT (REASONING EFFORT & OUTPUT CAPACITY) */}
+              <div className="space-y-4 pt-2">
+                <div>
+                  <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-2">
+                    <Sliders className="w-4 h-4 text-purple-400" />
+                    <span>{t('aiEffortSectionTitle')}</span>
+                  </h3>
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    {t('aiEffortSectionSubtitle')}
+                  </p>
+                </div>
+
+                <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800 space-y-4">
+                  {/* Effort Level Selection */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-semibold text-white flex items-center gap-1.5">
+                        <Zap className="w-3.5 h-3.5 text-amber-400" />
+                        {t('aiEffortLabel')}
+                      </span>
+                      <span className="text-[11px] font-mono text-purple-300 uppercase font-bold">
+                        Đang chọn: {effortLevel}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5">
+                      {(
+                        [
+                          { id: 'low', name: 'Low', desc: 'Tốc độ phản hồi cực nhanh', icon: '⚡', badge: 'Fast' },
+                          { id: 'medium', name: 'Medium', desc: 'Cân bằng tốc độ & chất lượng', icon: '⚖️', badge: 'Khuyên dùng' },
+                          { id: 'high', name: 'High', desc: 'Suy luận logic sâu cho QA', icon: '🧠', badge: 'Deep' },
+                          { id: 'xhigh', name: 'X-High', desc: 'Phân tích mở rộng mã nguồn', icon: '🔬', badge: 'Heavy' },
+                          { id: 'max', name: 'Max', desc: 'Nỗ lực tư duy tối đa mô hình', icon: '🚀', badge: 'Max' }
+                        ] as const
+                      ).map((item) => {
+                        const isSelected = effortLevel === item.id;
+                        return (
+                          <div
+                            key={item.id}
+                            onClick={() => {
+                              setEffortLevel(item.id);
+                              // If current model has an exact matching variant in availableModels, auto-switch to it
+                              const basePrefix = model.replace(/-(low|medium|high|xhigh|max)$/, '');
+                              const matchingVariant = `${basePrefix}-${item.id}`;
+                              const allCurrentModels = availableModels[provider] || [];
+                              if (allCurrentModels.some((m) => m.id === matchingVariant)) {
+                                setModel(matchingVariant);
+                              }
+                            }}
+                            className={`p-3 rounded-xl border cursor-pointer transition-all flex flex-col justify-between ${
+                              isSelected
+                                ? 'bg-purple-950/40 border-purple-500 shadow-md ring-1 ring-purple-500/40'
+                                : 'bg-slate-950/70 border-slate-800 hover:border-slate-700'
+                            }`}
+                          >
+                            <div className="flex items-start justify-between gap-1">
+                              <span className="text-base">{item.icon}</span>
+                              <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                                isSelected ? 'bg-purple-500 text-white' : 'bg-slate-800 text-slate-400'
+                              }`}>
+                                {item.badge}
+                              </span>
+                            </div>
+                            <div className="mt-2">
+                              <div className="font-bold text-xs text-white flex items-center justify-between">
+                                <span>{item.name}</span>
+                                {isSelected && <Check className="w-3 h-3 text-purple-400" />}
+                              </div>
+                              <p className="text-[10px] text-slate-400 mt-1 leading-snug">
+                                {item.desc}
+                              </p>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Max Output Tokens Selection */}
+                  <div className="space-y-2 pt-3 border-t border-slate-800/80">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-semibold text-white flex items-center gap-1.5">
+                        <Cpu className="w-3.5 h-3.5 text-cyan-400" />
+                        {t('aiMaxTokensLabel')}
+                      </span>
+                      <span className="text-[11px] font-mono text-cyan-400 font-bold">
+                        {maxOutputTokens.toLocaleString()} tokens
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+                      {[
+                        { val: 4096, label: '4,096', note: 'Ngắn gọn' },
+                        { val: 8192, label: '8,192', note: 'Cơ bản' },
+                        { val: 16384, label: '16,384', note: 'Vừa phải' },
+                        { val: 32768, label: '32,768', note: 'Chuẩn QA' },
+                        { val: 65536, label: '65,536', note: 'Chi tiết' },
+                        { val: 128000, label: '128,000', note: 'Tối đa' }
+                      ].map((tok) => {
+                        const isSelected = maxOutputTokens === tok.val;
+                        return (
+                          <button
+                            key={tok.val}
+                            type="button"
+                            onClick={() => setMaxOutputTokens(tok.val)}
+                            className={`p-2 rounded-lg border text-left transition-all ${
+                              isSelected
+                                ? 'bg-cyan-950/40 border-cyan-500 text-white shadow-sm ring-1 ring-cyan-500/40'
+                                : 'bg-slate-950/60 border-slate-800 text-slate-300 hover:border-slate-700'
+                            }`}
+                          >
+                            <div className="font-mono font-bold text-xs">{tok.label}</div>
+                            <div className="text-[9px] text-slate-400 mt-0.5">{tok.note}</div>
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    <p className="text-[10px] text-slate-400 mt-1 italic">
+                      {t('aiMaxTokensHint')}
+                    </p>
+                  </div>
+                </div>
               </div>
 
               {/* 5. THÔNG TIN HẠN MỨC & DUNG LƯỢNG (QUOTA & RATE LIMITS) */}

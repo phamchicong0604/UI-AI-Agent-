@@ -290,7 +290,7 @@ export const en = {
   aiCustomModelLabel: 'Or enter custom/latest Model ID:',
   aiCustomModelPlaceholder: 'e.g. claude-3-7-sonnet-20250219, gemini-2.0-flash-thinking-exp-01-21, deepseek-r1:32b',
   aiLiveModelBadge: 'Live Provider API',
-  aiQuotaSectionTitle: '5. Quota & Rate Limits Information',
+  aiQuotaSectionTitle: '6. Quota & Rate Limits Information',
   aiQuotaSectionSubtitle: 'Inspect live subscription tier, RPM/TPM capacity, remaining quota balance, and reset schedules in real time.',
   aiCheckQuotaBtn: 'Check Quota & Limits',
   aiCheckingQuota: 'Querying Quota...',
@@ -303,6 +303,18 @@ export const en = {
   aiQuotaBillingModelLabel: 'Billing Mechanism',
   aiQuotaResetLabel: 'Reset Schedule',
   aiQuotaUsageToday: 'AI Requests Today',
+
+  // Reasoning Effort & Output Tokens
+  aiEffortSectionTitle: '5. Reasoning Effort Level & Output Capacity',
+  aiEffortSectionSubtitle: 'Configure the depth of reasoning for test case generation and bug detection. Higher levels yield deeper analysis.',
+  aiEffortLabel: 'Reasoning Effort Level:',
+  aiEffortLow: 'Low (Fast Response)',
+  aiEffortMedium: 'Medium (Balanced - Recommended)',
+  aiEffortHigh: 'High (Deep Reasoning)',
+  aiEffortXHigh: 'X-High (Extended Analysis)',
+  aiEffortMax: 'Max (Maximum Depth)',
+  aiMaxTokensLabel: 'Max Output Tokens Limit:',
+  aiMaxTokensHint: 'Maximum output tokens generated per completion call.',
 
   // Terminal & CLI Agent Settings
   settingsTabAgent: 'Terminal & CLI Agent',

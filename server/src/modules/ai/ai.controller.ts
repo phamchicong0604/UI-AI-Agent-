@@ -28,13 +28,15 @@ aiRouter.get('/connection', (req: Request, res: Response) => {
  */
 aiRouter.post('/connection', (req: Request, res: Response) => {
   try {
-    const { provider, authMethod, apiKey, baseUrl, model, cliBinary } = req.body;
+    const { provider, authMethod, apiKey, baseUrl, model, effortLevel, maxOutputTokens, cliBinary } = req.body;
     const updated = aiConnectionManager.saveConnection({
       provider,
       authMethod,
       apiKey,
       baseUrl,
       model,
+      effortLevel,
+      maxOutputTokens,
       cliBinary
     });
     sendSuccess(res, updated, 'AI connection settings saved successfully');
@@ -49,13 +51,15 @@ aiRouter.post('/connection', (req: Request, res: Response) => {
  */
 aiRouter.post('/connection/test', async (req: Request, res: Response) => {
   try {
-    const { provider, authMethod, apiKey, baseUrl, model, cliBinary } = req.body;
+    const { provider, authMethod, apiKey, baseUrl, model, effortLevel, maxOutputTokens, cliBinary } = req.body;
     const result = await aiConnectionManager.testConnection({
       provider,
       authMethod,
       apiKey,
       baseUrl,
       model,
+      effortLevel,
+      maxOutputTokens,
       cliBinary
     });
 

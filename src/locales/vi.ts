@@ -290,7 +290,7 @@ export const vi = {
   aiCustomModelLabel: 'Hoặc nhập trực tiếp Model ID mới nhất:',
   aiCustomModelPlaceholder: 'Ví dụ: claude-3-7-sonnet-20250219, gemini-2.0-flash-thinking-exp-01-21, deepseek-r1:32b',
   aiLiveModelBadge: 'Model thực tế từ API',
-  aiQuotaSectionTitle: '5. Thông tin Hạn mức & Dung lượng (Quota & Rate Limits)',
+  aiQuotaSectionTitle: '6. Thông tin Hạn mức & Dung lượng (Quota & Rate Limits)',
   aiQuotaSectionSubtitle: 'Tra cứu thông tin gói cước, hạn ngạch Requests/phút (RPM), Tokens/phút (TPM) và trạng thái tài khoản thời gian thực.',
   aiCheckQuotaBtn: 'Kiểm tra hạn mức & Dung lượng',
   aiCheckingQuota: 'Đang tra cứu hạn mức...',
@@ -303,6 +303,18 @@ export const vi = {
   aiQuotaBillingModelLabel: 'Cơ chế tính phí',
   aiQuotaResetLabel: 'Chu kỳ làm mới',
   aiQuotaUsageToday: 'Lượt gọi AI hôm nay',
+
+  // Reasoning Effort & Output Tokens
+  aiEffortSectionTitle: '5. Mức độ Out / Nỗ lực suy luận (Reasoning Effort Level)',
+  aiEffortSectionSubtitle: 'Tùy chỉnh độ sâu suy luận khi sinh kịch bản test và rà soát bug. Mức độ cao hơn cho kết quả phân tích kỹ càng hơn.',
+  aiEffortLabel: 'Mức độ Out (Reasoning Effort):',
+  aiEffortLow: 'Low (Tốc độ cao)',
+  aiEffortMedium: 'Medium (Cân bằng - Khuyên dùng)',
+  aiEffortHigh: 'High (Suy luận sâu)',
+  aiEffortXHigh: 'X-High (Phân tích mở rộng)',
+  aiEffortMax: 'Max (Tối đa)',
+  aiMaxTokensLabel: 'Giới hạn Tokens Đầu ra (Max Output Tokens):',
+  aiMaxTokensHint: 'Số lượng tokens tối đa mà mô hình có thể tạo ra trong một lượt thực thi.',
 
   // Terminal & CLI Agent Settings
   settingsTabAgent: 'Terminal & CLI Agent',

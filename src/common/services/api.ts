@@ -270,6 +270,8 @@ export const aiConnectionApi = {
     apiKey?: string;
     baseUrl?: string;
     model?: string;
+    effortLevel?: string;
+    maxOutputTokens?: number;
     cliBinary?: string;
   }): Promise<any> {
     return fetchJson<any>(`${API_BASE_URL}/ai/connection`, {
@@ -283,6 +285,8 @@ export const aiConnectionApi = {
     apiKey?: string;
     baseUrl?: string;
     model?: string;
+    effortLevel?: string;
+    maxOutputTokens?: number;
     cliBinary?: string;
   }): Promise<any> {
     return fetchJson<any>(`${API_BASE_URL}/ai/connection/test`, {

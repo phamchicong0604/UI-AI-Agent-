@@ -4,7 +4,8 @@ import {
   AiProviderId, 
   AiAuthMethod, 
   AiConnectionStatus, 
-  CliDetectionInfo 
+  CliDetectionInfo,
+  ReasoningEffortLevel
 } from '../../common/types.js';
 import { APIKeyAuthenticator } from './authenticators/api-key.authenticator.js';
 import { CLIAuthenticator } from './authenticators/cli.authenticator.js';
@@ -50,6 +51,8 @@ export class AIConnectionManager {
     apiKey?: string;
     baseUrl?: string;
     model?: string;
+    effortLevel?: any;
+    maxOutputTokens?: number;
     cliBinary?: string;
   }): AiConnectionConfig {
     const existing = dbRepository.aiConnections.get();
@@ -74,6 +77,8 @@ export class AIConnectionManager {
       apiKey: newApiKey,
       baseUrl: payload.baseUrl !== undefined ? payload.baseUrl.trim() : existing?.baseUrl,
       model: targetModel,
+      effortLevel: payload.effortLevel || existing?.effortLevel || 'medium',
+      maxOutputTokens: payload.maxOutputTokens || existing?.maxOutputTokens || 32768,
       cliBinary: payload.cliBinary || existing?.cliBinary || 'claude'
     });
 
@@ -104,6 +109,8 @@ export class AIConnectionManager {
     apiKey?: string;
     baseUrl?: string;
     model?: string;
+    effortLevel?: ReasoningEffortLevel;
+    maxOutputTokens?: number;
     cliBinary?: string;
   }): Promise<{
     success: boolean;
@@ -117,6 +124,8 @@ export class AIConnectionManager {
     const authMethod = override?.authMethod || active?.authMethod || 'api_key';
     const model = override?.model || active?.model || 'gemini-4-argon-medium';
     const baseUrl = override?.baseUrl !== undefined ? override.baseUrl : active?.baseUrl;
+    const effortLevel = override?.effortLevel || active?.effortLevel || 'medium';
+    const maxOutputTokens = override?.maxOutputTokens || active?.maxOutputTokens || 32768;
     const cliBinary = override?.cliBinary || active?.cliBinary || 'claude';
 
     // Retrieve API key
@@ -137,8 +146,8 @@ export class AIConnectionManager {
         details: res.details
       };
     } else {
-      // CLI Subscription test
-      const res = await this.cliAuth.testConnection(cliBinary);
+      // CLI Subscription test with model and reasoning effort
+      const res = await this.cliAuth.testConnection(cliBinary, { model, effortLevel });
       const newStatus: AiConnectionStatus = res.success ? 'connected' : (res.authStatus === 'unauthenticated' ? 'auth_required' : 'error');
       dbRepository.aiConnections.updateStatus(newStatus, res.latencyMs, res.success ? undefined : res.message);
       return {
@@ -176,7 +185,11 @@ export class AIConnectionManager {
 
     if (active.authMethod === 'cli_subscription') {
       const cliBinary = active.cliBinary || 'claude';
-      return await this.cliAuth.executePrompt(cliBinary, systemPrompt, userPrompt);
+      return await this.cliAuth.executePrompt(cliBinary, systemPrompt, userPrompt, {
+        model: active.model,
+        effortLevel: active.effortLevel,
+        maxOutputTokens: active.maxOutputTokens
+      });
     } else {
       const apiKey = active.apiKey || '';
       if (!apiKey) {
@@ -188,7 +201,11 @@ export class AIConnectionManager {
         active.model,
         systemPrompt,
         userPrompt,
-        active.baseUrl
+        active.baseUrl,
+        {
+          maxTokens: active.maxOutputTokens,
+          effortLevel: active.effortLevel
+        }
       );
     }
   }

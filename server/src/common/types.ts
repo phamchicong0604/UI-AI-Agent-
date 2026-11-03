@@ -262,6 +262,8 @@ export interface AiQuotaInfo {
   };
 }
 
+export type ReasoningEffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
 export interface AiConnectionConfig {
   id: string;
   provider: AiProviderId;
@@ -270,6 +272,8 @@ export interface AiConnectionConfig {
   maskedApiKey?: string;
   baseUrl?: string;
   model: string;
+  effortLevel?: ReasoningEffortLevel;
+  maxOutputTokens?: number;
   cliBinary?: string;
   cliVersion?: string;
   cliAuthStatus?: 'authenticated' | 'unauthenticated' | 'not_found';
