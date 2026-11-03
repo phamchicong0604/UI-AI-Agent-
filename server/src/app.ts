@@ -13,6 +13,7 @@ import { auditRouter } from './modules/audit/audit.router.js';
 import { settingsRouter } from './modules/settings/settings.router.js';
 import { agentRouter } from './modules/agent/agent.router.js';
 import { workflowRouter } from './modules/workflow/workflow.router.js';
+import { knowledgeRouter } from './modules/knowledge/knowledge.router.js';
 
 export const app = express();
 
@@ -46,6 +47,7 @@ app.use('/api/v1/settings', settingsRouter);
 app.use('/api/v1/agent', agentRouter);
 app.use('/api/v1/workflow', workflowRouter);
 app.use('/api/v1', workflowRouter);
+app.use('/api/v1', knowledgeRouter);
 
 // Root summary endpoint
 app.get('/api/v1', (req, res) => {

@@ -82,10 +82,24 @@ export class WorkflowEngine {
       throw new WorkflowTransitionError(fromState, toState, `Role "${role}" không có quyền chuyển trạng thái sang "${toState}"`);
     }
 
+    const doc = dbRepository.documents.getById(documentId);
+    const projectId = doc?.projectId || 'PRJ-01';
+
+    // 2.5 Critical Conflict Guard (E6-T4 AC): Critical conflict always blocks ORGANIZED
+    if (toState === 'ORGANIZED') {
+      const unresolvedCritical = dbRepository.conflicts.getUnresolvedByProject(projectId, 'Critical');
+      if (unresolvedCritical.length > 0) {
+        throw new WorkflowTransitionError(
+          fromState,
+          toState,
+          `Dự án còn ${unresolvedCritical.length} xung đột nghiêm trọng (Critical Conflicts) chưa được giải quyết. Bắt buộc phải giải quyết trước khi chuyển sang ORGANIZED.`
+        );
+      }
+    }
+
     const timestamp = new Date().toISOString();
 
     // 3. Update document and document_versions in SQLite
-    const doc = dbRepository.documents.getById(documentId);
     if (doc) {
       // Map workflow states to UI status lifecycle
       let mappedStatus = doc.status;

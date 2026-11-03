@@ -5,6 +5,7 @@ import { migration003AiTraceabilityAndRelationships } from './003_ai_traceabilit
 import { migration004UploadBatches } from './004_upload_batches.js';
 import { migration005JobQueue } from './005_job_queue.js';
 import { migration006ProjectAiPolicy } from './006_project_ai_policy.js';
+import { migration007KnowledgeUnitsAndConflicts } from './007_knowledge_units_and_conflicts.js';
 
 export const allMigrations: Migration[] = [
   migration001InitialSchema,
@@ -12,5 +13,6 @@ export const allMigrations: Migration[] = [
   migration003AiTraceabilityAndRelationships,
   migration004UploadBatches,
   migration005JobQueue,
-  migration006ProjectAiPolicy
+  migration006ProjectAiPolicy,
+  migration007KnowledgeUnitsAndConflicts
 ];

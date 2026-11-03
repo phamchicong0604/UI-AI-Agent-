@@ -22,7 +22,10 @@ import {
   ReviewDecisionRecord,
   DocumentRelationshipRecord,
   UploadBatchRecord,
-  JobRecord
+  JobRecord,
+  KnowledgeUnitRecord,
+  KnowledgeSourceRecord,
+  ConflictRecord
 } from '../common/types.js';
 import { computeSha256, computeAuditEventHash } from '../common/crypto.js';
 import { defaultFileStore } from '../common/fileStore.js';
@@ -1018,6 +1021,116 @@ export const dbRepository = {
         WHERE status = 'RUNNING' AND (locked_at IS NULL OR locked_at < ?)
       `).run(now, cutoff);
       return res.changes;
+    }
+  },
+
+  knowledgeUnits: {
+    create(unit: KnowledgeUnitRecord): void {
+      db.prepare(`
+        INSERT INTO knowledge_units (id, project_id, unit_type, content, subject, action, condition, evidence_level, status, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          content = excluded.content,
+          subject = excluded.subject,
+          action = excluded.action,
+          condition = excluded.condition,
+          evidence_level = excluded.evidence_level,
+          status = excluded.status,
+          updated_at = excluded.updated_at
+      `).run(unit.id, unit.projectId, unit.unitType, unit.content, unit.subject, unit.action, unit.condition || null, unit.evidenceLevel, unit.status, unit.createdAt, unit.updatedAt);
+    },
+    getById(id: string): KnowledgeUnitRecord | null {
+      const row = db.prepare(`
+        SELECT id, project_id as projectId, unit_type as unitType, content,
+               subject, action, condition, evidence_level as evidenceLevel,
+               status, created_at as createdAt, updated_at as updatedAt
+        FROM knowledge_units WHERE id = ?
+      `).get(id) as KnowledgeUnitRecord | undefined;
+      return row || null;
+    },
+    getByProject(projectId: string, filter?: { status?: string; unitType?: string }): KnowledgeUnitRecord[] {
+      let query = `
+        SELECT id, project_id as projectId, unit_type as unitType, content,
+               subject, action, condition, evidence_level as evidenceLevel,
+               status, created_at as createdAt, updated_at as updatedAt
+        FROM knowledge_units WHERE project_id = ?
+      `;
+      const params: any[] = [projectId];
+      if (filter?.status && filter.status !== 'ALL') {
+        query += ' AND status = ?';
+        params.push(filter.status);
+      }
+      if (filter?.unitType && filter.unitType !== 'ALL') {
+        query += ' AND unit_type = ?';
+        params.push(filter.unitType);
+      }
+      query += ' ORDER BY created_at DESC';
+      return db.prepare(query).all(...params) as KnowledgeUnitRecord[];
+    },
+    updateStatus(id: string, status: string): boolean {
+      const now = new Date().toISOString();
+      const res = db.prepare('UPDATE knowledge_units SET status = ?, updated_at = ? WHERE id = ?').run(status, now, id);
+      return res.changes > 0;
+    },
+    supersedeOlderUnits(projectId: string, currentUnitId: string, subject: string): number {
+      const now = new Date().toISOString();
+      const res = db.prepare(`
+        UPDATE knowledge_units
+        SET status = 'Superseded', updated_at = ?
+        WHERE project_id = ? AND subject = ? AND id != ? AND status = 'Approved'
+      `).run(now, projectId, subject, currentUnitId);
+      return res.changes;
+    }
+  },
+
+  knowledgeSources: {
+    create(src: KnowledgeSourceRecord): void {
+      db.prepare(`
+        INSERT INTO knowledge_sources (id, unit_id, document_version_id, heading_path, char_offset_start, char_offset_end, page_number, exact_quote, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(src.id, src.unitId, src.documentVersionId, src.headingPath, src.charOffsetStart, src.charOffsetEnd, src.pageNumber || null, src.exactQuote, src.createdAt);
+    },
+    getByUnitId(unitId: string): KnowledgeSourceRecord[] {
+      return db.prepare(`
+        SELECT id, unit_id as unitId, document_version_id as documentVersionId,
+               heading_path as headingPath, char_offset_start as charOffsetStart,
+               char_offset_end as charOffsetEnd, page_number as pageNumber,
+               exact_quote as exactQuote, created_at as createdAt
+        FROM knowledge_sources WHERE unit_id = ?
+      `).all(unitId) as KnowledgeSourceRecord[];
+    }
+  },
+
+  conflicts: {
+    create(c: ConflictRecord): void {
+      db.prepare(`
+        INSERT INTO conflicts (id, project_id, unit_a_id, unit_b_id, conflict_type, severity, description, resolution, resolved_by, resolved_at, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(c.id, c.projectId, c.unitAId, c.unitBId, c.conflictType, c.severity, c.description, c.resolution, c.resolvedBy || null, c.resolvedAt || null, c.createdAt);
+    },
+    getUnresolvedByProject(projectId: string, severity?: string): ConflictRecord[] {
+      let query = `
+        SELECT id, project_id as projectId, unit_a_id as unitAId, unit_b_id as unitBId,
+               conflict_type as conflictType, severity, description, resolution,
+               resolved_by as resolvedBy, resolved_at as resolvedAt, created_at as createdAt
+        FROM conflicts
+        WHERE project_id = ? AND resolution = 'UNRESOLVED'
+      `;
+      const params: any[] = [projectId];
+      if (severity) {
+        query += ' AND severity = ?';
+        params.push(severity);
+      }
+      return db.prepare(query).all(...params) as ConflictRecord[];
+    },
+    resolve(id: string, resolution: string, resolvedBy: string): boolean {
+      const now = new Date().toISOString();
+      const res = db.prepare(`
+        UPDATE conflicts
+        SET resolution = ?, resolved_by = ?, resolved_at = ?
+        WHERE id = ?
+      `).run(resolution, resolvedBy, now, id);
+      return res.changes > 0;
     }
   },
 

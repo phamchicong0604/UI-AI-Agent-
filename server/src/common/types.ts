@@ -99,6 +99,52 @@ export interface DocumentRelationshipRecord {
   createdAt: string;
 }
 
+export type KnowledgeUnitType = 'Requirement' | 'BusinessRule' | 'Constraint' | 'Definition';
+export type KnowledgeUnitStatus = 'Draft' | 'In Review' | 'Approved' | 'Rejected' | 'Superseded' | 'Deprecated';
+
+export interface KnowledgeUnitRecord {
+  id: string;
+  projectId: string;
+  unitType: KnowledgeUnitType;
+  content: string;
+  subject: string;
+  action: string;
+  condition: string | null;
+  evidenceLevel: 'Explicit' | 'Inferred' | 'Assumed' | 'Not Specified' | 'Conflict' | 'Unknown';
+  status: KnowledgeUnitStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface KnowledgeSourceRecord {
+  id: string;
+  unitId: string;
+  documentVersionId: string;
+  headingPath: string; // JSON string array
+  charOffsetStart: number;
+  charOffsetEnd: number;
+  pageNumber: number | null;
+  exactQuote: string;
+  createdAt: string;
+}
+
+export type ConflictSeverity = 'Critical' | 'Major' | 'Minor';
+export type ConflictResolution = 'KEEP_NEW_SUPERSEDE_OLD' | 'REJECT_NEW_PRESERVE_OLD' | 'MERGE_SPECIFICATION' | 'UNRESOLVED';
+
+export interface ConflictRecord {
+  id: string;
+  projectId: string;
+  unitAId: string;
+  unitBId: string;
+  conflictType: 'Contradiction' | 'Ambiguity' | 'Redundancy';
+  severity: ConflictSeverity;
+  description: string;
+  resolution: ConflictResolution;
+  resolvedBy: string | null;
+  resolvedAt: string | null;
+  createdAt: string;
+}
+
 export type UploadBatchStatus = 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'PARTIAL' | 'FAILED';
 
 export interface UploadBatchItemDetail {

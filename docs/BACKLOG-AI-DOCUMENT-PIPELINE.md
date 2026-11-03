@@ -205,38 +205,41 @@ AC: Đã kiểm thử 7/7 tests tại `server/src/tests/dataPolicy.test.ts` vớ
 
 ---
 
-## E6. Knowledge Layer & Governance (P1)
+## E6. Knowledge Layer & Governance (P1) — [HOÀN THÀNH]
 
-### E6-T1. Viết `KNOWLEDGE-GOVERNANCE.md` và `PROJECT-KNOWLEDGE-SPEC.md` — BA, M
-- .1 Lifecycle Knowledge dùng lại StatusLifecycle hiện có, thêm Superseded.
-- .2 Tách review status và evidence_level thành hai trường.
-- .3 Thứ tự ưu tiên nguồn và quy tắc ghi đè.
+File chính: `docs/KNOWLEDGE-GOVERNANCE.md`, `docs/PROJECT-KNOWLEDGE-SPEC.md`, `server/src/modules/knowledge/`.
 
-AC: BA, PM duyệt. Có ví dụ cho từng trường hợp xung đột.
+### E6-T1. Viết `KNOWLEDGE-GOVERNANCE.md` và `PROJECT-KNOWLEDGE-SPEC.md` — BA, M — [HOÀN THÀNH]
+- .1 Hoàn tất vòng đời Knowledge: `Draft`, `In Review`, `Approved`, `Rejected`, `Superseded`, `Deprecated`.
+- .2 Tách bạch 2 trường `status` (quyết định phê duyệt) và `evidence_level` (mức độ bằng chứng nguyên văn).
+- .3 Quy định thứ tự ưu tiên nguồn (Signed Specs > Timestamp Recency > Specificity > Evidence Purity) và quy tắc ghi đè.
 
-### E6-T2. Bảng Atomic Knowledge Unit — BE, L
+AC: Đã hoàn tất 2 tài liệu đặc tả quản trị tri thức tại `docs/KNOWLEDGE-GOVERNANCE.md` và `docs/PROJECT-KNOWLEDGE-SPEC.md`.
+
+### E6-T2. Bảng Atomic Knowledge Unit — BE, L — [HOÀN THÀNH]
 Phụ thuộc: E1-T3, E4-T1, E6-T1.
-- .1 Bảng `knowledge_units` gồm unit_type, content, subject, action, condition, evidence_level, status.
-- .2 Bảng `knowledge_sources` gồm document_version_id, heading path, char offset, page.
-- .3 API list, filter, approve, reject.
+- .1 Migration `007_knowledge_units_and_conflicts.ts` tạo bảng `knowledge_units` và `knowledge_sources`.
+- .2 Neo nguồn gốc chính xác: mỗi đơn vị tri thức có quan hệ `knowledge_sources` lưu `document_version_id`, `heading_path`, `char_offset_start`, `char_offset_end`, `page_number`, `exact_quote`.
+- .3 REST API đầy đủ (`GET /api/v1/knowledge-units`, `GET /api/v1/knowledge-units/:id`, `POST /api/v1/knowledge-units/:id/decision`).
 
-AC: Mỗi unit có ít nhất một nguồn trỏ về vị trí cụ thể trong document version.
+AC: Mỗi unit có ít nhất một nguồn trỏ về vị trí cụ thể trong document version (kiểm thử thành công tại `knowledgeGovernance.test.ts`).
 
-### E6-T3. Promote unit sang Requirement và BusinessRule — BE, M
+### E6-T3. Promote unit sang Requirement và BusinessRule — BE, M — [HOÀN THÀNH]
 Phụ thuộc: E6-T2.
-- .1 Khi unit được Approved, tạo hoặc cập nhật Requirement hay BusinessRule.
-- .2 Ghi `sourceReferences` trỏ về unit và document version.
-- .3 Trace matrix hiện có vẫn hoạt động.
+- .1 Triển khai `promoteUnitToRequirementOrRule` trong `KnowledgeGovernanceService`: Khi unit được Approved, tự động tạo/cập nhật `RequirementItem` trong bảng `requirements`.
+- .2 Tự động tạo `sourceReferences` chuẩn xác trỏ trực tiếp đến `documentId`, `documentTitle`, `version`, heading và character offset của unit.
+- .3 Bảo toàn tính duy nhất: 1 rule chỉ có 1 bản ghi sự thật (Single Source of Truth), tích hợp liền mạch với Trace Matrix hiện có.
 
-AC: Không có hai bản ghi sự thật cho cùng một rule. Trace matrix hiển thị nguồn đến tận unit.
+AC: Không có hai bản ghi sự thật cho cùng một rule. Trace matrix hiển thị nguồn đến tận unit (kiểm thử 100% pass).
 
-### E6-T4. Conflict record và supersede — BE, M
+### E6-T4. Conflict record và supersede — BE, M — [HOÀN THÀNH]
 Phụ thuộc: E6-T2.
-- .1 Bảng `conflicts` gồm unit_a, unit_b, conflict_type, resolution, resolved_by.
-- .2 Version mới Approved thì unit cũ chuyển Superseded.
-- .3 Gọi Change Impact hiện có để đánh dấu Test Case liên quan sang In Review.
+- .1 Bảng `conflicts` lưu vết mâu thuẫn giữa `unit_a` và `unit_b`, độ nghiêm trọng `severity` và phương án giải quyết `resolution`.
+- .2 Khi phiên bản mới được Approved, các unit phiên bản cũ tự động chuyển trạng thái sang `Superseded`.
+- .3 Kích hoạt Change Impact: Mọi `TestCaseItem` liên kết với yêu cầu/quy tắc bị supersede tự động chuyển trạng thái sang `In Review`.
+- .4 Cổng chặn Workflow: Xung đột mức độ `Critical` luôn chặn chuyển trạng thái `ORGANIZED` cho tới khi được giải quyết.
 
-AC: Critical conflict luôn chặn ORGANIZED cho đến khi có người xử lý.
+AC: Đã kiểm thử toàn diện với 4/4 tests tại `server/src/tests/knowledgeGovernance.test.ts`. Critical conflict chặn ORGANIZED và sau khi resolve thì transition thành công.
 
 ---
 
