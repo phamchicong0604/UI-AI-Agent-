@@ -834,9 +834,9 @@ export const SettingsView: React.FC = () => {
               </label>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 {[
-                  { id: 'google', name: 'Google Gemini', sub: 'Gemini 1.5 Pro / Flash' },
-                  { id: 'anthropic', name: 'Anthropic Claude', sub: 'Claude 3.7 / 3.5 Sonnet' },
-                  { id: 'openai', name: 'OpenAI (ChatGPT)', sub: 'GPT-4o / o1 / o3-mini' },
+                  { id: 'google', name: 'Google Gemini', sub: 'Gemini 4 Argon / 3.8 Flash (agy)' },
+                  { id: 'anthropic', name: 'Anthropic Claude', sub: 'Claude Opus 5.5 / Sonnet 5.5' },
+                  { id: 'openai', name: 'OpenAI (ChatGPT)', sub: 'GPT-4o / o1 / GPT-OSS 120B' },
                   { id: 'custom', name: 'Custom / Local', sub: 'Ollama, vLLM, OpenRouter' }
                 ].map((p) => {
                   const isSelected = provider === p.id;
@@ -957,7 +957,7 @@ export const SettingsView: React.FC = () => {
                     </div>
                   </div>
                   <div className="mt-4 pt-3 border-t border-slate-800/80 flex items-center justify-between text-[11px] text-slate-400">
-                    <span>Claude Code / GitHub Copilot CLI</span>
+                    <span>Google Antigravity (agy) / Claude / Copilot</span>
                     <span className="text-purple-400 font-medium">Native Pro Subscription</span>
                   </div>
                 </div>
@@ -1059,8 +1059,8 @@ export const SettingsView: React.FC = () => {
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     {detectedClis
                       .filter(cli => {
-                        if (provider === 'anthropic') return cli.id === 'claude';
-                        if (provider === 'openai') return cli.id === 'gh';
+                        if (provider === 'anthropic') return cli.id === 'claude' || cli.id === 'agy';
+                        if (provider === 'openai') return cli.id === 'gh' || cli.id === 'agy';
                         if (provider === 'google') return cli.id === 'agy' || cli.id === 'gemini';
                         return true;
                       })

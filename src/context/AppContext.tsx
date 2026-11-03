@@ -35,7 +35,8 @@ import {
   testCasesApi,
   testRunsApi,
   bugsApi,
-  auditApi
+  auditApi,
+  getAiConnection
 } from '../common/services/api';
 
 export type NavigationTab = 
@@ -112,6 +113,10 @@ interface AppContextType {
   setIsAiModalOpen: (open: boolean) => void;
   isImpactModalOpen: boolean;
   setIsImpactModalOpen: (open: boolean) => void;
+  isModelSwitcherOpen: boolean;
+  setIsModelSwitcherOpen: (open: boolean) => void;
+  aiConfig: any;
+  reloadAiConfig: () => Promise<void>;
   searchQuery: string;
   setSearchQuery: (q: string) => void;
   
@@ -221,7 +226,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [selectedTestCaseId, setSelectedTestCaseId] = useState<string | null>(null);
   const [isAiModalOpen, setIsAiModalOpen] = useState(false);
   const [isImpactModalOpen, setIsImpactModalOpen] = useState(false);
+  const [isModelSwitcherOpen, setIsModelSwitcherOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [aiConfig, setAiConfig] = useState<any>(null);
+
+  const reloadAiConfig = useCallback(async () => {
+    try {
+      const res = await getAiConnection();
+      const cfg = res?.data !== undefined ? res.data : res;
+      if (cfg && cfg.provider) {
+        setAiConfig(cfg);
+      }
+    } catch {
+      // fallback
+    }
+  }, []);
+
+  useEffect(() => {
+    reloadAiConfig();
+  }, [reloadAiConfig]);
 
   // Dual local caching for offline resiliency
   useEffect(() => { saveToStorage('docqa_documents', documents); }, [documents]);
@@ -267,6 +290,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         if (runsRes && runsRes.length > 0) setTestRuns(runsRes);
         if (bugsRes && bugsRes.length > 0) setBugs(bugsRes);
         if (auditRes && auditRes.length > 0) setAuditEvents(auditRes);
+        await reloadAiConfig().catch(() => {});
       }
     } catch (err) {
       console.warn('[DocQA] Backend sync notice: running with active local cache', err);
@@ -767,6 +791,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setIsAiModalOpen,
         isImpactModalOpen,
         setIsImpactModalOpen,
+        isModelSwitcherOpen,
+        setIsModelSwitcherOpen,
+        aiConfig,
+        reloadAiConfig,
         searchQuery,
         setSearchQuery,
 

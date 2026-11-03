@@ -26,6 +26,9 @@ export const Header: React.FC = () => {
     searchQuery,
     setSearchQuery,
     setIsAiModalOpen,
+    isModelSwitcherOpen,
+    setIsModelSwitcherOpen,
+    aiConfig,
     backendConnected,
     isSyncing,
     syncWithBackend
@@ -67,6 +70,16 @@ export const Header: React.FC = () => {
   };
 
   const openQuestions = questions.filter(q => q.status === 'Open');
+
+  const formatModelDisplayName = (modelId?: string) => {
+    if (!modelId) return 'Gemini 3.8 Flash';
+    if (modelId.startsWith('gemini-4-argon')) return 'Gemini 4 Argon';
+    if (modelId.startsWith('gemini-3.8-flash')) return 'Gemini 3.8 Flash';
+    if (modelId.startsWith('claude-opus-5-5')) return 'Claude Opus 5.5';
+    if (modelId.startsWith('claude-sonnet-5-5')) return 'Claude Sonnet 5.5';
+    if (modelId.startsWith('gpt-oss-120b')) return 'GPT-OSS 120B';
+    return modelId.replace(/-medium|-high|-low/, '');
+  };
 
   return (
     <header className="h-16 bg-slate-900 border-b border-slate-800 px-6 flex items-center justify-between gap-4 z-20 shrink-0">
@@ -137,6 +150,24 @@ export const Header: React.FC = () => {
         >
           <Sparkles className="w-3.5 h-3.5 text-amber-300 shrink-0" />
           <span>{t('aiAssistant')}</span>
+        </button>
+
+        {/* Active AI Model Pill (Direct /model quick switcher trigger) */}
+        <button
+          onClick={() => setIsModelSwitcherOpen(true)}
+          title={`Đang dùng model: ${aiConfig?.model || 'gemini-3.8-flash-medium'} (Nhấp để mở /model switcher)`}
+          className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border border-purple-500/40 bg-purple-950/40 hover:bg-purple-900/60 text-purple-200 text-xs font-medium transition-all shadow-sm group whitespace-nowrap shrink-0"
+        >
+          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+          <span className="font-semibold text-white truncate max-w-[120px] lg:max-w-[150px]">
+            {formatModelDisplayName(aiConfig?.model || 'gemini-3.8-flash-medium')}
+          </span>
+          <span className="text-[10px] text-purple-300 font-mono bg-purple-900/60 px-1.5 py-0.5 rounded border border-purple-500/30 uppercase shrink-0">
+            {aiConfig?.effortLevel || 'medium'}
+          </span>
+          <span className="text-[10px] text-purple-400/90 font-mono hidden xl:inline opacity-75 group-hover:opacity-100">
+            /model
+          </span>
         </button>
 
         {/* Live Backend API Connection Status & Manual Sync */}

@@ -76,16 +76,18 @@ describe('SQLite Database Layer & Repository CRUD', () => {
     expect(conn?.id).toBe('primary');
 
     dbRepository.aiConnections.save({
-      provider: 'anthropic',
+      provider: 'google',
       authMethod: 'cli_subscription',
-      cliBinary: 'claude',
-      model: 'claude-3-7-sonnet'
+      cliBinary: 'agy',
+      model: 'gemini-3.8-flash-medium',
+      effortLevel: 'medium'
     });
 
     const updated = dbRepository.aiConnections.get();
-    expect(updated?.provider).toBe('anthropic');
+    expect(updated?.provider).toBe('google');
     expect(updated?.authMethod).toBe('cli_subscription');
-    expect(updated?.cliBinary).toBe('claude');
+    expect(updated?.cliBinary).toBe('agy');
+    expect(updated?.model).toBe('gemini-3.8-flash-medium');
   });
 
   it('should support project CRUD and document project-scoping in SQLite', () => {
