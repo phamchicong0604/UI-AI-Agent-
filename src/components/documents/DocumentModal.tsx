@@ -13,7 +13,7 @@ interface DocumentModalProps {
 }
 
 export const DocumentModal: React.FC<DocumentModalProps> = ({ document, onClose }) => {
-  const { addDocument, currentUser, documents } = useApp();
+  const { addDocument, currentUser, documents, activeProject } = useApp();
   const { t } = useI18n();
 
   const [title, setTitle] = useState(document ? document.title : '');
@@ -50,6 +50,7 @@ export const DocumentModal: React.FC<DocumentModalProps> = ({ document, onClose 
 
     const newDoc: DocumentItem = {
       id: nextId,
+      projectId: document ? document.projectId : (activeProject?.id || 'PRJ-01'),
       title,
       category,
       currentVersion: version,

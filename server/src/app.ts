@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import { aiRouter } from './modules/ai/ai.controller.js';
+import { projectsRouter } from './modules/projects/projects.router.js';
 import { documentsRouter } from './modules/documents/documents.router.js';
 import { requirementsRouter } from './modules/requirements/requirements.router.js';
 import { evidenceRouter } from './modules/evidence/evidence.router.js';
@@ -31,6 +32,7 @@ app.get('/health', (req, res) => {
 
 // Mount API v1 Routers
 app.use('/api/v1/ai', aiRouter);
+app.use('/api/v1/projects', projectsRouter);
 app.use('/api/v1/documents', documentsRouter);
 app.use('/api/v1/requirements', requirementsRouter);
 app.use('/api/v1/evidence', evidenceRouter);
@@ -49,6 +51,7 @@ app.get('/api/v1', (req, res) => {
     specification: 'AI_Project_Documentation_QA_Platform_Proposal.docx (v0.1)',
     modules: [
       '/api/v1/ai',
+      '/api/v1/projects',
       '/api/v1/documents',
       '/api/v1/requirements',
       '/api/v1/evidence',

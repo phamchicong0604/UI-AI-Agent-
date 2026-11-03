@@ -8,6 +8,18 @@ export type UserRole =
 
 export type StatusLifecycle = 'Draft' | 'In Review' | 'Approved' | 'Rejected' | 'Deprecated';
 
+export interface Project {
+  id: string;
+  name: string;
+  key: string;
+  description: string;
+  version: string;
+  author: string;
+  membersCount: number;
+  createdAt: string;
+  updatedAt?: string;
+}
+
 export interface DocumentVersion {
   version: string;
   updatedAt: string;
@@ -30,6 +42,7 @@ export type DocumentCategory =
 
 export interface DocumentItem {
   id: string;
+  projectId?: string;
   title: string;
   category: DocumentCategory;
   currentVersion: string;

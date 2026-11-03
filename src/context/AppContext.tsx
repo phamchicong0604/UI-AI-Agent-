@@ -28,6 +28,7 @@ import { syncSha256 } from '../common/utils/hash';
 import { loadFromStorage, saveToStorage } from '../common/utils/storage';
 import {
   checkBackendHealth,
+  projectsApi,
   documentsApi,
   requirementsApi,
   evidenceApi,
@@ -57,6 +58,8 @@ interface AppContextType {
   activeProject: Project;
   setActiveProject: (proj: Project) => void;
   projects: Project[];
+  setProjects: React.Dispatch<React.SetStateAction<Project[]>>;
+  createProject: (data: Partial<Project>) => Promise<Project>;
   
   // Entities
   documents: DocumentItem[];
@@ -72,9 +75,11 @@ interface AppContextType {
   backendConnected: boolean;
   isSyncing: boolean;
   syncWithBackend: () => Promise<void>;
+  reloadDocuments: (projectId?: string) => Promise<void>;
 
   // Entity Actions
   addDocument: (doc: DocumentItem) => void;
+  deleteDocument: (id: string) => Promise<void>;
   updateDocumentStatus: (id: string, status: StatusLifecycle) => void;
   
   addRequirement: (req: RequirementItem) => void;
@@ -160,11 +165,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
 
   // Load baseline with typed storage utility
-  const [projects] = useState<Project[]>(() => {
+  const [projects, setProjects] = useState<Project[]>(() => {
     return loadFromStorage<Project[]>('docqa_projects', initialProjects);
   });
 
-  const [activeProject, setActiveProject] = useState<Project>(projects[0]);
+  const [activeProject, setActiveProject] = useState<Project>(() => {
+    const savedActiveId = loadFromStorage<string>('docqa_active_project_id', '');
+    const found = projects.find(p => p.id === savedActiveId);
+    return found || projects[0] || initialProjects[0];
+  });
+
+  useEffect(() => {
+    saveToStorage('docqa_projects', projects);
+  }, [projects]);
+
+  useEffect(() => {
+    if (activeProject?.id) {
+      saveToStorage('docqa_active_project_id', activeProject.id);
+    }
+  }, [activeProject]);
 
   const [documents, setDocuments] = useState<DocumentItem[]>(() => {
     return loadFromStorage<DocumentItem[]>('docqa_documents', initialDocuments);
@@ -223,7 +242,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setBackendConnected(isHealthy);
 
       if (isHealthy) {
-        const [docsRes, reqsRes, evdRes, tcRes, runsRes, bugsRes, auditRes] = await Promise.all([
+        const [projectsRes, docsRes, reqsRes, evdRes, tcRes, runsRes, bugsRes, auditRes] = await Promise.all([
+          projectsApi.getAll().catch(() => null),
           documentsApi.getAll().catch(() => null),
           requirementsApi.getAll().catch(() => null),
           evidenceApi.getAll().catch(() => null),
@@ -233,6 +253,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           auditApi.getEvents().catch(() => null)
         ]);
 
+        if (projectsRes && projectsRes.length > 0) {
+          setProjects(projectsRes);
+          setActiveProject(prev => {
+            const found = projectsRes.find(p => p.id === prev?.id);
+            return found || projectsRes[0];
+          });
+        }
         if (docsRes && docsRes.length > 0) setDocuments(docsRes);
         if (reqsRes && reqsRes.length > 0) setRequirements(reqsRes);
         if (evdRes && evdRes.length > 0) setEvidences(evdRes);
@@ -248,6 +275,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setIsSyncing(false);
     }
   }, []);
+
+  const reloadDocuments = useCallback(async (projId?: string) => {
+    const targetProject = projId || activeProject?.id;
+    if (backendConnected) {
+      try {
+        const docs = await documentsApi.getAll(targetProject);
+        if (docs) {
+          setDocuments(prev => {
+            if (targetProject && targetProject !== 'ALL') {
+              const other = prev.filter(d => d.projectId && d.projectId !== targetProject);
+              return [...docs, ...other];
+            }
+            return docs;
+          });
+        }
+      } catch (err) {
+        console.warn('[DocQA] Document reload error:', err);
+      }
+    }
+  }, [backendConnected, activeProject?.id]);
 
   // Initial load on mount
   useEffect(() => {
@@ -311,15 +358,75 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
    * WIRED CRUD ACTIONS (Optimistic UI + Backend SQLite Persistence)
    * ----------------------------------------------------------- */
 
-  const addDocument = async (doc: DocumentItem) => {
-    setDocuments(prev => [doc, ...prev]);
-    logAudit('Created Document', 'Document', doc.id, `Uploaded / Created ${doc.title} (${doc.category}) [SHA256: ${doc.versions[0]?.checksum.slice(7, 17)}...]`);
+  const createProject = async (data: Partial<Project>): Promise<Project> => {
+    let created: Project;
+    if (backendConnected) {
+      try {
+        created = await projectsApi.create(data);
+      } catch (err: any) {
+        console.warn('[DocQA] Error creating project via backend:', err);
+        const nextIndex = projects.length + 1;
+        created = {
+          id: `PRJ-${String(nextIndex).padStart(2, '0')}`,
+          name: (data.name || 'New Project').trim(),
+          key: (data.key || 'NEW').trim().toUpperCase(),
+          description: (data.description || '').trim(),
+          version: (data.version || 'v1.0.0').trim(),
+          author: (data.author || currentUser).trim(),
+          membersCount: Number(data.membersCount) || 1,
+          createdAt: new Date().toISOString().split('T')[0]
+        };
+      }
+    } else {
+      const nextIndex = projects.length + 1;
+      created = {
+        id: `PRJ-${String(nextIndex).padStart(2, '0')}`,
+        name: (data.name || 'New Project').trim(),
+        key: (data.key || 'NEW').trim().toUpperCase(),
+        description: (data.description || '').trim(),
+        version: (data.version || 'v1.0.0').trim(),
+        author: (data.author || currentUser).trim(),
+        membersCount: Number(data.membersCount) || 1,
+        createdAt: new Date().toISOString().split('T')[0]
+      };
+    }
+
+    setProjects(prev => {
+      const exists = prev.some(p => p.id === created.id || p.key === created.key);
+      if (exists) return prev.map(p => p.id === created.id ? created : p);
+      return [created, ...prev];
+    });
+    setActiveProject(created);
+    logAudit('Created Project', 'Document', created.id, `Created project ${created.name} [${created.key}]`);
+    return created;
+  };
+
+  const deleteDocument = async (id: string) => {
+    setDocuments(prev => prev.filter(d => d.id !== id));
+    logAudit('Deleted Document', 'Document', id, `Deleted document ${id}`);
 
     if (backendConnected) {
       try {
-        const saved = await documentsApi.create(doc);
+        await documentsApi.delete(id);
+      } catch (err) {
+        console.warn('[DocQA] Document delete sync notice:', err);
+      }
+    }
+  };
+
+  const addDocument = async (doc: DocumentItem) => {
+    const docWithProj = {
+      ...doc,
+      projectId: doc.projectId || activeProject?.id || 'PRJ-01'
+    };
+    setDocuments(prev => [docWithProj, ...prev]);
+    logAudit('Created Document', 'Document', docWithProj.id, `Uploaded / Created ${docWithProj.title} (${docWithProj.category}) [SHA256: ${docWithProj.versions[0]?.checksum?.slice(7, 17) || 'N/A'}...]`);
+
+    if (backendConnected) {
+      try {
+        const saved = await documentsApi.create(docWithProj);
         if (saved) {
-          setDocuments(prev => prev.map(d => d.id === doc.id ? saved : d));
+          setDocuments(prev => prev.map(d => d.id === docWithProj.id ? saved : d));
         }
       } catch (err) {
         console.warn('[DocQA] Document backend sync notice:', err);
@@ -618,6 +725,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         activeProject,
         setActiveProject,
         projects,
+        setProjects,
+        createProject,
         documents,
         requirements,
         evidences,
@@ -630,8 +739,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         backendConnected,
         isSyncing,
         syncWithBackend,
+        reloadDocuments,
 
         addDocument,
+        deleteDocument,
         updateDocumentStatus,
         addRequirement,
         updateRequirement,

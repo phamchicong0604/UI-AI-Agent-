@@ -12,7 +12,8 @@ import {
   AuditEvent,
   AiConnectionConfig,
   AccountModelSnapshot,
-  ModelOption
+  ModelOption,
+  Project
 } from '../common/types.js';
 import { computeSha256, computeAuditEventHash } from '../common/crypto.js';
 
@@ -144,7 +145,29 @@ db.exec(`
     PRIMARY KEY (provider, model_id)
   );
   CREATE INDEX IF NOT EXISTS idx_ai_model_efforts_lookup ON ai_model_efforts (provider, model_id);
+
+  -- Projects Workspace table
+  CREATE TABLE IF NOT EXISTS projects (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    key TEXT NOT NULL,
+    description TEXT,
+    version TEXT DEFAULT 'v1.0',
+    author TEXT,
+    members_count INTEGER DEFAULT 1,
+    data TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_projects_key ON projects (key);
 `);
+
+try {
+  db.exec("ALTER TABLE documents ADD COLUMN project_id TEXT DEFAULT 'PRJ-01'");
+} catch {}
+try {
+  db.exec("CREATE INDEX IF NOT EXISTS idx_documents_project_id ON documents (project_id)");
+} catch {}
 
 try {
   db.exec("ALTER TABLE ai_connections ADD COLUMN effort_level TEXT DEFAULT 'medium'");
@@ -161,6 +184,49 @@ try {
  * ----------------------------------------------------------- */
 
 function seedDatabaseIfEmpty() {
+  // 1. Seed Projects if empty
+  const projectCount = (db.prepare('SELECT count(*) as count FROM projects').get() as any).count;
+  if (projectCount === 0) {
+    console.log('[SQLite DB] Seeding initial baseline projects...');
+    const initialProjects: Project[] = [
+      {
+        id: 'PRJ-01',
+        name: 'AI-Ready QA Platform MVP',
+        key: 'DOCQA',
+        description: 'Centralized workspace for Project Documentation, Traceability, Evidence and QA Lifecycle.',
+        version: 'v0.1.0-mvp',
+        author: 'Alex Nguyen (Lead Architect)',
+        membersCount: 8,
+        createdAt: '2026-11-01',
+        updatedAt: '2026-11-01'
+      },
+      {
+        id: 'PRJ-02',
+        name: 'Fintech Core Banking & Payments',
+        key: 'FCB',
+        description: 'High-security microservices platform for inter-bank clearing and biometric transfers.',
+        version: 'v2.4.1',
+        author: 'Minh Tran (PM)',
+        membersCount: 14,
+        createdAt: '2026-09-15',
+        updatedAt: '2026-10-20'
+      }
+    ];
+
+    const insProj = db.prepare(`
+      INSERT INTO projects (id, name, key, description, version, author, members_count, data, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    for (const p of initialProjects) {
+      insProj.run(p.id, p.name, p.key, p.description, p.version, p.author, p.membersCount, JSON.stringify(p), p.createdAt, p.updatedAt || p.createdAt);
+    }
+  }
+
+  // Ensure all existing documents are mapped to PRJ-01 if missing
+  try {
+    db.exec("UPDATE documents SET project_id = 'PRJ-01' WHERE project_id IS NULL OR project_id = ''");
+  } catch {}
+
   const docCount = (db.prepare('SELECT count(*) as count FROM documents').get() as any).count;
   if (docCount === 0) {
     console.log('[SQLite DB] Seeding initial baseline proposal records...');
@@ -215,10 +281,37 @@ function seedDatabaseIfEmpty() {
       }
     ];
 
-    const insertDoc = db.prepare('INSERT INTO documents (id, category, status, data, updated_at) VALUES (?, ?, ?, ?, ?)');
+    const insertDoc = db.prepare('INSERT INTO documents (id, project_id, category, status, data, updated_at) VALUES (?, ?, ?, ?, ?, ?)');
     for (const doc of initialDocs) {
-      insertDoc.run(doc.id, doc.category, doc.status, JSON.stringify(doc), doc.updatedAt);
+      insertDoc.run(doc.id, doc.projectId || 'PRJ-01', doc.category, doc.status, JSON.stringify(doc), doc.updatedAt);
     }
+
+    // Seed sample document for PRJ-02
+    const fcbDoc: DocumentItem = {
+      id: 'DOC-FCB-01',
+      projectId: 'PRJ-02',
+      title: 'Core Banking Payment Gateway & Clearing Specs',
+      category: '03_System_Requirements',
+      currentVersion: 'v2.4',
+      status: 'Approved',
+      author: 'Minh Tran (PM)',
+      updatedAt: '2026-10-20 14:00',
+      description: 'Interbank settlement specifications, biometric authentication protocols, and ISO 20022 message mappings.',
+      tags: ['Payment', 'ISO20022', 'CoreBanking'],
+      linkedRequirementsCount: 1,
+      versions: [
+        {
+          version: 'v2.4',
+          updatedAt: '2026-10-20 14:00',
+          author: 'Minh Tran',
+          status: 'Approved',
+          changeSummary: 'Updated clearing window and zero-trust payload encryption rules.',
+          fileSize: '3.4 MB',
+          checksum: `sha256:${computeSha256('DOC-FCB-01|v2.4|Core Banking Payment Gateway|2026-10-20')}`
+        }
+      ]
+    };
+    insertDoc.run(fcbDoc.id, fcbDoc.projectId!, fcbDoc.category, fcbDoc.status, JSON.stringify(fcbDoc), fcbDoc.updatedAt);
 
     // Seed Requirements
     const initialReqs: RequirementItem[] = [
@@ -493,8 +586,44 @@ seedAiConnectionIfEmpty();
  * ----------------------------------------------------------- */
 
 export const dbRepository = {
+  projects: {
+    getAll(): Project[] {
+      const rows = db.prepare('SELECT data FROM projects ORDER BY created_at ASC').all() as { data: string }[];
+      return rows.map(r => JSON.parse(r.data));
+    },
+    getById(id: string): Project | null {
+      const row = db.prepare('SELECT data FROM projects WHERE id = ?').get(id) as { data: string } | undefined;
+      return row ? JSON.parse(row.data) : null;
+    },
+    upsert(p: Project): Project {
+      const stmt = db.prepare(`
+        INSERT INTO projects (id, name, key, description, version, author, members_count, data, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          name = excluded.name,
+          key = excluded.key,
+          description = excluded.description,
+          version = excluded.version,
+          author = excluded.author,
+          members_count = excluded.members_count,
+          data = excluded.data,
+          updated_at = excluded.updated_at
+      `);
+      stmt.run(p.id, p.name, p.key, p.description, p.version, p.author, p.membersCount, JSON.stringify(p), p.createdAt, p.updatedAt || p.createdAt);
+      return p;
+    },
+    delete(id: string): boolean {
+      const result = db.prepare('DELETE FROM projects WHERE id = ?').run(id);
+      return result.changes > 0;
+    }
+  },
+
   documents: {
-    getAll(): DocumentItem[] {
+    getAll(projectId?: string): DocumentItem[] {
+      if (projectId && projectId !== 'ALL') {
+        const rows = db.prepare('SELECT data FROM documents WHERE project_id = ? ORDER BY updated_at DESC').all(projectId) as { data: string }[];
+        return rows.map(r => JSON.parse(r.data));
+      }
       const rows = db.prepare('SELECT data FROM documents ORDER BY updated_at DESC').all() as { data: string }[];
       return rows.map(r => JSON.parse(r.data));
     },
@@ -503,16 +632,19 @@ export const dbRepository = {
       return row ? JSON.parse(row.data) : null;
     },
     upsert(doc: DocumentItem): void {
+      const pId = doc.projectId || 'PRJ-01';
+      const docWithProj = { ...doc, projectId: pId };
       const stmt = db.prepare(`
-        INSERT INTO documents (id, category, status, data, updated_at)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO documents (id, project_id, category, status, data, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
+          project_id = excluded.project_id,
           category = excluded.category,
           status = excluded.status,
           data = excluded.data,
           updated_at = excluded.updated_at
       `);
-      stmt.run(doc.id, doc.category, doc.status, JSON.stringify(doc), doc.updatedAt);
+      stmt.run(doc.id, pId, doc.category, doc.status, JSON.stringify(docWithProj), doc.updatedAt);
     },
     delete(id: string): boolean {
       const result = db.prepare('DELETE FROM documents WHERE id = ?').run(id);

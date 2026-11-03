@@ -37,6 +37,7 @@ export const initialProjects: Project[] = [
 export const initialDocuments: DocumentItem[] = [
   {
     id: 'DOC-01',
+    projectId: 'PRJ-01',
     title: 'Project Charter & Stakeholder Matrix',
     category: '01_Project_Overview',
     currentVersion: 'v1.0',
@@ -60,6 +61,7 @@ export const initialDocuments: DocumentItem[] = [
   },
   {
     id: 'DOC-02',
+    projectId: 'PRJ-01',
     title: 'Business Requirements Document (BRD) - Authentication & RBAC',
     category: '02_Business_Requirements',
     currentVersion: 'v1.2',
@@ -92,6 +94,7 @@ export const initialDocuments: DocumentItem[] = [
   },
   {
     id: 'DOC-03',
+    projectId: 'PRJ-01',
     title: 'Software Requirements Specification (SRS) - Evidence Lifecycle',
     category: '03_System_Requirements',
     currentVersion: 'v1.1',
@@ -115,6 +118,7 @@ export const initialDocuments: DocumentItem[] = [
   },
   {
     id: 'DOC-04',
+    projectId: 'PRJ-01',
     title: 'Figma Design System & 3-Column QA Workspace Wireframes',
     category: '04_UI_UX',
     currentVersion: 'v2.0',
@@ -138,6 +142,7 @@ export const initialDocuments: DocumentItem[] = [
   },
   {
     id: 'DOC-05',
+    projectId: 'PRJ-01',
     title: 'REST API & Traceability Schema Specifications',
     category: '05_Technical_Documents',
     currentVersion: 'v1.0',
@@ -161,6 +166,7 @@ export const initialDocuments: DocumentItem[] = [
   },
   {
     id: 'DOC-06',
+    projectId: 'PRJ-01',
     title: 'Master Test Strategy & Acceptance Plan',
     category: '06_QA',
     currentVersion: 'v1.3',
@@ -184,6 +190,7 @@ export const initialDocuments: DocumentItem[] = [
   },
   {
     id: 'DOC-07',
+    projectId: 'PRJ-02',
     title: 'Evidence Retention & Data Privacy Guide',
     category: '07_EVD_Evidence',
     currentVersion: 'v1.0',
@@ -207,6 +214,7 @@ export const initialDocuments: DocumentItem[] = [
   },
   {
     id: 'DOC-08',
+    projectId: 'PRJ-02',
     title: 'Release Notes & Change Decision Log v0.1',
     category: '08_Change_History',
     currentVersion: 'v0.1',

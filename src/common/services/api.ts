@@ -4,6 +4,7 @@
  */
 
 import {
+  Project,
   DocumentItem,
   RequirementItem,
   EvidenceItem,
@@ -46,11 +47,30 @@ export async function checkBackendHealth(): Promise<boolean> {
 }
 
 /* -------------------------------------------------------------
+ * 0. PROJECTS API
+ * ----------------------------------------------------------- */
+export const projectsApi = {
+  async getAll(): Promise<Project[]> {
+    return fetchJson<Project[]>(`${API_BASE_URL}/projects`);
+  },
+  async getById(id: string): Promise<Project> {
+    return fetchJson<Project>(`${API_BASE_URL}/projects/${id}`);
+  },
+  async create(proj: Partial<Project>): Promise<Project> {
+    return fetchJson<Project>(`${API_BASE_URL}/projects`, {
+      method: 'POST',
+      body: JSON.stringify(proj)
+    });
+  }
+};
+
+/* -------------------------------------------------------------
  * 1. DOCUMENTS API
  * ----------------------------------------------------------- */
 export const documentsApi = {
-  async getAll(): Promise<DocumentItem[]> {
-    return fetchJson<DocumentItem[]>(`${API_BASE_URL}/documents`);
+  async getAll(projectId?: string): Promise<DocumentItem[]> {
+    const query = projectId && projectId !== 'ALL' ? `?projectId=${encodeURIComponent(projectId)}` : '';
+    return fetchJson<DocumentItem[]>(`${API_BASE_URL}/documents${query}`);
   },
   async getById(id: string): Promise<DocumentItem> {
     return fetchJson<DocumentItem>(`${API_BASE_URL}/documents/${id}`);
@@ -59,6 +79,22 @@ export const documentsApi = {
     return fetchJson<DocumentItem>(`${API_BASE_URL}/documents`, {
       method: 'POST',
       body: JSON.stringify(doc)
+    });
+  },
+  async upload(formData: FormData): Promise<{ totalUploaded: number; documents: DocumentItem[] }> {
+    const res = await fetch(`${API_BASE_URL}/documents/upload`, {
+      method: 'POST',
+      body: formData
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(json.error || json.message || `HTTP ${res.status}`);
+    }
+    return (json.data !== undefined ? json.data : json);
+  },
+  async delete(id: string): Promise<{ id: string }> {
+    return fetchJson<{ id: string }>(`${API_BASE_URL}/documents/${id}`, {
+      method: 'DELETE'
     });
   },
   async updateStatus(id: string, status: StatusLifecycle, userRole?: string): Promise<DocumentItem> {
