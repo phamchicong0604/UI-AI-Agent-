@@ -1,5 +1,6 @@
 import { PipelineRunRecord } from '../../common/types.js';
 import { defaultSkillRegistry } from './skillRegistry.js';
+import { defaultDataPolicyService } from './dataPolicyService.js';
 import { 
   Stage2CombinedOutputSchema, 
   Stage2CombinedOutput, 
@@ -7,6 +8,7 @@ import {
 } from './skills/schemas.js';
 
 export interface Stage2RunOptions {
+  projectId?: string;
   documentVersionId: string;
   documentTitle: string;
   documentText: string;
@@ -26,13 +28,22 @@ Hãy phân tích tài liệu sau đây và trả về kết quả dưới địn
 `.trim();
 
   /**
-   * Execute Stage 2 combined Understanding + Extraction + Classification with caching & schema validation
+   * Execute Stage 2 combined Understanding + Extraction + Classification with caching, policy checks & schema validation
    */
-  public async execute(options: Stage2RunOptions): Promise<{ output: Stage2CombinedOutput; fromCache: boolean; runId: string }> {
-    const modelId = options.modelId || 'gemini-1.5-flash';
-    const provider = options.provider || 'google';
+  public async execute(options: Stage2RunOptions): Promise<{ output: Stage2CombinedOutput; fromCache: boolean; runId: string; securityFlags?: string[] }> {
+    const projectId = options.projectId || 'PRJ-01';
+    let modelId = options.modelId || 'gemini-1.5-flash';
+    let provider = options.provider || 'google';
 
-    // 1. Register or retrieve Skill Version
+    // 1. Data Policy & Offline Enforcement (E5-T2)
+    const projectPolicy = defaultDataPolicyService.getProjectPolicy(projectId);
+    const isOfflineOnly = projectPolicy === 'OFFLINE_ONLY';
+    if (isOfflineOnly) {
+      provider = 'offline-grounded-engine';
+      modelId = 'grounded-local-parser';
+    }
+
+    // 2. Register or retrieve Skill Version
     const skillVersion = defaultSkillRegistry.registerOrGetVersion({
       skillId: Stage2CombinedRunner.SKILL_ID,
       name: 'Stage 2 Combined Analysis',
@@ -43,7 +54,7 @@ Hãy phân tích tài liệu sau đây và trả về kết quả dưới địn
       modelRecommended: modelId
     });
 
-    // 2. Check Cache Hit (E4-T2.3)
+    // 3. Check Cache Hit (E4-T2.3)
     const cached = defaultSkillRegistry.getCachedOutput(options.documentVersionId, skillVersion.id, modelId);
     if (cached && cached.outputPayload) {
       try {
@@ -53,9 +64,13 @@ Hãy phân tích tài liệu sau đây và trả về kết quả dưới địn
       } catch {}
     }
 
-    // 3. Prepare AI execution prompt
+    // 4. Security: Prompt Injection Scanning & Delimiter Sandboxing (E5-T3)
+    const injectionCheck = defaultDataPolicyService.detectPromptInjection(options.documentText);
+    const redactionResult = defaultDataPolicyService.redactSensitiveData(options.documentText);
+    const sandboxedContent = defaultDataPolicyService.wrapUntrustedDocument(redactionResult.text);
+
     const startTime = Date.now();
-    const fullPrompt = `${Stage2CombinedRunner.PROMPT_TEMPLATE}\n\n=== DOCUMENT VERSION: ${options.documentVersionId} ===\n${options.documentText}`;
+    const fullPrompt = `${Stage2CombinedRunner.PROMPT_TEMPLATE}\n\n=== DOCUMENT VERSION: ${options.documentVersionId} ===\n${sandboxedContent}`;
 
     const maxRetries = 2;
     let lastError: Error | null = null;
@@ -64,11 +79,14 @@ Hãy phân tích tài liệu sau đây và trả về kết quả dưới địn
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        if (options.llmCaller) {
+        if (isOfflineOnly) {
+          // Zero external request: use Grounded Engine deterministic parser (E5-T2)
+          rawOutputStr = this.generateFallbackResponse(options.documentVersionId, options.documentTitle, redactionResult.text);
+        } else if (options.llmCaller) {
           rawOutputStr = await options.llmCaller(fullPrompt);
         } else {
-          // Default deterministic mock response when no caller passed (for testing / offline fallback)
-          rawOutputStr = this.generateFallbackResponse(options.documentVersionId, options.documentTitle, options.documentText);
+          // Default deterministic mock response when no caller passed
+          rawOutputStr = this.generateFallbackResponse(options.documentVersionId, options.documentTitle, redactionResult.text);
         }
 
         // Clean JSON markdown blocks if wrapped by LLM
@@ -110,7 +128,7 @@ Hãy phân tích tài liệu sau đây và trả về kết quả dưới địn
       throw new Error(`Stage 2 AI analysis failed schema validation: ${lastError?.message}`);
     }
 
-    // 4. Record SUCCESS run in pipeline_runs (E4-T4.2)
+    // 5. Record SUCCESS run in pipeline_runs with size and tokens (E5-T2.3)
     defaultSkillRegistry.saveRun({
       id: runId,
       documentVersionId: options.documentVersionId,
@@ -118,20 +136,29 @@ Hãy phân tích tài liệu sau đây và trả về kết quả dưới địn
       modelId,
       provider,
       status: 'SUCCESS',
-      inputPayload: JSON.stringify({ textLength: options.documentText.length }),
+      inputPayload: JSON.stringify({
+        textLength: options.documentText.length,
+        redactions: redactionResult.totalRedactions,
+        securityFlags: injectionCheck.flags
+      }),
       outputPayload: JSON.stringify(validatedOutput),
-      tokensPrompt: Math.ceil(fullPrompt.length / 4),
-      tokensCompletion: Math.ceil(rawOutputStr.length / 4),
+      tokensPrompt: isOfflineOnly ? 0 : Math.ceil(fullPrompt.length / 4),
+      tokensCompletion: isOfflineOnly ? 0 : Math.ceil(rawOutputStr.length / 4),
       latencyMs,
       errorMessage: null,
       createdAt: new Date().toISOString()
     });
 
-    return { output: validatedOutput, fromCache: false, runId };
+    return { 
+      output: validatedOutput, 
+      fromCache: false, 
+      runId,
+      securityFlags: injectionCheck.flags
+    };
   }
 
   /**
-   * Deterministic fallback generator matching Stage 2 Combined Schema
+   * Deterministic grounded fallback generator matching Stage 2 Combined Schema
    */
   private generateFallbackResponse(versionId: string, title: string, text: string): string {
     const isRequirement = text.toLowerCase().includes('yêu cầu') || text.toLowerCase().includes('phải') || text.toLowerCase().includes('requirement');

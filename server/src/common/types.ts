@@ -8,6 +8,8 @@ export type UserRole =
 
 export type StatusLifecycle = 'Draft' | 'In Review' | 'Approved' | 'Rejected' | 'Deprecated';
 
+export type AiDataPolicy = 'OFFLINE_ONLY' | 'COMMERCIAL_PRIVATE' | 'ALLOW_EXTERNAL';
+
 export interface Project {
   id: string;
   name: string;
@@ -16,6 +18,7 @@ export interface Project {
   version: string;
   author: string;
   membersCount: number;
+  aiPolicy?: AiDataPolicy;
   createdAt: string;
   updatedAt?: string;
 }

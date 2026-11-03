@@ -4,11 +4,13 @@ import { migration002FileStorageAndDocumentVersions } from './002_file_storage_a
 import { migration003AiTraceabilityAndRelationships } from './003_ai_traceability_and_relationships.js';
 import { migration004UploadBatches } from './004_upload_batches.js';
 import { migration005JobQueue } from './005_job_queue.js';
+import { migration006ProjectAiPolicy } from './006_project_ai_policy.js';
 
 export const allMigrations: Migration[] = [
   migration001InitialSchema,
   migration002FileStorageAndDocumentVersions,
   migration003AiTraceabilityAndRelationships,
   migration004UploadBatches,
-  migration005JobQueue
+  migration005JobQueue,
+  migration006ProjectAiPolicy
 ];

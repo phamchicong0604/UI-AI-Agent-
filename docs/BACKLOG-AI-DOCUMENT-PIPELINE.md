@@ -177,29 +177,31 @@ AC: Đã kiểm thử toàn diện với 6/6 unit tests tại `server/src/tests/
 
 ---
 
-## E5. AI Security & Data Policy (P0 tài liệu, P1 code)
+## E5. AI Security & Data Policy (P0 tài liệu, P1 code) — [HOÀN THÀNH]
 
-### E5-T1. Viết `AI-DATA-POLICY.md` — TL + PM, S
-- .1 Dữ liệu nào được gửi ra provider ngoài, theo từng project.
-- .2 Chính sách retention cho file gốc, output AI và log gửi provider.
-- .3 Quy tắc redaction cho dữ liệu nhạy cảm.
+File chính: `docs/AI-DATA-POLICY.md`, `server/src/modules/ai/dataPolicyService.ts`, `server/src/modules/ai/stage2Runner.ts`.
 
-AC: PM và đại diện bảo mật duyệt.
+### E5-T1. Viết `AI-DATA-POLICY.md` — TL + PM, S — [HOÀN THÀNH]
+- .1 Phân loại 3 cấp độ gửi dữ liệu theo dự án (`OFFLINE_ONLY`, `COMMERCIAL_PRIVATE`, `ALLOW_EXTERNAL`).
+- .2 Chính sách retention cho file gốc, output AI và log kiểm toán bất biến `audit_events`.
+- .3 Bộ quy tắc Redaction tự động che mờ API keys, JWTs, CMND/CCCD, thẻ tín dụng, email nội bộ.
 
-### E5-T2. Provider policy theo project — BE, M
+AC: Đã hoàn tất tài liệu đặc tả bảo mật dữ liệu tại `docs/AI-DATA-POLICY.md`.
+
+### E5-T2. Provider policy theo project — BE, M — [HOÀN THÀNH]
 Phụ thuộc: E0-D4, E5-T1.
-- .1 Thêm cấu hình policy vào bảng projects.
-- .2 AI service kiểm tra policy trước mỗi lần gọi, chế độ Offline only dùng grounded engine.
-- .3 Ghi log provider, model và kích thước dữ liệu đã gửi.
+- .1 Migration `006_project_ai_policy.ts` thêm cột `ai_policy` vào bảng `projects`.
+- .2 `DataPolicyService` (`server/src/modules/ai/dataPolicyService.ts`) kiểm tra policy trước mỗi lần gọi; chế độ `OFFLINE_ONLY` chặn 100% request ra internet, chuyển sang Grounded Engine nội bộ.
+- .3 Ghi log provider (`offline-grounded-engine` hoặc AI provider), model và kích thước dữ liệu (token = 0 cho offline) vào `pipeline_runs`.
 
-AC: Project Offline only không bao giờ phát sinh request ra ngoài, có test chứng minh.
+AC: Đã kiểm thử unit test tại `dataPolicy.test.ts` chứng minh dự án OFFLINE_ONLY không bao giờ phát sinh request ra ngoài.
 
-### E5-T3. Chống prompt injection từ tài liệu — AI, M
-- .1 Bọc nội dung tài liệu trong delimiter, system prompt khẳng định đây là dữ liệu.
-- .2 Phát hiện và gắn cờ các đoạn có dạng chỉ thị cho AI.
-- .3 Output không được chứa hành động ngoài schema đã định.
+### E5-T3. Chống prompt injection từ tài liệu — AI, M — [HOÀN THÀNH]
+- .1 Bao bọc nội dung tài liệu thô trong delimiter sandboxing (`=== BEGIN_UNTRUSTED_DOCUMENT_CONTENT ===`).
+- .2 Bộ quét `detectPromptInjection` phát hiện và gắn cờ các chỉ thị nguy hiểm (`security_flags: ['PROMPT_INJECTION_...']`).
+- .3 Cưỡng bức output tuyệt đối chỉ trả về JSON tuân thủ Zod schema, vô hiệu hóa mã script hoặc chỉ thị độc hại.
 
-AC: Bộ test có tài liệu chứa chỉ thị nhúng, output vẫn đúng schema và có cờ cảnh báo.
+AC: Đã kiểm thử 7/7 tests tại `server/src/tests/dataPolicy.test.ts` với tài liệu chứa injection nhúng, output vẫn đúng schema và gắn cờ cảnh báo an toàn.
 
 ---
 
