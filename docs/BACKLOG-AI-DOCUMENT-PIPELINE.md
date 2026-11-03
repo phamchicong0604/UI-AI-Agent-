@@ -141,39 +141,39 @@ AC: Đã kiểm thử 5/5 tests tại `server/src/tests/workflowEngine.test.ts`.
 
 ---
 
-## E4. AI Skill Contracts (P1)
+## E4. AI Skill Contracts (P1) — [HOÀN THÀNH]
 
-File chính: `server/src/modules/ai/`.
+File chính: `server/src/modules/ai/`, `server/src/modules/ai/skills/`, `server/src/modules/ai/skillRegistry.ts`, `server/src/modules/ai/stage2Runner.ts`.
 
-### E4-T1. Viết `AI-SKILL-CONTRACTS.md` — AI + BA, M
-- .1 Định nghĩa 6 Skill: Intake, Understanding, Extraction, Classification, Semantic Validation, Organization.
-- .2 JSON Schema input và output cho từng Skill.
-- .3 Mỗi item trích xuất bắt buộc có `evidence_level` và `source_anchor`.
+### E4-T1. Viết `AI-SKILL-CONTRACTS.md` — AI + BA, M — [HOÀN THÀNH]
+- .1 Định nghĩa 6 Skill cốt lõi: Intake, Understanding, Extraction, Classification, Semantic Validation, Organization.
+- .2 Chi tiết hóa JSON Schema input và output cho từng Skill (`docs/AI-SKILL-CONTRACTS.md` và `server/src/modules/ai/skills/schemas.ts`).
+- .3 Mọi item trích xuất bắt buộc phải có `evidence_level` và `source_anchor` (heading_path, char_offset_start, char_offset_end, exact_quote).
 - .4 Định nghĩa 6 mức evidence_level: Explicit, Inferred, Assumed, Not Specified, Conflict, Unknown.
 
-AC: BA xác nhận schema đủ để review. Mọi field có mô tả và ví dụ.
+AC: Đã hoàn tất tài liệu đặc tả hợp đồng AI và schema Zod với 100% field có mô tả.
 
-### E4-T2. Skill registry có version — AI, M
+### E4-T2. Skill registry có version — AI, M — [HOÀN THÀNH]
 Phụ thuộc: E1-T4, E4-T1.
-- .1 Thư mục `server/src/modules/ai/skills/<skill>/` gồm prompt, schema, metadata.
-- .2 Version tăng khi prompt hoặc schema đổi, lưu vào `skill_versions`.
-- .3 Cache output theo khóa document_version_id, skill_version, model_id.
+- .1 Triển khai `SkillRegistry` (`server/src/modules/ai/skillRegistry.ts`).
+- .2 Tự động tính hash prompt + schema; khi prompt hoặc schema đổi sẽ tự động sinh và lưu `skill_versions` mới vào SQLite.
+- .3 Hệ thống bộ nhớ đệm (Cache) output theo khóa bộ ba `(document_version_id, skill_version_id, model_id)` trong bảng `pipeline_runs`.
 
-AC: Đổi prompt tạo skill_version mới. Chạy lại cùng input và cùng version thì lấy từ cache.
+AC: Đổi prompt tạo skill_version mới. Chạy lại cùng input và cùng version thì lấy từ cache không gọi lại LLM (xác nhận qua unit test).
 
-### E4-T3. Validate output và retry — AI, M
-- .1 Validate output bằng JSON Schema, có thể dùng zod.
-- .2 Output sai schema thì retry có giới hạn, sau đó đánh dấu FAILED.
-- .3 Chặn mọi item có evidence_level khác Explicit được gán status Approved.
+### E4-T3. Validate output và retry — AI, M — [HOÀN THÀNH]
+- .1 Xác thực nghiêm ngặt cấu trúc đầu ra bằng Zod schema (`Stage2CombinedOutputSchema`).
+- .2 Cơ chế retry tối đa 2 lần khi output sai schema, sau đó ghi nhận trạng thái FAILED vào `pipeline_runs`.
+- .3 Quy tắc bất biến BR-AI-01 (`canAutoApproveUnit`): Chặn mọi item có `evidence_level` khác `Explicit` được gán trạng thái `Approved`.
 
-AC: Test với output hỏng, thiếu field và sai enum đều bị bắt.
+AC: Bộ kiểm thử `skillRegistry.test.ts` bắt mọi output hỏng, thiếu field và sai enum.
 
-### E4-T4. Chạy Stage 2 dạng gộp — AI, M
+### E4-T4. Chạy Stage 2 dạng gộp — AI, M — [HOÀN THÀNH]
 Phụ thuộc: E4-T2, E4-T3.
-- .1 Một lần gọi model trả về output của Understanding, Extraction và Classification.
-- .2 Tách thành lời gọi riêng chỉ khi E9 cho thấy chất lượng tốt hơn.
+- .1 `Stage2CombinedRunner` (`server/src/modules/ai/stage2Runner.ts`) gọi model 1 lần duy nhất trả về trọn vẹn output của Understanding, Extraction và Classification.
+- .2 Số lần gọi LLM, token và latency mỗi tài liệu được lưu vết chính xác trong bảng `pipeline_runs`.
 
-AC: Số lần gọi LLM mỗi tài liệu được ghi trong pipeline_runs.
+AC: Đã kiểm thử toàn diện với 6/6 unit tests tại `server/src/tests/skillRegistry.test.ts`.
 
 ---
 
