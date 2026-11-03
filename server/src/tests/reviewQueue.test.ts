@@ -89,6 +89,7 @@ describe('Review Queue API (Epic E8-T1, E8-T2)', () => {
       content: 'Timeout thanh toán là 15m',
       subject: 'Timeout thanh toán',
       action: 'Thiết lập',
+      condition: null,
       evidenceLevel: 'Explicit' as const,
       status: 'Draft' as const,
       createdAt: new Date().toISOString(),
@@ -101,6 +102,7 @@ describe('Review Queue API (Epic E8-T1, E8-T2)', () => {
       content: 'Timeout thanh toán là 30m',
       subject: 'Timeout thanh toán',
       action: 'Thiết lập',
+      condition: null,
       evidenceLevel: 'Explicit' as const,
       status: 'Approved' as const,
       createdAt: new Date().toISOString(),
@@ -119,13 +121,15 @@ describe('Review Queue API (Epic E8-T1, E8-T2)', () => {
       severity: 'Critical',
       description: 'Timeout value conflict',
       resolution: 'UNRESOLVED',
+      resolvedBy: null,
+      resolvedAt: null,
       createdAt: new Date().toISOString()
     });
 
     const res = await fetch(`${baseUrl}/api/v1/documents/review-queue?projectId=${testProjectId}`);
     expect(res.status).toBe(200);
 
-    const json = await res.json();
+    const json = (await res.json()) as any;
     expect(json.success).toBe(true);
     expect(json.data.length).toBeGreaterThanOrEqual(2);
 
@@ -144,7 +148,7 @@ describe('Review Queue API (Epic E8-T1, E8-T2)', () => {
   it('filters review queue by category and risk level', async () => {
     const res = await fetch(`${baseUrl}/api/v1/documents/review-queue?projectId=${testProjectId}&category=01_Project_Overview`);
     expect(res.status).toBe(200);
-    const json = await res.json();
+    const json = (await res.json()) as any;
     expect(json.success).toBe(true);
 
     for (const item of json.data) {

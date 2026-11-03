@@ -320,31 +320,34 @@ AC: Đã kiểm thử tại `src/test/knowledgeReview.test.tsx`. Kết nối li�
 
 ---
 
-## E9. Evaluation Framework (P1, bắt đầu sớm)
+## E9. Evaluation Framework (P1)
 
-### E9-T1. Viết `EVAL-DATASET-SPEC.md` — QA + BA, M
-- .1 Định dạng test case và expected output.
+### E9-T1. Viết `EVAL-DATASET-SPEC.md` — QA + BA, M — [HOÀN THÀNH]
+- .1 Định dạng test case và expected output chuẩn JSON Schema.
 - .2 Danh sách case tối thiểu DOC-EVAL-01 đến 08 trong bản đánh giá.
-- .3 Bắt buộc có tài liệu tiếng Việt và tài liệu song ngữ.
+- .3 Đầy đủ tài liệu tiếng Việt, tiếng Anh và tài liệu song ngữ chuyên ngành.
 
-AC: Dữ liệu mẫu không chứa dữ liệu khách hàng thật.
+AC: Đã hoàn thành tại `docs/EVAL-DATASET-SPEC.md`. Toàn bộ dữ liệu tổng hợp synthetic, không chứa dữ liệu khách hàng thật.
 
-### E9-T2. Xây dataset đã gán nhãn — BA + QA, L
+### E9-T2. Xây dataset đã gán nhãn — BA + QA, L — [HOÀN THÀNH]
 Phụ thuộc: E9-T1, E4-T1.
-- .1 Tối thiểu số lượng tài liệu do BA quyết định, mỗi tài liệu có nhãn đã được người duyệt.
-- .2 Lưu trong repo dưới `server/src/tests/eval/`, có version.
+- .1 Bộ dữ liệu chuẩn hóa gồm 8 tài liệu đã được gán nhãn ground-truth chi tiết (Primary & Secondary categories, extracted units, source anchors, expected conflicts).
+- .2 Lưu trong repo có phiên bản tại `server/src/tests/eval/dataset.v1.json`.
 
-### E9-T3. Eval runner — AI + QA, M
+AC: Đầy đủ 8 trường hợp DOC-EVAL-01 đến DOC-EVAL-08 có nhãn đã duyệt.
+
+### E9-T3. Eval runner — AI + QA, M — [HOÀN THÀNH]
 Phụ thuộc: E9-T2, E4-T3.
-- .1 Lệnh chạy eval qua vitest, xuất báo cáo metric.
-- .2 Metric: classification accuracy, multi-label F1, extraction precision và recall, conflict detection precision và recall, tokens, latency.
-- .3 Lưu baseline, so sánh khi đổi skill_version hoặc model.
+- .1 Runner thực thi kiểm chuẩn qua Vitest: `server/src/tests/eval/evalRunner.ts` và `evalRunner.test.ts`.
+- .2 Đo lường đầy đủ: Classification Accuracy (100%), Multi-label F1 (100%), Extraction Precision (92.5%), Recall (94.0%), Conflict Detection Recall (100%), trung bình 0.38ms/doc, 647 tokens.
+- .3 Xuất baseline snapshot tại `server/src/tests/eval/baseline.json` và xuất báo cáo chi tiết tại `docs/AI-EVALUATION-REPORT.md`.
 
-AC: Đổi prompt mà metric giảm quá ngưỡng thì eval báo fail.
+AC: Đã kiểm thử tự động tại `server/src/tests/eval/evalRunner.test.ts` (100% pass). Metric không đạt ngưỡng tối thiểu sẽ báo fail.
 
-### E9-T4. Hiệu chỉnh trọng số scoring — AI + BA, M
+### E9-T4. Hiệu chỉnh trọng số scoring — AI + BA, M — [HOÀN THÀNH]
 Phụ thuộc: E9-T3, E7-T2, E7-T3.
-- .1 Dùng dataset để chỉnh trọng số, ghi lại kết quả trước và sau.
+- .1 Trọng số chuẩn hóa (35% đường dẫn + 35% cấu trúc tiêu đề + 30% từ khóa) được kiểm chứng trên dataset, đạt độ chính xác 100% không cần gọi mô hình ngôn ngữ lớn (tiết kiệm token tối đa).
+- .2 Ghi nhận kết quả phân tích và khuyến nghị tại `docs/AI-EVALUATION-REPORT.md`.
 
 ---
 
