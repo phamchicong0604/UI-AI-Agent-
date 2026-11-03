@@ -89,41 +89,41 @@ export const Sidebar: React.FC = () => {
 
       {/* AI Readiness Tools Card */}
       <div className="p-3 border-t border-slate-800 space-y-2">
-        <div className="p-3.5 rounded-2xl bg-gradient-to-b from-indigo-950/60 to-slate-900 border border-indigo-500/30">
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-1.5 text-indigo-300 text-xs font-semibold">
-              <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
-              <span>{t('aiCopilotEngine')}</span>
+        <div className="p-3 rounded-2xl bg-gradient-to-b from-indigo-950/60 to-slate-900 border border-indigo-500/30">
+          <div className="flex items-center justify-between gap-1 mb-2">
+            <div className="flex items-center gap-1.5 text-indigo-300 text-xs font-semibold truncate">
+              <Sparkles className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+              <span className="truncate">{t('aiCopilotEngine')}</span>
             </div>
-            <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+            <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 whitespace-nowrap shrink-0">
               {t('groundedOutput')}
             </span>
           </div>
-          <p className="text-[11px] text-slate-400 leading-relaxed mb-3">
+          <p className="text-[11px] text-slate-400 leading-relaxed mb-2.5 line-clamp-2">
             {t('aiCardDescription')}
           </p>
-          <div className="grid grid-cols-2 gap-1.5">
+          <div className="flex flex-col gap-1.5">
             <button
               onClick={() => setIsAiModalOpen(true)}
-              className="px-2 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold flex items-center justify-center gap-1 shadow transition-colors"
+              className="w-full px-2.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold flex items-center justify-center gap-1.5 shadow transition-colors whitespace-nowrap"
             >
-              <Sparkles className="w-3 h-3 text-amber-300" />
+              <Sparkles className="w-3.5 h-3.5 text-amber-300 shrink-0" />
               <span>{t('draftTc')}</span>
             </button>
             <button
               onClick={() => setIsImpactModalOpen(true)}
-              className="px-2 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold flex items-center justify-center gap-1 transition-colors"
+              className="w-full px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors whitespace-nowrap"
             >
-              <Zap className="w-3 h-3 text-amber-400" />
+              <Zap className="w-3.5 h-3.5 text-amber-400 shrink-0" />
               <span>{t('impactAnalysis')}</span>
             </button>
           </div>
         </div>
 
         {/* Project Baseline Info */}
-        <div className="px-3 py-1.5 text-[11px] text-slate-400 flex items-center justify-between font-mono">
-          <span>{t('schemaBaseline')}</span>
-          <span className="text-emerald-400">{t('synced')}</span>
+        <div className="px-2 py-1 text-[11px] text-slate-400 flex items-center justify-between font-mono whitespace-nowrap">
+          <span>Schema v0.1</span>
+          <span className="text-emerald-400">● {t('synced')}</span>
         </div>
       </div>
     </aside>

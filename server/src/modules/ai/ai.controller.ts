@@ -5,8 +5,9 @@ import { PROVIDER_MODELS } from './model.registry.js';
 import { quotaService } from './quota.service.js';
 import { modelFetcher } from './model.fetcher.js';
 import { accountModelsService, resolveSource, ModelSyncError } from './account-models.service.js';
-import { dbRepository } from '../../database/db.js';
+import { db, dbRepository } from '../../database/db.js';
 import { sendSuccess, sendError } from '../../common/response.js';
+import { ObservabilityService } from './observabilityService.js';
 
 export const aiRouter = Router();
 const aiService = new AiService();
@@ -44,6 +45,19 @@ aiRouter.post('/connection', (req: Request, res: Response) => {
     sendSuccess(res, updated, 'AI connection settings saved successfully');
   } catch (err: any) {
     sendError(res, `Failed to save AI connection: ${err.message}`, 500);
+  }
+});
+
+/**
+ * GET /api/v1/ai/observability
+ * AI Usage & Observability Report (Epic E10-T1, E10-T2)
+ */
+aiRouter.get('/observability', (req: Request, res: Response) => {
+  try {
+    const report = ObservabilityService.getObservabilityReport(db);
+    sendSuccess(res, report);
+  } catch (err: any) {
+    sendError(res, `Lỗi trích xuất báo cáo quan sát AI: ${err.message}`, 500);
   }
 });
 
@@ -318,10 +332,33 @@ aiRouter.post('/generate-testcases', async (req: Request, res: Response) => {
       return sendError(res, 'Missing required field: requirement', 400);
     }
 
+    // Resolve true projectId from DB first to prevent client-side spoofing (BUG-001)
+    let actualProjectId: string | undefined;
+    if (requirement.id) {
+      try {
+        const dbReq = dbRepository.requirements.getById(requirement.id);
+        if (dbReq && (dbReq as any).projectId) {
+          actualProjectId = (dbReq as any).projectId;
+        }
+      } catch {}
+    }
+    if (!actualProjectId && (requirement.sourceReferences?.[0]?.documentId || sourceDoc?.id)) {
+      const docId = requirement.sourceReferences?.[0]?.documentId || sourceDoc?.id;
+      try {
+        const dbDoc = dbRepository.documents.getById(docId);
+        if (dbDoc && dbDoc.projectId) {
+          actualProjectId = dbDoc.projectId;
+        }
+      } catch {}
+    }
+    // Fail-closed: DB entity takes absolute precedence over client header/body
+    const projectId = actualProjectId || requirement.projectId || sourceDoc?.projectId || (req.headers['x-project-id'] as string) || req.body.projectId;
+
     const result = await aiService.generateGroundedDrafts({
       requirement,
       sourceDoc,
-      userPrompt
+      userPrompt,
+      projectId
     });
 
     sendSuccess(res, result, 'Successfully generated grounded test cases');

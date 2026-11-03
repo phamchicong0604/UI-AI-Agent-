@@ -4,6 +4,7 @@
  */
 
 import {
+  Project,
   DocumentItem,
   RequirementItem,
   EvidenceItem,
@@ -18,13 +19,54 @@ import {
 
 const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:5001/api/v1';
 
+let currentAuthToken: string = typeof localStorage !== 'undefined' ? localStorage.getItem('docqa_auth_token') || '' : '';
+
+export function getAuthToken(): string {
+  return currentAuthToken;
+}
+
+export function setAuthToken(token: string): void {
+  currentAuthToken = token;
+  if (typeof localStorage !== 'undefined') {
+    if (token) localStorage.setItem('docqa_auth_token', token);
+    else localStorage.removeItem('docqa_auth_token');
+  }
+}
+
+/**
+ * Exchanges active UI role and user for an HMAC-signed session token with the backend (NEW-01, NEW-02).
+ */
+export async function authenticateRoleSession(role: string, name?: string): Promise<string> {
+  try {
+    const res = await fetch(`${API_BASE_URL}/auth/session`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ role, name })
+    });
+    const json = await res.json().catch(() => ({}));
+    if (res.ok && json.data?.token) {
+      setAuthToken(json.data.token);
+      return json.data.token;
+    }
+  } catch (err) {
+    console.warn('[DocQA Auth] Session authentication error:', err);
+  }
+  return '';
+}
+
 async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...((options?.headers as Record<string, string>) || {})
+  };
+
+  if (currentAuthToken && !headers['Authorization'] && !headers['authorization']) {
+    headers['Authorization'] = `Bearer ${currentAuthToken}`;
+  }
+
   const res = await fetch(url, {
     ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...options?.headers
-    }
+    headers
   });
 
   const json = await res.json().catch(() => ({}));
@@ -46,11 +88,30 @@ export async function checkBackendHealth(): Promise<boolean> {
 }
 
 /* -------------------------------------------------------------
+ * 0. PROJECTS API
+ * ----------------------------------------------------------- */
+export const projectsApi = {
+  async getAll(): Promise<Project[]> {
+    return fetchJson<Project[]>(`${API_BASE_URL}/projects`);
+  },
+  async getById(id: string): Promise<Project> {
+    return fetchJson<Project>(`${API_BASE_URL}/projects/${id}`);
+  },
+  async create(proj: Partial<Project>): Promise<Project> {
+    return fetchJson<Project>(`${API_BASE_URL}/projects`, {
+      method: 'POST',
+      body: JSON.stringify(proj)
+    });
+  }
+};
+
+/* -------------------------------------------------------------
  * 1. DOCUMENTS API
  * ----------------------------------------------------------- */
 export const documentsApi = {
-  async getAll(): Promise<DocumentItem[]> {
-    return fetchJson<DocumentItem[]>(`${API_BASE_URL}/documents`);
+  async getAll(projectId?: string): Promise<DocumentItem[]> {
+    const query = projectId && projectId !== 'ALL' ? `?projectId=${encodeURIComponent(projectId)}` : '';
+    return fetchJson<DocumentItem[]>(`${API_BASE_URL}/documents${query}`);
   },
   async getById(id: string): Promise<DocumentItem> {
     return fetchJson<DocumentItem>(`${API_BASE_URL}/documents/${id}`);
@@ -61,10 +122,31 @@ export const documentsApi = {
       body: JSON.stringify(doc)
     });
   },
-  async updateStatus(id: string, status: StatusLifecycle, userRole?: string): Promise<DocumentItem> {
+  async upload(formData: FormData): Promise<{ totalUploaded: number; documents: DocumentItem[] }> {
+    const headers: Record<string, string> = {};
+    if (currentAuthToken) {
+      headers['Authorization'] = `Bearer ${currentAuthToken}`;
+    }
+    const res = await fetch(`${API_BASE_URL}/documents/upload`, {
+      method: 'POST',
+      headers,
+      body: formData
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(json.error || json.message || `HTTP ${res.status}`);
+    }
+    return (json.data !== undefined ? json.data : json);
+  },
+  async delete(id: string): Promise<{ id: string }> {
+    return fetchJson<{ id: string }>(`${API_BASE_URL}/documents/${id}`, {
+      method: 'DELETE'
+    });
+  },
+  async updateStatus(id: string, status: StatusLifecycle): Promise<DocumentItem> {
     return fetchJson<DocumentItem>(`${API_BASE_URL}/documents/${id}/status`, {
       method: 'PATCH',
-      body: JSON.stringify({ status, userRole })
+      body: JSON.stringify({ status })
     });
   }
 };

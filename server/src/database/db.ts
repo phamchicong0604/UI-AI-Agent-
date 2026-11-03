@@ -12,9 +12,25 @@ import {
   AuditEvent,
   AiConnectionConfig,
   AccountModelSnapshot,
-  ModelOption
+  ModelOption,
+  Project,
+  StoredFileRecord,
+  DocumentVersionRecord,
+  SkillRecord,
+  SkillVersionRecord,
+  PipelineRunRecord,
+  ReviewDecisionRecord,
+  DocumentRelationshipRecord,
+  UploadBatchRecord,
+  JobRecord,
+  KnowledgeUnitRecord,
+  KnowledgeSourceRecord,
+  ConflictRecord
 } from '../common/types.js';
 import { computeSha256, computeAuditEventHash } from '../common/crypto.js';
+import { defaultFileStore } from '../common/fileStore.js';
+import { DatabaseMigrator } from './migrator.js';
+import { allMigrations } from './migrations/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -24,149 +40,71 @@ if (!fs.existsSync(dataDir)) {
   fs.mkdirSync(dataDir, { recursive: true });
 }
 
-const dbPath = path.join(dataDir, 'docqa.sqlite');
+// BUG-029: Allow tests to specify an isolated DB path via DOCQA_DB_PATH env var
+const dbPath = process.env.DOCQA_DB_PATH || path.join(dataDir, 'docqa.sqlite');
 export const db = new Database(dbPath);
 
-// Enable WAL for performance and concurrent integrity
+// Enable WAL and busy timeout for concurrent testing and production resilience
 db.pragma('journal_mode = WAL');
+db.pragma('busy_timeout = 5000');
 
-// Initialize database schema
-db.exec(`
-  CREATE TABLE IF NOT EXISTS documents (
-    id TEXT PRIMARY KEY,
-    category TEXT,
-    status TEXT,
-    data TEXT NOT NULL,
-    updated_at TEXT
-  );
-
-  CREATE TABLE IF NOT EXISTS requirements (
-    id TEXT PRIMARY KEY,
-    type TEXT,
-    priority TEXT,
-    status TEXT,
-    data TEXT NOT NULL,
-    updated_at TEXT
-  );
-
-  CREATE TABLE IF NOT EXISTS evidence (
-    id TEXT PRIMARY KEY,
-    type TEXT,
-    environment TEXT,
-    status TEXT,
-    data TEXT NOT NULL,
-    created_at TEXT
-  );
-
-  CREATE TABLE IF NOT EXISTS test_cases (
-    id TEXT PRIMARY KEY,
-    requirement_id TEXT,
-    status TEXT,
-    type TEXT,
-    priority TEXT,
-    data TEXT NOT NULL,
-    updated_at TEXT
-  );
-
-  CREATE TABLE IF NOT EXISTS test_runs (
-    id TEXT PRIMARY KEY,
-    status TEXT,
-    environment TEXT,
-    data TEXT NOT NULL,
-    created_at TEXT
-  );
-
-  CREATE TABLE IF NOT EXISTS bugs (
-    id TEXT PRIMARY KEY,
-    status TEXT,
-    severity TEXT,
-    priority TEXT,
-    data TEXT NOT NULL,
-    updated_at TEXT
-  );
-
-  CREATE TABLE IF NOT EXISTS audit_events (
-    id TEXT PRIMARY KEY,
-    event_hash TEXT NOT NULL,
-    previous_event_hash TEXT,
-    timestamp TEXT NOT NULL,
-    data TEXT NOT NULL
-  );
-
-  CREATE TABLE IF NOT EXISTS settings (
-    key TEXT PRIMARY KEY,
-    value TEXT NOT NULL,
-    updated_at TEXT
-  );
-
-  CREATE TABLE IF NOT EXISTS ai_connections (
-    id TEXT PRIMARY KEY DEFAULT 'primary',
-    provider TEXT NOT NULL DEFAULT 'google',
-    auth_method TEXT NOT NULL DEFAULT 'api_key',
-    api_key TEXT,
-    base_url TEXT,
-    model TEXT NOT NULL DEFAULT 'gemini-4-argon-medium',
-    effort_level TEXT DEFAULT 'medium',
-    max_output_tokens INTEGER DEFAULT 32768,
-    cli_binary TEXT DEFAULT 'claude',
-    cli_version TEXT,
-    cli_auth_status TEXT,
-    connection_status TEXT NOT NULL DEFAULT 'disconnected',
-    last_tested_at TEXT,
-    latency_ms INTEGER,
-    error_message TEXT,
-    updated_at TEXT NOT NULL
-  );
-
-  -- Models available to a specific provider account (synced from CLI subscription or API key)
-  CREATE TABLE IF NOT EXISTS ai_models (
-    provider TEXT NOT NULL,
-    auth_method TEXT NOT NULL,
-    source TEXT NOT NULL,
-    model_id TEXT NOT NULL,
-    account TEXT,
-    name TEXT NOT NULL,
-    sort_order INTEGER NOT NULL DEFAULT 0,
-    data TEXT NOT NULL,
-    synced_at TEXT NOT NULL,
-    PRIMARY KEY (provider, auth_method, source, model_id)
-  );
-  CREATE INDEX IF NOT EXISTS idx_ai_models_lookup ON ai_models (provider, auth_method, source);
-
-  -- Per-model effort level settings stored separately in SQLite
-  CREATE TABLE IF NOT EXISTS ai_model_efforts (
-    provider TEXT NOT NULL,
-    model_id TEXT NOT NULL,
-    effort_level TEXT NOT NULL DEFAULT 'medium',
-    max_output_tokens INTEGER DEFAULT 32768,
-    resolved_variant TEXT,
-    updated_at TEXT NOT NULL,
-    PRIMARY KEY (provider, model_id)
-  );
-  CREATE INDEX IF NOT EXISTS idx_ai_model_efforts_lookup ON ai_model_efforts (provider, model_id);
-`);
-
-try {
-  db.exec("ALTER TABLE ai_connections ADD COLUMN effort_level TEXT DEFAULT 'medium'");
-} catch {}
-try {
-  db.exec("ALTER TABLE ai_connections ADD COLUMN max_output_tokens INTEGER DEFAULT 32768");
-} catch {}
-try {
-  db.exec("ALTER TABLE ai_connections ADD COLUMN base_model TEXT");
-} catch {}
+// Execute database schema migrations with transactional versioning (E1-T1)
+export const migrator = new DatabaseMigrator(db, allMigrations);
+migrator.runPendingMigrations();
 
 /* -------------------------------------------------------------
  * SEED BASELINE DATA IF TABLES ARE EMPTY
  * ----------------------------------------------------------- */
 
 function seedDatabaseIfEmpty() {
-  const docCount = (db.prepare('SELECT count(*) as count FROM documents').get() as any).count;
-  if (docCount === 0) {
-    console.log('[SQLite DB] Seeding initial baseline proposal records...');
+  // 1. Seed Projects if empty
+  const projectCount = (db.prepare('SELECT count(*) as count FROM projects').get() as any).count;
+  if (projectCount === 0) {
+    console.log('[SQLite DB] Seeding initial baseline projects...');
+    const initialProjects: Project[] = [
+      {
+        id: 'PRJ-01',
+        name: 'AI-Ready QA Platform MVP',
+        key: 'DOCQA',
+        description: 'Centralized workspace for Project Documentation, Traceability, Evidence and QA Lifecycle.',
+        version: 'v0.1.0-mvp',
+        author: 'Alex Nguyen (Lead Architect)',
+        membersCount: 8,
+        createdAt: '2026-11-01',
+        updatedAt: '2026-11-01'
+      },
+      {
+        id: 'PRJ-02',
+        name: 'Fintech Core Banking & Payments',
+        key: 'FCB',
+        description: 'High-security microservices platform for inter-bank clearing and biometric transfers.',
+        version: 'v2.4.1',
+        author: 'Minh Tran (PM)',
+        membersCount: 14,
+        createdAt: '2026-09-15',
+        updatedAt: '2026-10-20'
+      }
+    ];
 
-    // Seed Documents
-    const initialDocs: DocumentItem[] = [
+    const insProj = db.prepare(`
+      INSERT INTO projects (id, name, key, description, version, author, members_count, data, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    for (const p of initialProjects) {
+      insProj.run(p.id, p.name, p.key, p.description, p.version, p.author, p.membersCount, JSON.stringify(p), p.createdAt, p.updatedAt || p.createdAt);
+    }
+  }
+
+  // Ensure all existing documents are mapped to PRJ-01 if missing
+  try {
+    db.exec("UPDATE documents SET project_id = 'PRJ-01' WHERE project_id IS NULL OR project_id = ''");
+  } catch {}
+
+  // Ensure baseline documents exist
+  const insertDoc = db.prepare('INSERT OR IGNORE INTO documents (id, project_id, category, status, data, updated_at) VALUES (?, ?, ?, ?, ?, ?)');
+
+  // Seed Documents
+  const initialDocs: DocumentItem[] = [
       {
         id: 'DOC-01',
         title: 'Project Charter & Stakeholder Matrix',
@@ -212,14 +150,201 @@ function seedDatabaseIfEmpty() {
             checksum: `sha256:${computeSha256('DOC-02|v1.2|BRD Authentication & RBAC')}`
           }
         ]
+      },
+      {
+        id: 'DOC-03',
+        projectId: 'PRJ-01',
+        title: 'Software Requirements Specification (SRS) - Evidence Lifecycle',
+        category: '03_System_Requirements',
+        currentVersion: 'v1.1',
+        status: 'In Review',
+        author: 'Sarah Le (Lead BA)',
+        updatedAt: '2026-11-02 11:45',
+        description: 'Functional specs for EVD storage references, multi-entity linking and audit immutability.',
+        contentMarkdown: `# Software Requirements Specification (SRS) - Evidence Lifecycle
+
+> **Module**: Lưu trữ Bằng chứng EVD & Chuỗi Truy vết Bất biến  
+> **Phiên bản**: v1.1 (In Review) | **Tác giả**: Sarah Le (Lead BA)
+
+---
+
+## 1. Mục tiêu Phân hệ Bằng chứng (EVD)
+Hệ thống **Evidence Lifecycle Management** chịu trách nhiệm thu thập, xác thực tính toàn vẹn và liên kết bằng chứng thực thi kiểm thử (log file, ảnh chụp màn hình, kết quả API JSON, video quay màn hình) với:
+- Ca kiểm thử (\`TestCaseItem\`)
+- Đợt chạy kiểm thử (\`TestRunItem\`)
+- Yêu cầu nghiệp vụ (\`RequirementItem\`)
+- Lỗi phát sinh (\`BugItem\`)
+
+## 2. Quy trình Vòng đời Bằng chứng (Lifecycle Flow)
+1. **Đăng ký (Upload & Register)**: Tester tải lên bằng chứng, nhập mô tả và môi trường thực thi (QA, Staging, Prod).
+2. **Ký số & Mã băm (Hashing)**: Backend tự động tính toán mã băm mật mã học SHA-256 (\`sha256:xxxx\`) cho tệp đính kèm.
+3. **Liên kết Chéo (Multi-entity Traceability)**: Gắn ID bằng chứng \`EVD-xxx\` vào các bản ghi liên quan.
+4. **Xác thực Bằng chứng (Verify & Certify)**: Lead QA hoặc Approver kiểm tra và xác nhận tính xác thực (\`Verified = true\`).
+`,
+        tags: ['SRS', 'EVD', 'Storage'],
+        linkedRequirementsCount: 2,
+        versions: [
+          {
+            version: 'v1.1',
+            updatedAt: '2026-11-02 11:45',
+            author: 'Sarah Le',
+            status: 'In Review',
+            changeSummary: 'Defined presigned URL direct upload and tamper-evident hash signing.',
+            fileSize: '3.1 MB',
+            checksum: `sha256:${computeSha256('DOC-03|v1.1|SRS Evidence Lifecycle|2026-11-02')}`
+          }
+        ]
+      },
+      {
+        id: 'DOC-04',
+        projectId: 'PRJ-01',
+        title: 'Figma Design System & 3-Column QA Workspace Wireframes',
+        category: '04_UI_UX',
+        currentVersion: 'v2.0',
+        status: 'Approved',
+        author: 'Duc Pham (QA Lead)',
+        updatedAt: '2026-11-01 16:20',
+        description: 'Component specs, 3-column split view layout, and evidence attachment drawer UI.',
+        contentMarkdown: `# Figma Design System & 3-Column QA Workspace Wireframes
+
+> **Dự án**: AI-Ready QA Platform MVP  
+> **Chủ đề**: Quy chuẩn Giao diện 3 Cột & Bộ màu Dark Theme Slate  
+> **Phiên bản**: v2.0 (Approved) | **Tác giả**: Duc Pham (QA Lead)
+
+---
+
+## 1. Triết lý Thiết kế Giao diện (Design Principles)
+- **Zero White Borders**: Sử dụng dải màu Slate tối sâu (\`slate-950: #020617\`, \`slate-850: #162032\`, \`slate-750: #293548\`) loại bỏ hoàn toàn viền trắng fallback.
+- **Three-Column Navigation**: Phân tách không gian làm việc chuyên nghiệp (Menu trái -> Danh mục/Cây dữ liệu -> Không gian đọc đặc tả & kiểm thử).
+- **Instant Typography**: Trình hiển thị Markdown tối ưu hóa cho tài liệu kỹ thuật, bảng biểu RACI, checkbox tiêu chí nghiệm thu.
+`,
+        tags: ['Figma', 'UI/UX', 'Wireframe'],
+        linkedRequirementsCount: 1,
+        versions: [
+          {
+            version: 'v2.0',
+            updatedAt: '2026-11-01 16:20',
+            author: 'Duc Pham',
+            status: 'Approved',
+            changeSummary: 'Finalized dark slate theme tokens and 3-column test execution workspace layout.',
+            fileSize: '1.8 MB',
+            checksum: `sha256:${computeSha256('DOC-04|v2.0|Figma UI Specs 3-Column|2026-11-01')}`
+          }
+        ]
+      },
+      {
+        id: 'DOC-05',
+        projectId: 'PRJ-01',
+        title: 'REST API & Traceability Schema Specifications',
+        category: '05_Technical_Documents',
+        currentVersion: 'v1.0',
+        status: 'Approved',
+        author: 'Khoa Dang (Tech Lead)',
+        updatedAt: '2026-10-30 18:00',
+        description: 'Complete OpenAPI 3.0 schema, webhook contracts, and SQLite JSON persistence layout.',
+        contentMarkdown: `# REST API & Traceability Schema Specifications
+
+> **Hệ thống**: DocQA Backend Micro-Service  
+> **Giao thức**: RESTful JSON / SSE Streams  
+> **Phiên bản**: v1.0 (Approved) | **Tác giả**: Khoa Dang (Tech Lead)
+
+---
+
+## 1. Danh sách Điểm cuối API (Endpoints Summary)
+| Phương thức | Đường dẫn API | Mô tả nghiệp vụ |
+| :--- | :--- | :--- |
+| \`GET\` | \`/api/v1/documents\` | Truy vấn danh sách tài liệu dự án |
+| \`POST\` | \`/api/v1/documents/upload-batch\` | Tải lên tệp .md, .zip tự động giải nén |
+| \`GET\` | \`/api/v1/ai/connection\` | Lấy trạng thái kết nối AI & Model |
+| \`POST\` | \`/api/v1/ai/connection/select-model\` | Chọn và lưu riêng model vào SQLite |
+| \`POST\` | \`/api/v1/ai/models/effort\` | Lưu mức độ Out (Effort) theo từng model |
+`,
+        tags: ['API', 'OpenAPI', 'Technical'],
+        linkedRequirementsCount: 3,
+        versions: [
+          {
+            version: 'v1.0',
+            updatedAt: '2026-10-30 18:00',
+            author: 'Khoa Dang',
+            status: 'Approved',
+            changeSummary: 'Approved initial OpenAPI specification for Document & AI connection modules.',
+            fileSize: '4.2 MB',
+            checksum: `sha256:${computeSha256('DOC-05|v1.0|OpenAPI Spec Traceability|2026-10-30')}`
+          }
+        ]
+      },
+      {
+        id: 'DOC-06',
+        projectId: 'PRJ-01',
+        title: 'Master Test Strategy & Acceptance Plan',
+        category: '06_QA',
+        currentVersion: 'v1.3',
+        status: 'Approved',
+        author: 'Duc Pham (QA Lead)',
+        updatedAt: '2026-11-02 14:00',
+        description: 'Regression coverage goals, test levels, defect severity definitions, and release sign-off rules.',
+        contentMarkdown: `# Master Test Strategy & Acceptance Plan
+
+> **Chiến lược**: Kiểm thử Toàn diện & Đối soát Toàn vẹn Yêu cầu  
+> **Mục tiêu**: Bao phủ tối thiểu 95% Ma trận Truy vết  
+> **Phiên bản**: v1.3 (Approved) | **Tác giả**: Duc Pham (QA Lead)
+
+---
+
+## 1. Tiêu chí Chất lượng & Cấp độ Kiểm thử
+1. **Unit & Integration Test**: Đảm bảo 100% logic mật mã học SHA-256, SQLite repository và AI subprocess bridge hoạt động ổn định.
+2. **Acceptance Criteria Verification**: Mọi ca kiểm thử phải truy xuất ngược được về ít nhất 1 tài liệu đặc tả có trạng thái \`Approved\`.
+3. **Evidence Strict Rule**: Bất kỳ ca kiểm thử nào có kết quả \`Failed\` bắt buộc phải đính kèm ít nhất 1 bằng chứng EVD hợp lệ.
+`,
+        tags: ['QA', 'Strategy', 'TestPlan'],
+        linkedRequirementsCount: 2,
+        versions: [
+          {
+            version: 'v1.3',
+            updatedAt: '2026-11-02 14:00',
+            author: 'Duc Pham',
+            status: 'Approved',
+            changeSummary: 'Mandated SHA-256 evidence validation for all failed test execution results.',
+            fileSize: '2.1 MB',
+            checksum: `sha256:${computeSha256('DOC-06|v1.3|QA Master Strategy|2026-11-02')}`
+          }
+        ]
       }
     ];
 
-    const insertDoc = db.prepare('INSERT INTO documents (id, category, status, data, updated_at) VALUES (?, ?, ?, ?, ?)');
     for (const doc of initialDocs) {
-      insertDoc.run(doc.id, doc.category, doc.status, JSON.stringify(doc), doc.updatedAt);
+      insertDoc.run(doc.id, doc.projectId || 'PRJ-01', doc.category, doc.status, JSON.stringify(doc), doc.updatedAt);
     }
 
+    // Seed sample document for PRJ-02
+    const fcbDoc: DocumentItem = {
+      id: 'DOC-FCB-01',
+      projectId: 'PRJ-02',
+      title: 'Core Banking Payment Gateway & Clearing Specs',
+      category: '03_System_Requirements',
+      currentVersion: 'v2.4',
+      status: 'Approved',
+      author: 'Minh Tran (PM)',
+      updatedAt: '2026-10-20 14:00',
+      description: 'Interbank settlement specifications, biometric authentication protocols, and ISO 20022 message mappings.',
+      tags: ['Payment', 'ISO20022', 'CoreBanking'],
+      linkedRequirementsCount: 1,
+      versions: [
+        {
+          version: 'v2.4',
+          updatedAt: '2026-10-20 14:00',
+          author: 'Minh Tran',
+          status: 'Approved',
+          changeSummary: 'Updated clearing window and zero-trust payload encryption rules.',
+          fileSize: '3.4 MB',
+          checksum: `sha256:${computeSha256('DOC-FCB-01|v2.4|Core Banking Payment Gateway|2026-10-20')}`
+        }
+      ]
+    };
+    insertDoc.run(fcbDoc.id, fcbDoc.projectId!, fcbDoc.category, fcbDoc.status, JSON.stringify(fcbDoc), fcbDoc.updatedAt);
+
+  const reqCount = (db.prepare('SELECT count(*) as count FROM requirements').get() as any).count;
+  if (reqCount === 0) {
     // Seed Requirements
     const initialReqs: RequirementItem[] = [
       {
@@ -488,14 +613,98 @@ function seedAiConnectionIfEmpty() {
 
 seedAiConnectionIfEmpty();
 
+function ensureStoredFilesSynced() {
+  try {
+    const docs = db.prepare('SELECT id, data FROM documents').all() as { id: string; data: string }[];
+    for (const row of docs) {
+      try {
+        const doc = JSON.parse(row.data);
+        const versions = db.prepare('SELECT id, file_id FROM document_versions WHERE document_id = ?').all(doc.id) as any[];
+        if (versions.length === 0 || !versions[0].file_id) {
+          const content = doc.contentMarkdown || `# ${doc.title}
+
+> **Dự án**: ${doc.projectId || 'PRJ-01'} | **Mã**: \`${doc.id}\` | **Phiên bản**: \`${doc.currentVersion || 'v1.0'}\`  
+> **Tác giả**: ${doc.author || 'System'} | **Cập nhật**: ${doc.updatedAt || '2026-11-01'}
+
+---
+
+## 1. Tóm tắt Mục tiêu & Bối cảnh
+${doc.description || 'Đặc tả kỹ thuật chuẩn hệ thống.'}
+
+## 2. Quy tắc Nghiệp vụ & Toàn vẹn
+- Tất cả các văn bản đều được ký số bất biến SHA-256.
+- Mọi thay đổi đều được ghi vết kiểm toán chuỗi khối.
+`;
+          const buffer = Buffer.from(content, 'utf-8');
+          const fileSha256 = `sha256:${computeSha256(buffer)}`;
+          const storageKey = `projects/${doc.projectId || 'PRJ-01'}/${doc.id}/${doc.id}.md`;
+          const fileId = `FILE-${computeSha256(Buffer.from(storageKey)).slice(0, 16)}`;
+
+          defaultFileStore.put(`${doc.id}.md`, buffer, storageKey);
+          db.prepare(`
+            INSERT OR IGNORE INTO stored_files (id, storage_key, original_name, mime_type, size_bytes, sha256, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+          `).run(fileId, storageKey, `${doc.id}.md`, 'text/markdown', buffer.length, fileSha256, doc.updatedAt || '2026-11-01');
+
+          const vId = `${doc.id}-v1_0`;
+          db.prepare(`
+            INSERT OR REPLACE INTO document_versions (id, document_id, version_no, file_id, extracted_content, status, change_summary, created_by, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(vId, doc.id, doc.currentVersion || 'v1.0', fileId, content, doc.status || 'Draft', 'Synchronized baseline version', doc.author || 'System', doc.updatedAt || '2026-11-01');
+        }
+      } catch {}
+    }
+  } catch {}
+}
+
+ensureStoredFilesSynced();
+
 /* -------------------------------------------------------------
  * REPOSITORY HELPERS FOR ALL ENTITIES
  * ----------------------------------------------------------- */
 
 export const dbRepository = {
+  projects: {
+    getAll(): Project[] {
+      const rows = db.prepare('SELECT data FROM projects ORDER BY created_at ASC').all() as { data: string }[];
+      return rows.map(r => JSON.parse(r.data));
+    },
+    getById(id: string): Project | null {
+      const row = db.prepare('SELECT data FROM projects WHERE id = ?').get(id) as { data: string } | undefined;
+      return row ? JSON.parse(row.data) : null;
+    },
+    upsert(p: Project & { aiPolicy?: string; ai_policy?: string }): Project {
+      const policy = p.aiPolicy || p.ai_policy || 'OFFLINE_ONLY';
+      const stmt = db.prepare(`
+        INSERT INTO projects (id, name, key, description, version, author, members_count, ai_policy, data, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          name = excluded.name,
+          key = excluded.key,
+          description = excluded.description,
+          version = excluded.version,
+          author = excluded.author,
+          members_count = excluded.members_count,
+          ai_policy = coalesce(excluded.ai_policy, projects.ai_policy, 'OFFLINE_ONLY'),
+          data = excluded.data,
+          updated_at = excluded.updated_at
+      `);
+      stmt.run(p.id, p.name, p.key, p.description, p.version, p.author, p.membersCount, policy, JSON.stringify(p), p.createdAt, p.updatedAt || p.createdAt);
+      return p;
+    },
+    delete(id: string): boolean {
+      const result = db.prepare('DELETE FROM projects WHERE id = ?').run(id);
+      return result.changes > 0;
+    }
+  },
+
   documents: {
-    getAll(): DocumentItem[] {
-      const rows = db.prepare('SELECT data FROM documents ORDER BY updated_at DESC').all() as { data: string }[];
+    getAll(projectId?: string): DocumentItem[] {
+      if (projectId && projectId !== 'ALL') {
+        const rows = db.prepare('SELECT data FROM documents WHERE project_id = ? ORDER BY category ASC, id ASC').all(projectId) as { data: string }[];
+        return rows.map(r => JSON.parse(r.data));
+      }
+      const rows = db.prepare('SELECT data FROM documents ORDER BY category ASC, id ASC').all() as { data: string }[];
       return rows.map(r => JSON.parse(r.data));
     },
     getById(id: string): DocumentItem | null {
@@ -503,20 +712,492 @@ export const dbRepository = {
       return row ? JSON.parse(row.data) : null;
     },
     upsert(doc: DocumentItem): void {
+      const pId = doc.projectId || 'PRJ-01';
+      const docWithProj = { ...doc, projectId: pId };
       const stmt = db.prepare(`
-        INSERT INTO documents (id, category, status, data, updated_at)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO documents (id, project_id, category, status, data, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
+          project_id = excluded.project_id,
           category = excluded.category,
           status = excluded.status,
           data = excluded.data,
           updated_at = excluded.updated_at
       `);
-      stmt.run(doc.id, doc.category, doc.status, JSON.stringify(doc), doc.updatedAt);
+      stmt.run(doc.id, pId, doc.category, doc.status, JSON.stringify(docWithProj), doc.updatedAt);
     },
     delete(id: string): boolean {
       const result = db.prepare('DELETE FROM documents WHERE id = ?').run(id);
       return result.changes > 0;
+    }
+  },
+
+  storedFiles: {
+    getById(id: string): StoredFileRecord | null {
+      const row = db.prepare('SELECT id, storage_key as storageKey, original_name as originalName, mime_type as mimeType, size_bytes as sizeBytes, sha256, created_at as createdAt FROM stored_files WHERE id = ?').get(id) as StoredFileRecord | undefined;
+      return row || null;
+    },
+    getBySha256(sha256: string): StoredFileRecord | null {
+      const row = db.prepare('SELECT id, storage_key as storageKey, original_name as originalName, mime_type as mimeType, size_bytes as sizeBytes, sha256, created_at as createdAt FROM stored_files WHERE sha256 = ?').get(sha256) as StoredFileRecord | undefined;
+      return row || null;
+    },
+    upsert(file: StoredFileRecord): void {
+      const stmt = db.prepare(`
+        INSERT INTO stored_files (id, storage_key, original_name, mime_type, size_bytes, sha256, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          storage_key = excluded.storage_key,
+          original_name = excluded.original_name,
+          mime_type = excluded.mime_type,
+          size_bytes = excluded.size_bytes,
+          sha256 = excluded.sha256,
+          created_at = excluded.created_at
+      `);
+      stmt.run(file.id, file.storageKey, file.originalName, file.mimeType, file.sizeBytes, file.sha256, file.createdAt);
+    }
+  },
+
+  documentVersions: {
+    getByDocumentId(docId: string): DocumentVersionRecord[] {
+      const rows = db.prepare('SELECT id, document_id as documentId, version_no as versionNo, file_id as fileId, extracted_content as extractedContent, status, change_summary as changeSummary, created_by as createdBy, created_at as createdAt FROM document_versions WHERE document_id = ? ORDER BY version_no ASC').all(docId) as DocumentVersionRecord[];
+      return rows;
+    },
+    getById(id: string): DocumentVersionRecord | null {
+      const row = db.prepare('SELECT id, document_id as documentId, version_no as versionNo, file_id as fileId, extracted_content as extractedContent, status, change_summary as changeSummary, created_by as createdBy, created_at as createdAt FROM document_versions WHERE id = ?').get(id) as DocumentVersionRecord | undefined;
+      return row || null;
+    },
+    upsert(v: DocumentVersionRecord): void {
+      const stmt = db.prepare(`
+        INSERT INTO document_versions (id, document_id, version_no, file_id, extracted_content, status, change_summary, created_by, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          version_no = excluded.version_no,
+          file_id = excluded.file_id,
+          extracted_content = excluded.extracted_content,
+          status = excluded.status,
+          change_summary = excluded.change_summary,
+          created_by = excluded.created_by,
+          created_at = excluded.created_at
+      `);
+      stmt.run(v.id, v.documentId, v.versionNo, v.fileId, v.extractedContent, v.status, v.changeSummary, v.createdBy, v.createdAt);
+    }
+  },
+
+  skills: {
+    getAll(): SkillRecord[] {
+      return db.prepare('SELECT id, name, description, created_at as createdAt FROM skills ORDER BY name ASC').all() as SkillRecord[];
+    },
+    getById(id: string): SkillRecord | null {
+      const row = db.prepare('SELECT id, name, description, created_at as createdAt FROM skills WHERE id = ?').get(id) as SkillRecord | undefined;
+      return row || null;
+    },
+    getVersions(skillId: string): SkillVersionRecord[] {
+      return db.prepare('SELECT id, skill_id as skillId, version, prompt_template as promptTemplate, prompt_hash as promptHash, input_schema as inputSchema, output_schema as outputSchema, model_recommended as modelRecommended, created_at as createdAt FROM skill_versions WHERE skill_id = ? ORDER BY version DESC').all(skillId) as SkillVersionRecord[];
+    },
+    upsertVersion(v: SkillVersionRecord): void {
+      const stmt = db.prepare(`
+        INSERT INTO skill_versions (id, skill_id, version, prompt_template, prompt_hash, input_schema, output_schema, model_recommended, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(skill_id, version) DO UPDATE SET
+          prompt_template = excluded.prompt_template,
+          prompt_hash = excluded.prompt_hash,
+          input_schema = excluded.input_schema,
+          output_schema = excluded.output_schema,
+          model_recommended = excluded.model_recommended
+      `);
+      stmt.run(v.id, v.skillId, v.version, v.promptTemplate, v.promptHash, v.inputSchema, v.outputSchema, v.modelRecommended, v.createdAt);
+    }
+  },
+
+  pipelineRuns: {
+    getByDocumentVersion(docVersionId: string): PipelineRunRecord[] {
+      return db.prepare('SELECT id, document_version_id as documentVersionId, skill_version_id as skillVersionId, model_id as modelId, provider, status, input_payload as inputPayload, output_payload as outputPayload, tokens_prompt as tokensPrompt, tokens_completion as tokensCompletion, latency_ms as latencyMs, error_message as errorMessage, created_at as createdAt FROM pipeline_runs WHERE document_version_id = ? ORDER BY created_at DESC').all(docVersionId) as PipelineRunRecord[];
+    },
+    getById(id: string): PipelineRunRecord | null {
+      const row = db.prepare('SELECT id, document_version_id as documentVersionId, skill_version_id as skillVersionId, model_id as modelId, provider, status, input_payload as inputPayload, output_payload as outputPayload, tokens_prompt as tokensPrompt, tokens_completion as tokensCompletion, latency_ms as latencyMs, error_message as errorMessage, created_at as createdAt FROM pipeline_runs WHERE id = ?').get(id) as PipelineRunRecord | undefined;
+      return row || null;
+    },
+    upsert(run: PipelineRunRecord): void {
+      const stmt = db.prepare(`
+        INSERT INTO pipeline_runs (id, document_version_id, skill_version_id, model_id, provider, status, input_payload, output_payload, tokens_prompt, tokens_completion, latency_ms, error_message, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          status = excluded.status,
+          output_payload = excluded.output_payload,
+          tokens_prompt = excluded.tokens_prompt,
+          tokens_completion = excluded.tokens_completion,
+          latency_ms = excluded.latency_ms,
+          error_message = excluded.error_message
+      `);
+      stmt.run(run.id, run.documentVersionId, run.skillVersionId, run.modelId, run.provider, run.status, run.inputPayload, run.outputPayload, run.tokensPrompt, run.tokensCompletion, run.latencyMs, run.errorMessage, run.createdAt);
+    }
+  },
+
+  reviewDecisions: {
+    getByTarget(targetType: string, targetId: string): ReviewDecisionRecord[] {
+      return db.prepare('SELECT id, target_type as targetType, target_id as targetId, decision, reviewer, comment, created_at as createdAt FROM review_decisions WHERE target_type = ? AND target_id = ? ORDER BY created_at DESC').all(targetType, targetId) as ReviewDecisionRecord[];
+    },
+    create(decision: ReviewDecisionRecord): void {
+      db.prepare(`
+        INSERT OR REPLACE INTO review_decisions (id, target_type, target_id, decision, reviewer, comment, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(decision.id, decision.targetType, decision.targetId, decision.decision, decision.reviewer, decision.comment, decision.createdAt);
+    }
+  },
+
+  documentRelationships: {
+    getByDocument(docId: string): DocumentRelationshipRecord[] {
+      return db.prepare('SELECT id, source_doc_id as sourceDocId, target_doc_id as targetDocId, relationship_type as relationshipType, confidence_score as confidenceScore, created_at as createdAt FROM document_relationships WHERE source_doc_id = ? OR target_doc_id = ?').all(docId, docId) as DocumentRelationshipRecord[];
+    },
+    upsert(rel: DocumentRelationshipRecord): void {
+      db.prepare(`
+        INSERT INTO document_relationships (id, source_doc_id, target_doc_id, relationship_type, confidence_score, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          relationship_type = excluded.relationship_type,
+          confidence_score = excluded.confidence_score
+      `).run(rel.id, rel.sourceDocId, rel.targetDocId, rel.relationshipType, rel.confidenceScore, rel.createdAt);
+    }
+  },
+
+  uploadBatches: {
+    getById(id: string): UploadBatchRecord | null {
+      const row = db.prepare(`
+        SELECT id, project_id as projectId, filename, total_files as totalFiles,
+               processed_files as processedFiles, failed_files as failedFiles,
+               status, error_summary as errorSummary, batch_details as batchDetails,
+               created_at as createdAt
+        FROM upload_batches
+        WHERE id = ?
+      `).get(id) as UploadBatchRecord | undefined;
+      return row || null;
+    },
+    getByProjectId(projectId: string): UploadBatchRecord[] {
+      const rows = db.prepare(`
+        SELECT id, project_id as projectId, filename, total_files as totalFiles,
+               processed_files as processedFiles, failed_files as failedFiles,
+               status, error_summary as errorSummary, batch_details as batchDetails,
+               created_at as createdAt
+        FROM upload_batches
+        WHERE project_id = ?
+        ORDER BY created_at DESC
+      `).all(projectId) as UploadBatchRecord[];
+      return rows;
+    },
+    upsert(b: UploadBatchRecord): void {
+      const stmt = db.prepare(`
+        INSERT INTO upload_batches (id, project_id, filename, total_files, processed_files, failed_files, status, error_summary, batch_details, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          project_id = excluded.project_id,
+          filename = excluded.filename,
+          total_files = excluded.total_files,
+          processed_files = excluded.processed_files,
+          failed_files = excluded.failed_files,
+          status = excluded.status,
+          error_summary = excluded.error_summary,
+          batch_details = excluded.batch_details
+      `);
+      stmt.run(b.id, b.projectId, b.filename, b.totalFiles, b.processedFiles, b.failedFiles, b.status, b.errorSummary || null, b.batchDetails || null, b.createdAt);
+    }
+  },
+
+  jobs: {
+    create(job: JobRecord): void {
+      const stmt = db.prepare(`
+        INSERT INTO jobs (id, type, payload, status, attempts, max_attempts, locked_by, locked_at, next_run_at, last_error, result, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      stmt.run(
+        job.id,
+        job.type,
+        job.payload,
+        job.status,
+        job.attempts,
+        job.maxAttempts,
+        job.lockedBy || null,
+        job.lockedAt || null,
+        job.nextRunAt,
+        job.lastError || null,
+        job.result || null,
+        job.createdAt,
+        job.updatedAt
+      );
+    },
+    getById(id: string): JobRecord | null {
+      const row = db.prepare(`
+        SELECT id, type, payload, status, attempts, max_attempts as maxAttempts,
+               locked_by as lockedBy, locked_at as lockedAt, next_run_at as nextRunAt,
+               last_error as lastError, result, created_at as createdAt, updated_at as updatedAt
+        FROM jobs WHERE id = ?
+      `).get(id) as JobRecord | undefined;
+      return row || null;
+    },
+    pollAndLock(workerId: string, limit = 5): JobRecord[] {
+      const now = new Date().toISOString();
+      const lockTx = db.transaction(() => {
+        const rows = db.prepare(`
+          SELECT id, type, payload, status, attempts, max_attempts as maxAttempts,
+                 locked_by as lockedBy, locked_at as lockedAt, next_run_at as nextRunAt,
+                 last_error as lastError, result, created_at as createdAt, updated_at as updatedAt
+          FROM jobs
+          WHERE status = 'PENDING' AND next_run_at <= ?
+          ORDER BY next_run_at ASC
+          LIMIT ?
+        `).all(now, limit) as JobRecord[];
+
+        if (rows.length === 0) return [];
+
+        const updateStmt = db.prepare(`
+          UPDATE jobs
+          SET status = 'RUNNING', locked_by = ?, locked_at = ?, updated_at = ?
+          WHERE id = ? AND status = 'PENDING'
+        `);
+
+        const locked: JobRecord[] = [];
+        for (const row of rows) {
+          const res = updateStmt.run(workerId, now, now, row.id);
+          if (res.changes > 0) {
+            locked.push({
+              ...row,
+              status: 'RUNNING',
+              lockedBy: workerId,
+              lockedAt: now,
+              updatedAt: now
+            });
+          }
+        }
+        return locked;
+      });
+
+      return lockTx.immediate();
+    },
+    resetForRetry(id: string): boolean {
+      const now = new Date().toISOString();
+      const res = db.prepare(`
+        UPDATE jobs
+        SET status = 'PENDING', attempts = 0, locked_by = NULL, locked_at = NULL, next_run_at = ?, last_error = NULL, updated_at = ?
+        WHERE id = ? AND status = 'FAILED'
+      `).run(now, now, id);
+      return res.changes > 0;
+    },
+    heartbeat(id: string, workerId: string): boolean {
+      const now = new Date().toISOString();
+      const res = db.prepare(`
+        UPDATE jobs
+        SET locked_at = ?, updated_at = ?
+        WHERE id = ? AND status = 'RUNNING' AND locked_by = ?
+      `).run(now, now, id, workerId);
+      return res.changes > 0;
+    },
+    complete(id: string, result?: any, workerId?: string): boolean {
+      const now = new Date().toISOString();
+      const resultStr = result ? (typeof result === 'string' ? result : JSON.stringify(result)) : null;
+      let query = `
+        UPDATE jobs
+        SET status = 'COMPLETED', result = ?, locked_by = NULL, locked_at = NULL, updated_at = ?
+        WHERE id = ? AND status = 'RUNNING'
+      `;
+      const params: any[] = [resultStr, now, id];
+      if (workerId) {
+        query += ` AND locked_by = ?`;
+        params.push(workerId);
+      }
+      const res = db.prepare(query).run(...params);
+      return res.changes > 0;
+    },
+    failWithRetry(id: string, error: string, backoffSeconds?: number, workerId?: string): boolean {
+      const now = new Date();
+      const job = this.getById(id);
+      if (!job) return false;
+      if (job.status !== 'RUNNING') return false;
+      if (workerId && job.lockedBy && job.lockedBy !== workerId) return false;
+
+      const newAttempts = job.attempts + 1;
+      const timestamp = now.toISOString();
+
+      if (newAttempts < job.maxAttempts) {
+        // Exponential backoff or custom backoff: default = 2^(attempts) * 5 seconds
+        const delay = backoffSeconds !== undefined ? backoffSeconds : Math.pow(2, newAttempts) * 5;
+        const nextRun = new Date(now.getTime() + delay * 1000).toISOString();
+        const res = db.prepare(`
+          UPDATE jobs
+          SET status = 'PENDING', attempts = ?, locked_by = NULL, locked_at = NULL, next_run_at = ?, last_error = ?, updated_at = ?
+          WHERE id = ? AND status = 'RUNNING'
+        `).run(newAttempts, nextRun, error, timestamp, id);
+        return res.changes > 0;
+      } else {
+        const res = db.prepare(`
+          UPDATE jobs
+          SET status = 'FAILED', attempts = ?, locked_by = NULL, locked_at = NULL, last_error = ?, updated_at = ?
+          WHERE id = ? AND status = 'RUNNING'
+        `).run(newAttempts, error, timestamp, id);
+        return res.changes > 0;
+      }
+    },
+    cancel(id: string, reason?: string): boolean {
+      const now = new Date().toISOString();
+      const res = db.prepare(`
+        UPDATE jobs
+        SET status = 'CANCELLED', last_error = ?, locked_by = NULL, locked_at = NULL, updated_at = ?
+        WHERE id = ? AND status IN ('PENDING', 'RUNNING')
+      `).run(reason || 'Job cancelled by user', now, id);
+      return res.changes > 0;
+    },
+    resetStaleLocks(staleSeconds = 300): number {
+      const cutoff = new Date(Date.now() - staleSeconds * 1000).toISOString();
+      const now = new Date().toISOString();
+
+      const staleJobs = db.prepare(`
+        SELECT id, attempts, max_attempts FROM jobs
+        WHERE status = 'RUNNING' AND (locked_at IS NULL OR locked_at < ?)
+      `).all(cutoff) as Array<{ id: string; attempts: number; max_attempts: number }>;
+
+      let recovered = 0;
+      for (const job of staleJobs) {
+        const nextAttempts = job.attempts + 1;
+        if (nextAttempts >= job.max_attempts) {
+          db.prepare(`
+            UPDATE jobs
+            SET status = 'FAILED', attempts = ?, locked_by = NULL, locked_at = NULL, last_error = 'Stale lock timeout exceeded max attempts', updated_at = ?
+            WHERE id = ? AND status = 'RUNNING'
+          `).run(nextAttempts, now, job.id);
+        } else {
+          db.prepare(`
+            UPDATE jobs
+            SET status = 'PENDING', attempts = ?, locked_by = NULL, locked_at = NULL, last_error = 'Stale lock recovered', updated_at = ?
+            WHERE id = ? AND status = 'RUNNING'
+          `).run(nextAttempts, now, job.id);
+        }
+        recovered++;
+      }
+      return recovered;
+    }
+  },
+
+  knowledgeUnits: {
+    create(unit: KnowledgeUnitRecord): void {
+      db.prepare(`
+        INSERT INTO knowledge_units (id, project_id, unit_type, content, subject, action, condition, evidence_level, status, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          content = excluded.content,
+          subject = excluded.subject,
+          action = excluded.action,
+          condition = excluded.condition,
+          evidence_level = excluded.evidence_level,
+          status = excluded.status,
+          updated_at = excluded.updated_at
+      `).run(unit.id, unit.projectId, unit.unitType, unit.content, unit.subject, unit.action, unit.condition || null, unit.evidenceLevel, unit.status, unit.createdAt, unit.updatedAt);
+    },
+    getById(id: string): KnowledgeUnitRecord | null {
+      const row = db.prepare(`
+        SELECT id, project_id as projectId, unit_type as unitType, content,
+               subject, action, condition, evidence_level as evidenceLevel,
+               status, created_at as createdAt, updated_at as updatedAt
+        FROM knowledge_units WHERE id = ?
+      `).get(id) as KnowledgeUnitRecord | undefined;
+      return row || null;
+    },
+    getByProject(projectId: string, filter?: { status?: string; unitType?: string }): KnowledgeUnitRecord[] {
+      let query = `
+        SELECT id, project_id as projectId, unit_type as unitType, content,
+               subject, action, condition, evidence_level as evidenceLevel,
+               status, created_at as createdAt, updated_at as updatedAt
+        FROM knowledge_units WHERE project_id = ?
+      `;
+      const params: any[] = [projectId];
+      if (filter?.status && filter.status !== 'ALL') {
+        query += ' AND status = ?';
+        params.push(filter.status);
+      }
+      if (filter?.unitType && filter.unitType !== 'ALL') {
+        query += ' AND unit_type = ?';
+        params.push(filter.unitType);
+      }
+      query += ' ORDER BY created_at DESC';
+      return db.prepare(query).all(...params) as KnowledgeUnitRecord[];
+    },
+    getByDocumentVersion(documentVersionId: string): (KnowledgeUnitRecord & { sources: KnowledgeSourceRecord[] })[] {
+      const rows = db.prepare(`
+        SELECT DISTINCT ku.id, ku.project_id as projectId, ku.unit_type as unitType, ku.content,
+               ku.subject, ku.action, ku.condition, ku.evidence_level as evidenceLevel,
+               ku.status, ku.created_at as createdAt, ku.updated_at as updatedAt
+        FROM knowledge_units ku
+        JOIN knowledge_sources ks ON ks.unit_id = ku.id
+        WHERE ks.document_version_id = ?
+        ORDER BY ku.created_at DESC
+      `).all(documentVersionId) as KnowledgeUnitRecord[];
+
+      return rows.map(r => ({
+        ...r,
+        sources: dbRepository.knowledgeSources.getByUnitId(r.id)
+      }));
+    },
+    updateStatus(id: string, status: string): boolean {
+      const now = new Date().toISOString();
+      const res = db.prepare('UPDATE knowledge_units SET status = ?, updated_at = ? WHERE id = ?').run(status, now, id);
+      return res.changes > 0;
+    },
+    supersedeOlderUnits(projectId: string, currentUnitId: string, subject: string): number {
+      const now = new Date().toISOString();
+      const res = db.prepare(`
+        UPDATE knowledge_units
+        SET status = 'Superseded', updated_at = ?
+        WHERE project_id = ? AND subject = ? AND id != ? AND status = 'Approved'
+      `).run(now, projectId, subject, currentUnitId);
+      return res.changes;
+    }
+  },
+
+  knowledgeSources: {
+    create(src: KnowledgeSourceRecord): void {
+      db.prepare(`
+        INSERT OR REPLACE INTO knowledge_sources (id, unit_id, document_version_id, heading_path, char_offset_start, char_offset_end, page_number, exact_quote, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(src.id, src.unitId, src.documentVersionId, src.headingPath, src.charOffsetStart, src.charOffsetEnd, src.pageNumber || null, src.exactQuote, src.createdAt);
+    },
+    getByUnitId(unitId: string): KnowledgeSourceRecord[] {
+      return db.prepare(`
+        SELECT id, unit_id as unitId, document_version_id as documentVersionId,
+               heading_path as headingPath, char_offset_start as charOffsetStart,
+               char_offset_end as charOffsetEnd, page_number as pageNumber,
+               exact_quote as exactQuote, created_at as createdAt
+        FROM knowledge_sources WHERE unit_id = ?
+      `).all(unitId) as KnowledgeSourceRecord[];
+    }
+  },
+
+  conflicts: {
+    create(c: ConflictRecord): void {
+      db.prepare(`
+        INSERT INTO conflicts (id, project_id, unit_a_id, unit_b_id, conflict_type, severity, description, resolution, resolved_by, resolved_at, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(c.id, c.projectId, c.unitAId, c.unitBId, c.conflictType, c.severity, c.description, c.resolution, c.resolvedBy || null, c.resolvedAt || null, c.createdAt);
+    },
+    getUnresolvedByProject(projectId: string, severity?: string): ConflictRecord[] {
+      let query = `
+        SELECT id, project_id as projectId, unit_a_id as unitAId, unit_b_id as unitBId,
+               conflict_type as conflictType, severity, description, resolution,
+               resolved_by as resolvedBy, resolved_at as resolvedAt, created_at as createdAt
+        FROM conflicts
+        WHERE project_id = ? AND resolution = 'UNRESOLVED'
+      `;
+      const params: any[] = [projectId];
+      if (severity) {
+        query += ' AND severity = ?';
+        params.push(severity);
+      }
+      return db.prepare(query).all(...params) as ConflictRecord[];
+    },
+    resolve(id: string, resolution: string, resolvedBy: string, notes?: string): boolean {
+      const now = new Date().toISOString();
+      const res = db.prepare(`
+        UPDATE conflicts
+        SET resolution = ?, resolved_by = ?, resolved_at = ?, resolution_notes = coalesce(?, resolution_notes)
+        WHERE id = ? AND resolution = 'UNRESOLVED'
+      `).run(resolution, resolvedBy, now, notes || null, id);
+      return res.changes > 0;
     }
   },
 

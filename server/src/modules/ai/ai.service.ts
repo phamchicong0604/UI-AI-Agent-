@@ -1,7 +1,8 @@
 import { computeSha256 } from '../../common/crypto.js';
 import { RequirementItem, TestCaseItem, DocumentItem } from '../../common/types.js';
-import { dbRepository } from '../../database/db.js';
+import { db, dbRepository } from '../../database/db.js';
 import { aiConnectionManager } from './ai.connection.manager.js';
+import { defaultDataPolicyService } from './dataPolicyService.js';
 import { 
   GROUNDED_TEST_CASE_GENERATOR_SYSTEM_PROMPT, 
   CHANGE_IMPACT_ANALYSIS_SYSTEM_PROMPT 
@@ -11,6 +12,7 @@ export interface GenerateTestCasesPayload {
   requirement: RequirementItem;
   sourceDoc?: DocumentItem;
   userPrompt?: string;
+  projectId?: string;
 }
 
 export interface ImpactAnalysisPayload {
@@ -46,10 +48,40 @@ export class AiService {
   async generateGroundedDrafts(payload: GenerateTestCasesPayload): Promise<any> {
     const { requirement, sourceDoc, userPrompt } = payload;
 
+    // Resolve true projectId from DB first for fail-closed policy enforcement (BUG-001, BUG-002)
+    let projectId: string | undefined;
+    if (requirement?.id) {
+      try {
+        const reqRow = db.prepare('SELECT project_id FROM requirements WHERE id = ?').get(requirement.id) as { project_id: string } | undefined;
+        if (reqRow?.project_id) {
+          projectId = reqRow.project_id;
+        }
+      } catch {}
+    }
+    if (!projectId && (requirement?.sourceReferences?.[0]?.documentId || sourceDoc?.id)) {
+      const docId = requirement?.sourceReferences?.[0]?.documentId || sourceDoc?.id;
+      if (docId) {
+        try {
+          const docRow = db.prepare('SELECT project_id FROM documents WHERE id = ?').get(docId) as { project_id: string } | undefined;
+          if (docRow?.project_id) {
+            projectId = docRow.project_id;
+          }
+        } catch {}
+      }
+    }
+    if (!projectId) {
+      projectId = payload.projectId || (requirement as any)?.projectId || sourceDoc?.projectId;
+    }
+
+    // Fail-closed data policy check (BUG-001): If project is OFFLINE_ONLY, strictly avoid external AI calls
+    const policy = defaultDataPolicyService.getProjectPolicy(projectId);
+    if (policy === 'OFFLINE_ONLY' || policy !== 'ALLOW_EXTERNAL') {
+      return this.fallbackGroundedEngine(requirement, sourceDoc, userPrompt);
+    }
+
     try {
-      const isTestEnv = Boolean(process.env.VITEST || process.env.NODE_ENV === 'test');
       const activeConn = aiConnectionManager.getActiveConnection();
-      if (!isTestEnv && activeConn && activeConn.connectionStatus === 'connected') {
+      if (activeConn && activeConn.connectionStatus === 'connected') {
         const promptText = `
 Requirement ID: ${requirement.id}
 Title: ${requirement.title}
@@ -60,7 +92,8 @@ Custom Instructions: ${userPrompt || 'Synthesize positive, negative, and boundar
 `;
         const rawResponse = await aiConnectionManager.generateCompletion(
           GROUNDED_TEST_CASE_GENERATOR_SYSTEM_PROMPT,
-          promptText
+          promptText,
+          { projectId }
         );
 
         if (rawResponse) {

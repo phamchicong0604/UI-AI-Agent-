@@ -37,6 +37,7 @@ export const initialProjects: Project[] = [
 export const initialDocuments: DocumentItem[] = [
   {
     id: 'DOC-01',
+    projectId: 'PRJ-01',
     title: 'Project Charter & Stakeholder Matrix',
     category: '01_Project_Overview',
     currentVersion: 'v1.0',
@@ -44,6 +45,35 @@ export const initialDocuments: DocumentItem[] = [
     author: 'Minh Tran (PM)',
     updatedAt: '2026-11-01 10:30',
     description: 'Executive summary, target milestones, sponsor sign-off, and organizational responsibility matrix.',
+    contentMarkdown: `# Project Charter & Stakeholder Governance Matrix
+
+> **Dự án**: AI-Ready QA Platform MVP (v0.1.0-mvp)  
+> **Tác giả**: Minh Tran (PM) | **Trạng thái**: Đã phê duyệt (Approved) | **Mã băm**: SHA-256 Verified
+
+---
+
+## 1. Tuyên bố Mục tiêu Dự án (Executive Summary)
+Nền tảng **DocQA** được xây dựng nhằm giải quyết bài toán cốt lõi trong quy trình phát triển phần mềm:
+- **Tập trung hóa tài liệu đặc tả**: Lưu trữ tài liệu nguồn (BRD, SRS, UI/UX, API specs) theo cấu trúc chuẩn 8 thư mục.
+- **Tính toàn vẹn không thể giả mạo**: Mỗi phiên bản tài liệu được gán mã băm mật mã học **SHA-256** và ghi vết chuỗi khối kiểm toán (Audit Trail Chain).
+- **Truy vết 100% hai chiều (Bi-directional Traceability)**: Kết nối chặt chẽ từ Tài liệu nguồn → Yêu cầu nghiệp vụ → Ca kiểm thử → Lần chạy thử nghiệm → Bằng chứng EVD → Lỗi Defect.
+
+## 2. Ma trận Trách nhiệm & Các Bên liên quan (RACI Matrix)
+
+| Vai trò (Role) | Đại diện chính | Trách nhiệm trong hệ thống | Quyền hạn phê duyệt |
+| :--- | :--- | :--- | :--- |
+| **Project Admin** | Alex Nguyen | Quản trị dự án, cấu hình hệ thống, AI Engine | Toàn quyền (Full Access) |
+| **PM / Project Lead** | Minh Tran | Quản lý tiến độ, phê duyệt Charter & Baseline | Phê duyệt Tài liệu & Test Plan |
+| **Lead BA** | Sarah Le | Soạn thảo BRD, SRS, phân tách Acceptance Criteria | Tạo & Chỉnh sửa Yêu cầu |
+| **Tech Lead / DEV** | Khoa Dang | Thiết kế Kiến trúc, OpenAPI, sửa lỗi Defect | Tạo & cập nhật Bug |
+| **QA Lead** | Duc Pham | Thiết kế Test Matrix, thực thi Run, xác thực EVD | Phê duyệt Test Case, Chạy Test |
+| **Approver** | Hội đồng nghiệm thu | Rà soát và đóng dấu Baseline chính thức | Phê duyệt trạng thái Approved |
+
+## 3. Các Nguyên tắc Nghiệp vụ Bắt buộc (Governance Rules)
+1. **Quy tắc BR-AUTH-01**: Chỉ người dùng có vai trò \`Project Admin\`, \`PM\`, hoặc \`Reviewer / Approver\` mới có quyền phê duyệt trạng thái \`Approved\` cho tài liệu.
+2. **Quy tắc BR-AUTH-02**: Tài liệu ở trạng thái \`Draft\` hoặc \`In Review\` **tuyệt đối không được sử dụng** làm căn cứ chính thức để nghiệm thu tính năng hoặc sinh mã tự động.
+3. **Quy tắc BR-EVD-01**: Mọi kết quả kiểm thử thất bại (\`Fail\`) hoặc bị chặn (\`Blocked\`) bắt buộc phải đính kèm tối thiểu 01 bằng chứng \`EVD\` hợp lệ trước khi lưu trữ.
+`,
     tags: ['Overview', 'Charter', 'Governance'],
     linkedRequirementsCount: 2,
     versions: [
@@ -60,6 +90,7 @@ export const initialDocuments: DocumentItem[] = [
   },
   {
     id: 'DOC-02',
+    projectId: 'PRJ-01',
     title: 'Business Requirements Document (BRD) - Authentication & RBAC',
     category: '02_Business_Requirements',
     currentVersion: 'v1.2',
@@ -67,6 +98,43 @@ export const initialDocuments: DocumentItem[] = [
     author: 'Sarah Le (Lead BA)',
     updatedAt: '2026-11-02 09:15',
     description: 'Comprehensive business rules for role privileges (Admin, PM, BA, DEV, QA, Approver) and security requirements.',
+    contentMarkdown: `# Business Requirements Document (BRD) - Authentication & RBAC
+
+> **Phân hệ**: Xác thực danh tính & Phân quyền kiểm thử (Auth & RBAC)  
+> **Phiên bản**: v1.2 (Approved) | **Tác giả**: Sarah Le (Lead BA)
+
+---
+
+## 1. Bối cảnh & Phạm vi (Context & Scope)
+Tài liệu này xác định các yêu cầu nghiệp vụ bắt buộc đối với việc kiểm soát quyền truy cập theo vai trò (Role-Based Access Control) và các cổng phê duyệt chất lượng (Quality Approval Gates) trong nền tảng DocQA.
+
+## 2. Đặc tả Vai trò & Ma trận Phân quyền (RBAC Specification)
+
+### 2.1. Danh sách Vai trò Hệ thống
+- **QA**: Thiết kế ca kiểm thử, ghi nhận kết quả thực thi kiểm thử và đăng ký bằng chứng EVD.
+- **BA (Business Analyst)**: Tạo và chỉnh sửa yêu cầu (Requirements), định nghĩa Acceptance Criteria (AC) và Business Rules.
+- **Tech Lead / DEV**: Thiết kế kỹ thuật, sửa mã nguồn, cập nhật trạng thái lỗi Defect.
+- **PM / Project Lead**: Quản lý kế hoạch phát hành, theo dõi tiến độ tổng thể và ma trận truy vết.
+- **Reviewer / Approver**: Người có thẩm quyền phê duyệt các mốc Baseline tài liệu và yêu cầu.
+- **Project Admin**: Quản trị tài khoản, kết nối AI Engine và cấu hình hệ thống.
+
+### 2.2. Bảng Phân quyền Thao tác (Permission Matrix)
+
+| Chức năng | QA | BA | DEV | PM | Approver | Admin |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| Đọc tài liệu dự án | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Tạo / Tải lên tài liệu (.md, .zip) | ❌ | ✅ | ✅ | ✅ | ❌ | ✅ |
+| Phê duyệt tài liệu (Approved) | ❌ | ❌ | ❌ | ✅ | ✅ | ✅ |
+| Tạo Yêu cầu (Requirements) | ❌ | ✅ | ❌ | ✅ | ❌ | ✅ |
+| Tạo Ca kiểm thử (Test Cases) | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ |
+| Thực thi Chạy thử & Ghi nhận EVD | ✅ | ❌ | ✅ | ❌ | ❌ | ✅ |
+| Chuyển trạng thái Lỗi Defect | ✅ | ❌ | ✅ | ✅ | ❌ | ✅ |
+
+## 3. Điều kiện Nghiệm thu Nghiệp vụ (Acceptance Criteria)
+- [x] **AC-01**: Khi người dùng không có vai trò Approver nhấn nút Phê duyệt, hệ thống từ chối với thông báo lỗi 403 Forbidden.
+- [x] **AC-02**: Mọi thay đổi trạng thái tài liệu hoặc yêu cầu phải tự động ghi nhận vào chuỗi nhật ký kiểm toán (Audit Trail) với hàm băm SHA-256 nối chuỗi.
+- [x] **AC-03**: Hệ thống phải hỗ trợ chuyển đổi vai trò nhanh trên Header để kiểm thử phân quyền ngay lập tức trong môi trường thử nghiệm.
+`,
     tags: ['BRD', 'Auth', 'RBAC'],
     linkedRequirementsCount: 3,
     versions: [
@@ -92,6 +160,7 @@ export const initialDocuments: DocumentItem[] = [
   },
   {
     id: 'DOC-03',
+    projectId: 'PRJ-01',
     title: 'Software Requirements Specification (SRS) - Evidence Lifecycle',
     category: '03_System_Requirements',
     currentVersion: 'v1.1',
@@ -99,6 +168,30 @@ export const initialDocuments: DocumentItem[] = [
     author: 'Sarah Le (Lead BA)',
     updatedAt: '2026-11-02 11:45',
     description: 'Functional specs for EVD storage references, multi-entity linking and audit immutability.',
+    contentMarkdown: `# Software Requirements Specification (SRS) - Evidence Lifecycle
+
+> **Module**: Lưu trữ Bằng chứng EVD & Chuỗi Truy vết Bất biến  
+> **Phiên bản**: v1.1 (In Review) | **Tác giả**: Sarah Le (Lead BA)
+
+---
+
+## 1. Mục tiêu Phân hệ Bằng chứng (EVD)
+Hệ thống **Evidence Lifecycle Management** chịu trách nhiệm thu thập, xác thực tính toàn vẹn và liên kết bằng chứng thực thi kiểm thử (log file, ảnh chụp màn hình, kết quả API JSON, video quay màn hình) với:
+- Ca kiểm thử (\`TestCaseItem\`)
+- Đợt chạy kiểm thử (\`TestRunItem\`)
+- Yêu cầu nghiệp vụ (\`RequirementItem\`)
+- Lỗi phát sinh (\`BugItem\`)
+
+## 2. Quy trình Vòng đời Bằng chứng (Lifecycle Flow)
+1. **Đăng ký (Upload & Register)**: Tester tải lên bằng chứng, nhập mô tả và môi trường thực thi (QA, Staging, Prod).
+2. **Ký số & Mã băm (Hashing)**: Backend tự động tính toán mã băm mật mã học SHA-256 (\`sha256:xxxx\`) cho tệp đính kèm.
+3. **Liên kết Chéo (Multi-entity Traceability)**: Gắn ID bằng chứng \`EVD-xxx\` vào các bản ghi liên quan.
+4. **Xác thực Bằng chứng (Verify & Certify)**: Lead QA hoặc Approver kiểm tra và xác nhận tính xác thực (\`Verified = true\`).
+
+## 3. Quy định Bảo mật & Riêng tư (Data Privacy Rules)
+- Nghiêm cấm lưu trữ trực tiếp \`Bearer Token\`, \`API Key\`, mật khẩu hoặc thông tin thẻ thanh toán trong tệp bằng chứng.
+- Dữ liệu nhạy cảm phải được che mờ (masking) trước khi tải lên hệ thống.
+`,
     tags: ['SRS', 'EVD', 'Storage'],
     linkedRequirementsCount: 2,
     versions: [
@@ -115,6 +208,7 @@ export const initialDocuments: DocumentItem[] = [
   },
   {
     id: 'DOC-04',
+    projectId: 'PRJ-01',
     title: 'Figma Design System & 3-Column QA Workspace Wireframes',
     category: '04_UI_UX',
     currentVersion: 'v2.0',
@@ -122,6 +216,28 @@ export const initialDocuments: DocumentItem[] = [
     author: 'Elena Vo (Lead UI/UX)',
     updatedAt: '2026-11-01 16:20',
     description: 'High-fidelity wireframes including the specialized 3-column test case workspace and responsive drawer navigation.',
+    contentMarkdown: `# Figma Design System & 3-Column QA Workspace Wireframes
+
+> **Thiết kế**: UI/UX Specification v2.0 (Approved)  
+> **Tác giả**: Elena Vo (Lead UI/UX) | **Công cụ nguồn**: Figma Workspace
+
+---
+
+## 1. Kiến trúc Bố cục Giao diện (Workspace Architecture)
+Giao diện DocQA được chuẩn hóa theo tỷ lệ tối ưu cho kỹ sư kiểm thử phần mềm:
+- **Header cố định**: Tích hợp bộ chọn Dự án, Thanh tìm kiếm toàn cục, Nút chuyển vai trò RBAC và Trạng thái đồng bộ Backend 5001.
+- **Sidebar điều hướng**: Trực quan với 9 phân hệ chức năng (Dashboard, Kho tài liệu, Quản lý Yêu cầu, Bằng chứng, Ca kiểm thử, Đợt chạy, Theo dõi Lỗi, Ma trận Truy vết, Cấu hình).
+- **Workspace 3 cột (3-Column QA Authoring Layout)**:
+  - Cột 1: Danh sách ca kiểm thử lọc theo Trạng thái / Mức độ ưu tiên.
+  - Cột 2: Bảng soạn thảo các bước thực thi (Action & Expected Result).
+  - Cột 3: Drawer bằng chứng thực thi EVD và lịch sử bình luận rà soát.
+
+## 2. Bảng Màu Thương hiệu & Token (Design Tokens)
+- **Primary Indigo**: \`#4f46e5\` (indigo-600) dùng cho hành động chính và tiêu đề.
+- **Surface Dark**: \`#0f172a\` (slate-900) kết hợp \`#020617\` (slate-950) tạo chiều sâu tương phản cao.
+- **Status Green**: \`#10b981\` (emerald-500) dành cho trạng thái \`Approved\`, \`Pass\`, \`Healthy\`.
+- **Status Amber**: \`#f59e0b\` (amber-500) dành cho \`In Review\`, \`Gaps\`.
+`,
     tags: ['UI', 'Wireframes', 'Workspace'],
     linkedRequirementsCount: 1,
     versions: [
@@ -138,6 +254,7 @@ export const initialDocuments: DocumentItem[] = [
   },
   {
     id: 'DOC-05',
+    projectId: 'PRJ-01',
     title: 'REST API & Traceability Schema Specifications',
     category: '05_Technical_Documents',
     currentVersion: 'v1.0',
@@ -145,6 +262,30 @@ export const initialDocuments: DocumentItem[] = [
     author: 'Khoa Dang (Tech Lead)',
     updatedAt: '2026-10-30 18:00',
     description: 'OpenAPI 3.1 definitions for Documents, Requirements, Test Runs, Evidence uploads and Traceability queries.',
+    contentMarkdown: `# REST API & Traceability Schema Specifications
+
+> **Giao thức**: REST API v1.0 (OpenAPI 3.1)  
+> **Công nghệ**: Express.js, TypeScript, Better-SQLite3, Multer, Adm-Zip
+
+---
+
+## 1. Danh sách Endpoints Chính (Core API Endpoints)
+
+| Method | Endpoint | Mục đích |
+| :--- | :--- | :--- |
+| \`GET\` | \`/api/v1/projects\` | Lấy danh sách toàn bộ dự án |
+| \`POST\` | \`/api/v1/projects\` | Đăng ký dự án mới |
+| \`GET\` | \`/api/v1/documents?projectId=:id\` | Lấy danh sách tài liệu theo dự án |
+| \`POST\` | \`/api/v1/documents/upload\` | Tải lên tài liệu (.md, .zip, .txt) |
+| \`DELETE\` | \`/api/v1/documents/:id\` | Xóa tài liệu khỏi cơ sở dữ liệu |
+| \`PATCH\` | \`/api/v1/documents/:id/status\` | Phê duyệt chuyển đổi trạng thái tài liệu |
+
+## 2. Tiêu chuẩn Mã băm Toàn vẹn (Integrity Standards)
+Mọi bản ghi tài liệu khi lưu vào SQLite đều phải tính toán mã SHA-256 Checksum:
+\`\`\`ts
+const checksum = 'sha256:' + crypto.createHash('sha256').update(content).digest('hex');
+\`\`\`
+`,
     tags: ['API', 'OpenAPI', 'Backend'],
     linkedRequirementsCount: 2,
     versions: [
@@ -161,6 +302,7 @@ export const initialDocuments: DocumentItem[] = [
   },
   {
     id: 'DOC-06',
+    projectId: 'PRJ-01',
     title: 'Master Test Strategy & Acceptance Plan',
     category: '06_QA',
     currentVersion: 'v1.3',
@@ -168,6 +310,18 @@ export const initialDocuments: DocumentItem[] = [
     author: 'Duc Pham (QA Lead)',
     updatedAt: '2026-11-02 08:30',
     description: 'Quality criteria, pass rate gates (min 95% pass rate), blocking criteria, and regression test matrix.',
+    contentMarkdown: `# Master Test Strategy & Acceptance Plan
+
+> **Chiến lược**: QA Governance & Test Lifecycle Matrix v1.3 (Approved)  
+> **Tác giả**: Duc Pham (QA Lead)
+
+---
+
+## 1. Mục tiêu Chiến lược Kiểm thử (Quality Objectives)
+1. **Đảm bảo độ bao phủ**: Tỷ lệ yêu cầu có ca kiểm thử đạt **100%** trước khi đóng Sprint.
+2. **Cổng chất lượng phát hành (Release Gate)**: Tỷ lệ thực thi đạt tối thiểu **95% Pass Rate** trong đợt chạy Regression cuối cùng.
+3. **Chính sách Bằng chứng bắt buộc**: Bất kỳ ca kiểm thử nào có kết quả \`Fail\` hoặc \`Blocked\` bắt buộc phải đính kèm tối thiểu 01 bằng chứng \`EVD\` hợp lệ (ảnh chụp màn hình lỗi hoặc log HTTP).
+`,
     tags: ['QA', 'TestPlan', 'Acceptance'],
     linkedRequirementsCount: 3,
     versions: [
@@ -184,6 +338,7 @@ export const initialDocuments: DocumentItem[] = [
   },
   {
     id: 'DOC-07',
+    projectId: 'PRJ-02',
     title: 'Evidence Retention & Data Privacy Guide',
     category: '07_EVD_Evidence',
     currentVersion: 'v1.0',
@@ -191,6 +346,18 @@ export const initialDocuments: DocumentItem[] = [
     author: 'Khoa Dang (Tech Lead)',
     updatedAt: '2026-10-25 15:10',
     description: 'Security policies prohibiting raw secrets/bearer tokens in evidence, masking guidelines, and AWS S3 encryption.',
+    contentMarkdown: `# Evidence Retention & Data Privacy Guide
+
+> **Phân loại**: Bảo mật & Tuân thủ Dữ liệu EVD  
+> **Tác giả**: Khoa Dang (Tech Lead) | **Dự án**: Fintech Core Banking & Payments (FCB)
+
+---
+
+## 1. Nguyên tắc Bảo mật Bằng chứng (Security Principles)
+1. **Che mờ dữ liệu (Data Masking)**: Tất cả mã PIN, CVV, OTP, khóa cá nhân phải được thay thế bằng ký tự \`***\` trước khi chụp ảnh màn hình hoặc lưu file log.
+2. **Mã hóa Lưu trữ**: Tệp đính kèm được mã hóa AES-256 trên bộ lưu trữ đám mây.
+3. **Mã băm toàn vẹn**: Bắt buộc tính toán SHA-256 Checksum ngay tại thời điểm đăng ký.
+`,
     tags: ['Security', 'Compliance', 'Evidence'],
     linkedRequirementsCount: 1,
     versions: [
@@ -207,6 +374,7 @@ export const initialDocuments: DocumentItem[] = [
   },
   {
     id: 'DOC-08',
+    projectId: 'PRJ-02',
     title: 'Release Notes & Change Decision Log v0.1',
     category: '08_Change_History',
     currentVersion: 'v0.1',
@@ -214,6 +382,20 @@ export const initialDocuments: DocumentItem[] = [
     author: 'Minh Tran (PM)',
     updatedAt: '2026-11-02 14:00',
     description: 'Sprint changelog, architectural decisions regarding AI readiness and modular schema.',
+    contentMarkdown: `# Release Notes & Change Decision Log v0.1
+
+> **Ghi chú Phát hành**: Sprint 1 Milestone Baseline  
+> **Tác giả**: Minh Tran (PM) | **Trạng thái**: Draft
+
+---
+
+## 1. Các Tính năng Đã Hoàn thành (Delivered Features)
+- [x] Quản trị tài liệu phân cấp chuẩn 8 thư mục.
+- [x] Bộ lọc tài liệu gắn chặt theo từng Không gian Dự án riêng biệt.
+- [x] Tải lên tài liệu hàng loạt qua file \`.md\` và \`.zip\` tự động giải nén & phân loại.
+- [x] Chế độ Đọc tài liệu dự án trực quan (Project Document Reader Workspace).
+- [x] Ký chữ ký số mật mã học SHA-256 cho từng phiên bản.
+`,
     tags: ['ReleaseNotes', 'Decisions'],
     linkedRequirementsCount: 0,
     versions: [

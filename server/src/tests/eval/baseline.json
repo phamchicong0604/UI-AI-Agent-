@@ -1,0 +1,10 @@
+{
+  "totalCases": 10,
+  "classificationAccuracy": 100,
+  "multiLabelF1": 95.24,
+  "extractionPrecision": 100,
+  "extractionRecall": 95,
+  "conflictDetectionRecall": 100,
+  "averageLatencyMs": 0.6,
+  "totalTokensEstimated": 784
+}

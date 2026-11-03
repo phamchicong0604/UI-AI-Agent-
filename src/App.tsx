@@ -14,9 +14,22 @@ import { TraceabilityView } from './components/traceability/TraceabilityView';
 import { SettingsView } from './components/settings/SettingsView';
 import { AiAssistantModal } from './components/ai/AiAssistantModal';
 import { ChangeImpactModal } from './components/ai/ChangeImpactModal';
+import { QuickModelSwitcherModal } from './components/ai/QuickModelSwitcherModal';
 
 const MainLayout: React.FC = () => {
-  const { activeTab } = useApp();
+  const { activeTab, isModelSwitcherOpen, setIsModelSwitcherOpen } = useApp();
+
+  React.useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Support Alt+M or Ctrl+Shift+M or Cmd+Shift+M to quickly trigger /model switcher
+      if ((e.altKey && e.key.toLowerCase() === 'm') || ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'm')) {
+        e.preventDefault();
+        setIsModelSwitcherOpen(!isModelSwitcherOpen);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isModelSwitcherOpen, setIsModelSwitcherOpen]);
 
   return (
     <div className="flex h-screen w-full bg-slate-950 text-slate-100 overflow-hidden font-sans">
@@ -45,6 +58,10 @@ const MainLayout: React.FC = () => {
       {/* Global Modals */}
       <AiAssistantModal />
       <ChangeImpactModal />
+      <QuickModelSwitcherModal
+        isOpen={isModelSwitcherOpen}
+        onClose={() => setIsModelSwitcherOpen(false)}
+      />
     </div>
   );
 };

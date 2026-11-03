@@ -10,6 +10,7 @@ import {
 import { APIKeyAuthenticator } from './authenticators/api-key.authenticator.js';
 import { CLIAuthenticator } from './authenticators/cli.authenticator.js';
 import { PROVIDER_MODELS } from './model.registry.js';
+import { defaultDataPolicyService } from './dataPolicyService.js';
 
 export class AIConnectionManager {
   private apiKeyAuth = new APIKeyAuthenticator();
@@ -252,8 +253,16 @@ export class AIConnectionManager {
 
   /**
    * Unified completion execution: automatically dispatches to API Key or CLI Subscription.
+   * Enforces data policy check: fails closed if projectId is missing or project policy is OFFLINE_ONLY (BUG-001, BUG-002)
    */
-  async generateCompletion(systemPrompt: string, userPrompt: string): Promise<string> {
+  async generateCompletion(
+    systemPrompt: string,
+    userPrompt: string,
+    options?: { projectId?: string }
+  ): Promise<string> {
+    // Fail-closed policy check before dispatching any external request
+    defaultDataPolicyService.assertCanSendExternal(options?.projectId);
+
     const active = dbRepository.aiConnections.get();
     if (!active) {
       throw new Error('No AI connection configured.');

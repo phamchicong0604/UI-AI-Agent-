@@ -8,6 +8,205 @@ export type UserRole =
 
 export type StatusLifecycle = 'Draft' | 'In Review' | 'Approved' | 'Rejected' | 'Deprecated';
 
+export type AiDataPolicy = 'OFFLINE_ONLY' | 'COMMERCIAL_PRIVATE' | 'ALLOW_EXTERNAL';
+
+export interface Project {
+  id: string;
+  name: string;
+  key: string;
+  description: string;
+  version: string;
+  author: string;
+  membersCount: number;
+  aiPolicy?: AiDataPolicy;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface StoredFileRecord {
+  id: string;
+  storageKey: string;
+  originalName: string;
+  mimeType: string;
+  sizeBytes: number;
+  sha256: string;
+  createdAt: string;
+}
+
+export interface DocumentVersionRecord {
+  id: string;
+  documentId: string;
+  versionNo: string;
+  fileId: string | null;
+  extractedContent: string | null;
+  status: StatusLifecycle | WorkflowState;
+  changeSummary: string | null;
+  createdBy: string;
+  createdAt: string;
+}
+
+export interface SkillRecord {
+  id: string;
+  name: string;
+  description: string | null;
+  createdAt: string;
+}
+
+export interface SkillVersionRecord {
+  id: string;
+  skillId: string;
+  version: string;
+  promptTemplate: string;
+  promptHash: string;
+  inputSchema: string;
+  outputSchema: string;
+  modelRecommended: string | null;
+  createdAt: string;
+}
+
+export interface PipelineRunRecord {
+  id: string;
+  documentVersionId: string;
+  skillVersionId: string;
+  modelId: string;
+  provider: string;
+  status: 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED';
+  inputPayload: string | null;
+  outputPayload: string | null;
+  tokensPrompt: number;
+  tokensCompletion: number;
+  latencyMs: number;
+  errorMessage: string | null;
+  createdAt: string;
+}
+
+export interface ReviewDecisionRecord {
+  id: string;
+  targetType: 'document_version' | 'knowledge_unit' | 'conflict';
+  targetId: string;
+  decision: 'Approve' | 'Reject' | 'Request_Changes';
+  reviewer: string;
+  comment: string | null;
+  createdAt: string;
+}
+
+export interface DocumentRelationshipRecord {
+  id: string;
+  sourceDocId: string;
+  targetDocId: string;
+  relationshipType: 'duplicate_of' | 'version_of' | 'references' | 'supersedes';
+  confidenceScore: number;
+  createdAt: string;
+}
+
+export type KnowledgeUnitType = 'Requirement' | 'BusinessRule' | 'Constraint' | 'Definition';
+export type KnowledgeUnitStatus = 'Draft' | 'In Review' | 'Approved' | 'Rejected' | 'Superseded' | 'Deprecated';
+
+export interface KnowledgeUnitRecord {
+  id: string;
+  projectId: string;
+  unitType: KnowledgeUnitType;
+  content: string;
+  subject: string;
+  action: string;
+  condition: string | null;
+  evidenceLevel: 'Explicit' | 'Inferred' | 'Assumed' | 'Not Specified' | 'Conflict' | 'Unknown';
+  status: KnowledgeUnitStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface KnowledgeSourceRecord {
+  id: string;
+  unitId: string;
+  documentVersionId: string;
+  headingPath: string; // JSON string array
+  charOffsetStart: number;
+  charOffsetEnd: number;
+  pageNumber: number | null;
+  exactQuote: string;
+  createdAt: string;
+}
+
+export type ConflictSeverity = 'Critical' | 'Major' | 'Minor';
+export type ConflictResolution = 'KEEP_NEW_SUPERSEDE_OLD' | 'REJECT_NEW_PRESERVE_OLD' | 'MERGE_SPECIFICATION' | 'UNRESOLVED';
+
+export interface ConflictRecord {
+  id: string;
+  projectId: string;
+  unitAId: string;
+  unitBId: string;
+  conflictType: 'Contradiction' | 'Ambiguity' | 'Redundancy';
+  severity: ConflictSeverity;
+  description: string;
+  resolution: ConflictResolution;
+  resolvedBy: string | null;
+  resolvedAt: string | null;
+  createdAt: string;
+}
+
+export type UploadBatchStatus = 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'PARTIAL' | 'FAILED';
+
+export interface UploadBatchItemDetail {
+  filename: string;
+  status: 'SUCCESS' | 'FAILED' | 'DUPLICATE';
+  documentId?: string;
+  duplicateOfId?: string;
+  error?: string;
+  sizeBytes?: number;
+}
+
+export interface UploadBatchRecord {
+  id: string;
+  projectId: string;
+  filename: string;
+  totalFiles: number;
+  processedFiles: number;
+  failedFiles: number;
+  status: UploadBatchStatus;
+  errorSummary: string | null;
+  batchDetails: string | null; // JSON string of UploadBatchItemDetail[]
+  createdAt: string;
+}
+
+export type WorkflowState = 
+  | 'UPLOADED'
+  | 'FILE_PROCESSING'
+  | 'AI_ANALYSIS'
+  | 'VALIDATION'
+  | 'REVIEW_REQUIRED'
+  | 'ORGANIZED'
+  | 'FEEDBACK_REQUIRED'
+  | 'REANALYSIS'
+  | 'FAILED'
+  | 'CANCELLED'
+  | 'SUPERSEDED';
+
+export type JobType = 
+  | 'EXTRACT_FILE'
+  | 'PIPELINE_RUN'
+  | 'SEMANTIC_VALIDATION'
+  | 'PROMOTE_KNOWLEDGE'
+  | 'REINDEX_FTS';
+
+export type JobStatus = 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
+
+export interface JobRecord {
+  id: string;
+  type: JobType;
+  payload: string; // JSON string
+  status: JobStatus;
+  attempts: number;
+  maxAttempts: number;
+  lockedBy: string | null;
+  lockedAt: string | null;
+  nextRunAt: string;
+  lastError: string | null;
+  result: string | null; // JSON string
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface DocumentVersion {
   version: string;
   updatedAt: string;
@@ -30,6 +229,7 @@ export type DocumentCategory =
 
 export interface DocumentItem {
   id: string;
+  projectId?: string;
   title: string;
   category: DocumentCategory;
   currentVersion: string;

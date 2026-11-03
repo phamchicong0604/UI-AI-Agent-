@@ -17,10 +17,12 @@ build/
 .env.production.local
 server/.env
 
-# SQLite local databases
+# SQLite local databases and local files
 server/data/*.sqlite
 server/data/*.sqlite-shm
 server/data/*.sqlite-wal
+server/data/files/
+server/data/test_files/
 *.sqlite
 *.sqlite3
 

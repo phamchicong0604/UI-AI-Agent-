@@ -41,6 +41,7 @@ export interface DocumentVersion {
 
 export interface DocumentItem {
   id: string;
+  projectId?: string;
   title: string;
   category: DocumentCategory;
   currentVersion: string;

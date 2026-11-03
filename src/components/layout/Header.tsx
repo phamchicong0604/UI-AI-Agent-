@@ -26,7 +26,9 @@ export const Header: React.FC = () => {
     searchQuery,
     setSearchQuery,
     setIsAiModalOpen,
-    resetToSampleData,
+    isModelSwitcherOpen,
+    setIsModelSwitcherOpen,
+    aiConfig,
     backendConnected,
     isSyncing,
     syncWithBackend
@@ -69,22 +71,32 @@ export const Header: React.FC = () => {
 
   const openQuestions = questions.filter(q => q.status === 'Open');
 
+  const formatModelDisplayName = (modelId?: string) => {
+    if (!modelId) return 'Gemini 3.8 Flash';
+    if (modelId.startsWith('gemini-4-argon')) return 'Gemini 4 Argon';
+    if (modelId.startsWith('gemini-3.8-flash')) return 'Gemini 3.8 Flash';
+    if (modelId.startsWith('claude-opus-5-5')) return 'Claude Opus 5.5';
+    if (modelId.startsWith('claude-sonnet-5-5')) return 'Claude Sonnet 5.5';
+    if (modelId.startsWith('gpt-oss-120b')) return 'GPT-OSS 120B';
+    return modelId.replace(/-medium|-high|-low/, '');
+  };
+
   return (
-    <header className="h-16 bg-slate-900 border-b border-slate-800 px-6 flex items-center justify-between z-20">
-      {/* Left: Project Selector & Search */}
-      <div className="flex items-center gap-4">
+    <header className="h-16 bg-slate-900 border-b border-slate-800 px-6 flex items-center justify-between gap-4 z-20 shrink-0">
+      {/* Left: Project Selector & Global Search */}
+      <div className="flex items-center gap-3 min-w-0">
         {/* Project Dropdown */}
-        <div className="relative">
+        <div className="relative shrink-0">
           <button
             onClick={() => setIsProjectDropdownOpen(!isProjectDropdownOpen)}
-            className="flex items-center gap-2.5 px-3 py-1.5 rounded-xl bg-slate-800/80 hover:bg-slate-800 text-slate-200 border border-slate-700 transition-colors text-xs font-semibold"
+            className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-800/90 hover:bg-slate-800 text-slate-200 border border-slate-700 transition-colors text-xs font-semibold whitespace-nowrap"
           >
-            <FolderDot className="w-4 h-4 text-indigo-400" />
-            <span className="max-w-[170px] truncate">{activeProject.name}</span>
-            <span className="font-mono text-[10px] text-slate-400 bg-slate-900 px-1 py-0.5 rounded border border-slate-750">
+            <FolderDot className="w-4 h-4 text-indigo-400 shrink-0" />
+            <span className="max-w-[180px] truncate">{activeProject.name}</span>
+            <span className="font-mono text-[10px] text-indigo-300 bg-indigo-950/80 px-1.5 py-0.5 rounded border border-indigo-500/30">
               {activeProject.key}
             </span>
-            <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
+            <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />
           </button>
 
           {isProjectDropdownOpen && (
@@ -105,9 +117,9 @@ export const Header: React.FC = () => {
                       : 'text-slate-300 hover:bg-slate-700/60'
                   }`}
                 >
-                  <div className="font-medium flex items-center justify-between">
-                    <span>{p.name}</span>
-                    <span className="font-mono text-[10px] text-slate-400">{p.version}</span>
+                  <div className="font-semibold flex items-center justify-between">
+                    <span className="truncate">{p.name}</span>
+                    <span className="font-mono text-[10px] text-indigo-300 bg-slate-900 px-1.5 py-0.5 rounded ml-2 shrink-0">{p.key}</span>
                   </div>
                   <div className="text-[11px] text-slate-400 line-clamp-1 mt-0.5">{p.description}</div>
                 </button>
@@ -117,8 +129,8 @@ export const Header: React.FC = () => {
         </div>
 
         {/* Global Search */}
-        <div className="relative w-64 md:w-72">
-          <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
+        <div className="relative w-56 lg:w-72">
+          <Search className="w-4 h-4 absolute left-3 top-2 text-slate-400" />
           <input
             type="text"
             placeholder={t('searchPlaceholder')}
@@ -130,17 +142,60 @@ export const Header: React.FC = () => {
       </div>
 
       {/* Right: Actions, Language Switcher, Role, Profile */}
-      <div className="flex items-center gap-2.5">
-        
+      <div className="flex items-center gap-2 shrink-0">
+        {/* AI Assistant Quick Trigger */}
+        <button
+          onClick={() => setIsAiModalOpen(true)}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 text-white text-xs font-semibold shadow-md shadow-indigo-600/20 transition-all whitespace-nowrap shrink-0"
+        >
+          <Sparkles className="w-3.5 h-3.5 text-amber-300 shrink-0" />
+          <span>{t('aiAssistant')}</span>
+        </button>
+
+        {/* Active AI Model Pill (Direct /model quick switcher trigger) */}
+        <button
+          onClick={() => setIsModelSwitcherOpen(true)}
+          title={`Đang dùng model: ${aiConfig?.model || 'gemini-3.8-flash-medium'} (Nhấp để mở /model switcher)`}
+          className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border border-purple-500/40 bg-purple-950/40 hover:bg-purple-900/60 text-purple-200 text-xs font-medium transition-all shadow-sm group whitespace-nowrap shrink-0"
+        >
+          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+          <span className="font-semibold text-white truncate max-w-[120px] lg:max-w-[150px]">
+            {formatModelDisplayName(aiConfig?.model || 'gemini-3.8-flash-medium')}
+          </span>
+          <span className="text-[10px] text-purple-300 font-mono bg-purple-900/60 px-1.5 py-0.5 rounded border border-purple-500/30 uppercase shrink-0">
+            {aiConfig?.effortLevel || 'medium'}
+          </span>
+          <span className="text-[10px] text-purple-400/90 font-mono hidden xl:inline opacity-75 group-hover:opacity-100">
+            /model
+          </span>
+        </button>
+
+        {/* Live Backend API Connection Status & Manual Sync */}
+        <button
+          onClick={() => syncWithBackend()}
+          title="Nhấp để đồng bộ lại với SQLite Backend API (port 5001)"
+          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-xs font-semibold transition-all whitespace-nowrap shrink-0 ${
+            backendConnected
+              ? 'bg-emerald-950/40 border-emerald-500/30 text-emerald-300 hover:bg-emerald-900/40'
+              : 'bg-amber-950/40 border-amber-500/30 text-amber-300 hover:bg-amber-900/40'
+          }`}
+        >
+          <span className={`w-2 h-2 rounded-full shrink-0 ${backendConnected ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+          <span className="font-mono text-[11px] hidden xl:inline">
+            {backendConnected ? 'API 5001' : 'Offline'}
+          </span>
+          <RotateCcw className={`w-3.5 h-3.5 text-slate-400 shrink-0 ${isSyncing ? 'animate-spin text-emerald-400' : ''}`} />
+        </button>
+
         {/* Language Switcher (EN / VI) */}
-        <div className="relative">
+        <div className="relative shrink-0">
           <button
             onClick={() => setIsLangDropdownOpen(!isLangDropdownOpen)}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-750 text-slate-200 border border-slate-700 text-xs font-semibold transition-colors"
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-750 text-slate-200 border border-slate-700 text-xs font-semibold transition-colors whitespace-nowrap"
           >
-            <Globe className="w-3.5 h-3.5 text-indigo-400" />
+            <Globe className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
             <span className="uppercase">{language}</span>
-            <ChevronDown className="w-3 h-3 text-slate-400" />
+            <ChevronDown className="w-3 h-3 text-slate-400 shrink-0" />
           </button>
 
           {isLangDropdownOpen && (
@@ -173,46 +228,11 @@ export const Header: React.FC = () => {
           )}
         </div>
 
-        {/* AI Assistant Quick Trigger */}
-        <button
-          onClick={() => setIsAiModalOpen(true)}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 text-white text-xs font-semibold shadow-md shadow-indigo-600/20 transition-all"
-        >
-          <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-          <span>{t('aiAssistant')}</span>
-        </button>
-
-        {/* Live Backend API Connection Status & Manual Sync */}
-        <button
-          onClick={() => syncWithBackend()}
-          title="Nhấp để đồng bộ lại với SQLite Backend API (port 5001)"
-          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-xs font-semibold transition-all ${
-            backendConnected
-              ? 'bg-emerald-950/40 border-emerald-500/30 text-emerald-300 hover:bg-emerald-900/40 hover:border-emerald-500/50'
-              : 'bg-amber-950/40 border-amber-500/30 text-amber-300 hover:bg-amber-900/40'
-          }`}
-        >
-          <span className={`w-2 h-2 rounded-full ${backendConnected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
-          <span className="font-mono text-[11px] hidden lg:inline">
-            {backendConnected ? 'Backend: 5001 OK' : 'Offline Cache'}
-          </span>
-          <RotateCcw className={`w-3.5 h-3.5 text-slate-400 ${isSyncing ? 'animate-spin text-emerald-400' : ''}`} />
-        </button>
-
-        {/* Reset Data */}
-        <button
-          onClick={resetToSampleData}
-          title={t('resetSampleData')}
-          className="p-2 rounded-xl bg-slate-800 hover:bg-slate-750 text-slate-400 hover:text-slate-200 border border-slate-700 transition-colors"
-        >
-          <RotateCcw className="w-4 h-4" />
-        </button>
-
         {/* Clarification Notifications */}
-        <div className="relative">
+        <div className="relative shrink-0">
           <button
             onClick={() => setShowNotifications(!showNotifications)}
-            className="p-2 rounded-xl bg-slate-800 hover:bg-slate-750 text-slate-400 hover:text-slate-200 border border-slate-700 transition-colors relative"
+            className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-750 text-slate-400 hover:text-slate-200 border border-slate-700 transition-colors relative"
           >
             <Bell className="w-4 h-4" />
             {openQuestions.length > 0 && (
@@ -244,20 +264,17 @@ export const Header: React.FC = () => {
           )}
         </div>
 
-        {/* Role Switcher */}
-        <div className="relative">
+        {/* Role Switcher (Single-line compact pill) */}
+        <div className="relative shrink-0">
           <button
             onClick={() => setIsRoleDropdownOpen(!isRoleDropdownOpen)}
-            className="flex items-center gap-2 px-3 py-1 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700 text-xs font-semibold transition-all"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-800/90 hover:bg-slate-800 border border-slate-700 text-xs font-semibold transition-all whitespace-nowrap"
           >
-            <UserCircle2 className="w-4 h-4 text-indigo-400" />
-            <div className="text-left">
-              <div className="text-[9px] uppercase tracking-wider text-slate-400 font-normal">{t('activeRole')}</div>
-              <Badge variant={getRoleBadgeVariant(currentRole)} size="xs">
-                {currentRole}
-              </Badge>
-            </div>
-            <ChevronDown className="w-3.5 h-3.5 opacity-70 ml-1 text-slate-400" />
+            <UserCircle2 className="w-4 h-4 text-indigo-400 shrink-0" />
+            <Badge variant={getRoleBadgeVariant(currentRole)} size="xs">
+              {currentRole}
+            </Badge>
+            <ChevronDown className="w-3 h-3 text-slate-400 shrink-0" />
           </button>
 
           {isRoleDropdownOpen && (
@@ -290,12 +307,11 @@ export const Header: React.FC = () => {
         </div>
 
         {/* Current User Avatar */}
-        <div className="flex items-center gap-2 pl-1 border-l border-slate-800">
+        <div className="flex items-center pl-1 border-l border-slate-800 shrink-0">
           <div className="w-8 h-8 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 flex items-center justify-center font-bold text-xs">
             {currentUser.split(' ').map(n => n[0]).join('')}
           </div>
         </div>
-
       </div>
     </header>
   );

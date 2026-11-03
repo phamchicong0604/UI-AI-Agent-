@@ -116,15 +116,23 @@ export class AccountModelsService {
         }
         throw new ModelSyncError('failed', `Không chạy được "agy models": ${err.message}`);
       }
-      // Output format: "<model-id>\t<Display Name>" per line (first line is a progress message)
+      // Output format: "<model-id>\t<Display Name>" or space-separated per line (first line is a progress message)
       const models = stdout
         .split('\n')
         .map(l => l.trim())
-        .filter(l => l.includes('\t'))
+        .filter(l => l && !l.toLowerCase().includes('fetching'))
         .map(l => {
-          const [id, name] = l.split('\t').map(s => s.trim());
-          return enrich(id, name, { pricingType: 'subscription_included' });
-        });
+          if (l.includes('\t')) {
+            const [id, name] = l.split('\t').map(s => s.trim());
+            return enrich(id, name, { pricingType: 'subscription_included' });
+          }
+          const parts = l.split(/\s{2,}/);
+          if (parts.length >= 2) {
+            return enrich(parts[0].trim(), parts[1].trim(), { pricingType: 'subscription_included' });
+          }
+          return null;
+        })
+        .filter(Boolean) as ModelOption[];
       return { models, account: 'Antigravity subscription' };
     }
 
