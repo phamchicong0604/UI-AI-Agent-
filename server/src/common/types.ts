@@ -230,6 +230,7 @@ export interface ModelOption {
   };
   pricingType: 'token_billed' | 'subscription_included';
   bestFor: string;
+  isLive?: boolean;
 }
 
 export interface AiQuotaInfo {

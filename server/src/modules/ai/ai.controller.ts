@@ -3,6 +3,7 @@ import { AiService } from './ai.service.js';
 import { aiConnectionManager } from './ai.connection.manager.js';
 import { PROVIDER_MODELS } from './model.registry.js';
 import { quotaService } from './quota.service.js';
+import { modelFetcher } from './model.fetcher.js';
 import { sendSuccess, sendError } from '../../common/response.js';
 
 export const aiRouter = Router();
@@ -94,8 +95,37 @@ aiRouter.post('/connection/disconnect', (req: Request, res: Response) => {
  * GET /api/v1/ai/models
  * Returns the model registry options for all supported AI providers
  */
-aiRouter.get('/models', (req: Request, res: Response) => {
+aiRouter.get('/models', async (req: Request, res: Response) => {
+  const providerQuery = req.query.provider as string | undefined;
+  if (providerQuery) {
+    try {
+      const live = await modelFetcher.fetchLiveModels({ provider: providerQuery as any });
+      return sendSuccess(res, live);
+    } catch {
+      // fallback
+    }
+  }
   sendSuccess(res, PROVIDER_MODELS);
+});
+
+/**
+ * POST /api/v1/ai/models/fetch
+ * Queries live models directly from provider API or local server using current credentials
+ */
+aiRouter.post('/models/fetch', async (req: Request, res: Response) => {
+  try {
+    const { provider, authMethod, apiKey, baseUrl, cliBinary } = req.body;
+    const result = await modelFetcher.fetchLiveModels({
+      provider,
+      authMethod,
+      apiKey,
+      baseUrl,
+      cliBinary
+    });
+    sendSuccess(res, result, result.message);
+  } catch (err: any) {
+    sendError(res, `Failed to fetch live models: ${err.message}`, 500);
+  }
 });
 
 /**

@@ -34,6 +34,7 @@ import {
   detectCliTools,
   disconnectAiConnection,
   getAiModels,
+  fetchAiLiveModels,
   getAiQuota,
   checkAiQuota
 } from '../../common/services/api';
@@ -73,6 +74,8 @@ export const SettingsView: React.FC = () => {
   const [availableModels, setAvailableModels] = useState<Record<string, ModelOption[]>>({});
   const [detectedClis, setDetectedClis] = useState<CliDetectionInfo[]>([]);
   const [isDetectingClis, setIsDetectingClis] = useState<boolean>(false);
+  const [isFetchingModels, setIsFetchingModels] = useState<boolean>(false);
+  const [modelsSyncStatus, setModelsSyncStatus] = useState<string | null>(null);
 
   // Quota & Rate limits
   const [quotaInfo, setQuotaInfo] = useState<AiQuotaInfo | null>(null);
@@ -137,6 +140,12 @@ export const SettingsView: React.FC = () => {
           model: c.model,
           cliBinary: c.cliBinary
         });
+        await handleFetchLiveModels({
+          provider: c.provider,
+          authMethod: c.authMethod,
+          baseUrl: c.baseUrl,
+          cliBinary: c.cliBinary
+        });
       }
     } catch (err: any) {
       console.warn('Could not load AI connection:', err.message);
@@ -152,6 +161,37 @@ export const SettingsView: React.FC = () => {
       }
     } catch (err: any) {
       console.warn('Could not load models registry:', err.message);
+    }
+  };
+
+  const handleFetchLiveModels = async (customParams?: { provider?: AiProviderId; authMethod?: AiAuthMethod; apiKey?: string; baseUrl?: string; cliBinary?: string }) => {
+    setIsFetchingModels(true);
+    setModelsSyncStatus(null);
+    try {
+      const targetProvider = customParams?.provider || provider;
+      const res = await fetchAiLiveModels({
+        provider: targetProvider,
+        authMethod: customParams?.authMethod || authMethod,
+        apiKey: customParams?.apiKey || (apiKey ? apiKey.trim() : undefined),
+        baseUrl: customParams?.baseUrl || (baseUrl ? baseUrl.trim() : undefined),
+        cliBinary: customParams?.cliBinary || cliBinary
+      });
+      const data = res?.data !== undefined ? res.data : res;
+      if (data && Array.isArray(data.models) && data.models.length > 0) {
+        setAvailableModels(prev => ({
+          ...prev,
+          [targetProvider]: data.models
+        }));
+        setModelsSyncStatus(data.message || 'Đã đồng bộ model thực tế thành công');
+        const recommended = data.models.find((m: any) => m.recommended) || data.models[0];
+        if (recommended && !data.models.some((m: any) => m.id === model)) {
+          setModel(recommended.id);
+        }
+      }
+    } catch (err: any) {
+      setModelsSyncStatus(`Không thể quét trực tiếp: ${err.message}`);
+    } finally {
+      setIsFetchingModels(false);
     }
   };
 
@@ -209,6 +249,7 @@ export const SettingsView: React.FC = () => {
 
     setTestResult(null);
     handleCheckQuota({ provider: newProvider, model: newModel, cliBinary: newCli });
+    handleFetchLiveModels({ provider: newProvider, cliBinary: newCli });
   };
 
   const handleSaveConnection = async () => {
@@ -809,10 +850,39 @@ export const SettingsView: React.FC = () => {
                       {t('aiModelSectionSubtitle')}
                     </p>
                   </div>
-                  <span className="text-[11px] px-2.5 py-1 rounded-full bg-slate-800 text-slate-300 border border-slate-700 font-mono shrink-0 self-start sm:self-auto">
-                    Đang chọn: <span className="text-purple-400 font-bold">{model}</span>
-                  </span>
+                  <div className="flex flex-wrap items-center gap-2 shrink-0 self-start sm:self-auto">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleFetchLiveModels()}
+                      disabled={isFetchingModels}
+                      className="border-purple-800/50 hover:bg-purple-950/30 text-purple-300 text-xs py-1 h-8"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${isFetchingModels ? 'animate-spin' : ''}`} />
+                      <span>{isFetchingModels ? t('aiFetchingLiveModels') : t('aiFetchLiveModelsBtn')}</span>
+                    </Button>
+                    <span className="text-[11px] px-2.5 py-1 rounded-full bg-slate-800 text-slate-300 border border-slate-700 font-mono">
+                      Đang chọn: <span className="text-purple-400 font-bold">{model}</span>
+                    </span>
+                  </div>
                 </div>
+
+                {/* Live Model Sync Banner */}
+                {modelsSyncStatus && (
+                  <div className="p-3 rounded-xl bg-purple-950/20 border border-purple-800/40 text-purple-300 text-xs flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <Sparkles className="w-4 h-4 text-purple-400 shrink-0" />
+                      <span>{modelsSyncStatus}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setModelsSyncStatus(null)}
+                      className="text-slate-400 hover:text-slate-200 text-xs px-1"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                )}
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                   {(availableModels[provider] || []).map((m) => {
@@ -832,11 +902,17 @@ export const SettingsView: React.FC = () => {
                       >
                         <div>
                           <div className="flex items-start justify-between gap-2">
-                            <div className="flex items-center gap-1.5 font-bold text-white text-xs">
+                            <div className="flex flex-wrap items-center gap-1.5 font-bold text-white text-xs">
                               <span>{m.name}</span>
                               {m.recommended && (
                                 <span className="px-1.5 py-0.5 rounded text-[9px] bg-purple-500/20 text-purple-300 border border-purple-500/30 font-semibold">
                                   Khuyên dùng
+                                </span>
+                              )}
+                              {m.isLive && (
+                                <span className="px-1.5 py-0.5 rounded text-[9px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-mono flex items-center gap-1">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                                  API Live
                                 </span>
                               )}
                             </div>
@@ -876,6 +952,25 @@ export const SettingsView: React.FC = () => {
                       </div>
                     );
                   })}
+                </div>
+
+                {/* Custom / Specific Model ID input */}
+                <div className="p-3.5 rounded-xl bg-slate-900/60 border border-slate-800/80 space-y-1.5 mt-2">
+                  <div className="flex items-center justify-between text-[11px] text-slate-300">
+                    <span className="font-semibold">{t('aiCustomModelLabel')}</span>
+                    <span className="text-[10px] text-slate-500">Cho phép nhập bất kỳ model ID nào vừa phát hành hoặc model riêng</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={model}
+                      onChange={(e) => {
+                        setModel(e.target.value.trim());
+                      }}
+                      placeholder={t('aiCustomModelPlaceholder')}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3.5 py-2 text-xs text-white font-mono focus:outline-none focus:border-purple-500"
+                    />
+                  </div>
                 </div>
               </div>
 
