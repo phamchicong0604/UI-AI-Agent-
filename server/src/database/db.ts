@@ -21,7 +21,8 @@ import {
   PipelineRunRecord,
   ReviewDecisionRecord,
   DocumentRelationshipRecord,
-  UploadBatchRecord
+  UploadBatchRecord,
+  JobRecord
 } from '../common/types.js';
 import { computeSha256, computeAuditEventHash } from '../common/crypto.js';
 import { defaultFileStore } from '../common/fileStore.js';
@@ -892,6 +893,131 @@ export const dbRepository = {
           batch_details = excluded.batch_details
       `);
       stmt.run(b.id, b.projectId, b.filename, b.totalFiles, b.processedFiles, b.failedFiles, b.status, b.errorSummary || null, b.batchDetails || null, b.createdAt);
+    }
+  },
+
+  jobs: {
+    create(job: JobRecord): void {
+      const stmt = db.prepare(`
+        INSERT INTO jobs (id, type, payload, status, attempts, max_attempts, locked_by, locked_at, next_run_at, last_error, result, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      stmt.run(
+        job.id,
+        job.type,
+        job.payload,
+        job.status,
+        job.attempts,
+        job.maxAttempts,
+        job.lockedBy || null,
+        job.lockedAt || null,
+        job.nextRunAt,
+        job.lastError || null,
+        job.result || null,
+        job.createdAt,
+        job.updatedAt
+      );
+    },
+    getById(id: string): JobRecord | null {
+      const row = db.prepare(`
+        SELECT id, type, payload, status, attempts, max_attempts as maxAttempts,
+               locked_by as lockedBy, locked_at as lockedAt, next_run_at as nextRunAt,
+               last_error as lastError, result, created_at as createdAt, updated_at as updatedAt
+        FROM jobs WHERE id = ?
+      `).get(id) as JobRecord | undefined;
+      return row || null;
+    },
+    pollAndLock(workerId: string, limit = 5): JobRecord[] {
+      const now = new Date().toISOString();
+      const lockTx = db.transaction(() => {
+        const rows = db.prepare(`
+          SELECT id, type, payload, status, attempts, max_attempts as maxAttempts,
+                 locked_by as lockedBy, locked_at as lockedAt, next_run_at as nextRunAt,
+                 last_error as lastError, result, created_at as createdAt, updated_at as updatedAt
+          FROM jobs
+          WHERE status = 'PENDING' AND next_run_at <= ?
+          ORDER BY next_run_at ASC
+          LIMIT ?
+        `).all(now, limit) as JobRecord[];
+
+        if (rows.length === 0) return [];
+
+        const updateStmt = db.prepare(`
+          UPDATE jobs
+          SET status = 'RUNNING', locked_by = ?, locked_at = ?, updated_at = ?
+          WHERE id = ? AND status = 'PENDING'
+        `);
+
+        const locked: JobRecord[] = [];
+        for (const row of rows) {
+          const res = updateStmt.run(workerId, now, now, row.id);
+          if (res.changes > 0) {
+            locked.push({
+              ...row,
+              status: 'RUNNING',
+              lockedBy: workerId,
+              lockedAt: now,
+              updatedAt: now
+            });
+          }
+        }
+        return locked;
+      });
+
+      return lockTx.immediate();
+    },
+    complete(id: string, result?: any): void {
+      const now = new Date().toISOString();
+      const resultStr = result ? (typeof result === 'string' ? result : JSON.stringify(result)) : null;
+      db.prepare(`
+        UPDATE jobs
+        SET status = 'COMPLETED', result = ?, locked_by = NULL, locked_at = NULL, updated_at = ?
+        WHERE id = ?
+      `).run(resultStr, now, id);
+    },
+    failWithRetry(id: string, error: string, backoffSeconds?: number): void {
+      const now = new Date();
+      const job = this.getById(id);
+      if (!job) return;
+
+      const newAttempts = job.attempts + 1;
+      const timestamp = now.toISOString();
+
+      if (newAttempts < job.maxAttempts) {
+        // Exponential backoff or custom backoff: default = 2^(attempts) * 5 seconds
+        const delay = backoffSeconds !== undefined ? backoffSeconds : Math.pow(2, newAttempts) * 5;
+        const nextRun = new Date(now.getTime() + delay * 1000).toISOString();
+        db.prepare(`
+          UPDATE jobs
+          SET status = 'PENDING', attempts = ?, locked_by = NULL, locked_at = NULL, next_run_at = ?, last_error = ?, updated_at = ?
+          WHERE id = ?
+        `).run(newAttempts, nextRun, error, timestamp, id);
+      } else {
+        db.prepare(`
+          UPDATE jobs
+          SET status = 'FAILED', attempts = ?, locked_by = NULL, locked_at = NULL, last_error = ?, updated_at = ?
+          WHERE id = ?
+        `).run(newAttempts, error, timestamp, id);
+      }
+    },
+    cancel(id: string, reason?: string): boolean {
+      const now = new Date().toISOString();
+      const res = db.prepare(`
+        UPDATE jobs
+        SET status = 'CANCELLED', last_error = ?, locked_by = NULL, locked_at = NULL, updated_at = ?
+        WHERE id = ? AND status IN ('PENDING', 'RUNNING')
+      `).run(reason || 'Job cancelled by user', now, id);
+      return res.changes > 0;
+    },
+    resetStaleLocks(staleSeconds = 300): number {
+      const cutoff = new Date(Date.now() - staleSeconds * 1000).toISOString();
+      const now = new Date().toISOString();
+      const res = db.prepare(`
+        UPDATE jobs
+        SET status = 'PENDING', locked_by = NULL, locked_at = NULL, updated_at = ?
+        WHERE status = 'RUNNING' AND (locked_at IS NULL OR locked_at < ?)
+      `).run(now, cutoff);
+      return res.changes;
     }
   },
 

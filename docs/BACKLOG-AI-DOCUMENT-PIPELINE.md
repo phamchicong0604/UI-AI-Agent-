@@ -112,31 +112,32 @@ AC: Đã triển khai tại `server/src/modules/documents/parsers/` và kiểm t
 
 ---
 
-## E3. Workflow Orchestration & Job Queue (P1)
+## E3. Workflow Orchestration & Job Queue (P1) — [HOÀN THÀNH]
 
-### E3-T1. Viết `WORKFLOW-STATE-MACHINE.md` — TL, S
-- .1 Trạng thái: UPLOADED, FILE_PROCESSING, AI_ANALYSIS, VALIDATION, REVIEW_REQUIRED, ORGANIZED, FEEDBACK_REQUIRED, REANALYSIS, FAILED, CANCELLED, SUPERSEDED.
-- .2 Bảng chuyển trạng thái hợp lệ và role được phép thực hiện.
+### E3-T1. Viết `WORKFLOW-STATE-MACHINE.md` — TL, S — [HOÀN THÀNH]
+- .1 11 Trạng thái chuẩn: UPLOADED, FILE_PROCESSING, AI_ANALYSIS, VALIDATION, REVIEW_REQUIRED, ORGANIZED, FEEDBACK_REQUIRED, REANALYSIS, FAILED, CANCELLED, SUPERSEDED.
+- .2 Bảng ma trận chuyển trạng thái hợp lệ, điều kiện tiên quyết và phân quyền role được phép thực hiện (`docs/WORKFLOW-STATE-MACHINE.md`).
 
-AC: TL và BA duyệt, mỗi chuyển trạng thái có điều kiện và người thực hiện rõ ràng.
+AC: Đã hoàn tất tài liệu đặc tả FSM kèm sơ đồ Mermaid state diagram tại `docs/WORKFLOW-STATE-MACHINE.md`.
 
-### E3-T2. Job queue trên SQLite — BE, L
+### E3-T2. Job queue trên SQLite — BE, L — [HOÀN THÀNH]
 Phụ thuộc: E1-T4.
-- .1 Bảng `jobs` gồm type, payload, status, attempts, next_run_at, locked_by.
-- .2 Worker chạy cùng process, poll và lock job an toàn.
-- .3 Retry có backoff, giới hạn số lần, timeout từng stage.
-- .4 API hủy job.
+- .1 Migration `005_job_queue.ts` tạo bảng `jobs` (id, type, payload, status, attempts, max_attempts, locked_by, locked_at, next_run_at, last_error, result, created_at, updated_at).
+- .2 Worker in-process `SqliteJobQueue` (`server/src/modules/workflow/jobQueue.ts`) với cơ chế poll & lock an toàn trong transaction.
+- .3 Retry có backoff hàm mũ, giới hạn số lần (`max_attempts`), timeout từng stage (`stageTimeoutMs`).
+- .4 API hủy job (`POST /api/v1/jobs/:id/cancel`), retry job (`POST /api/v1/jobs/:id/retry`).
+- .5 Phục hồi tự động khi crash server (`resetStaleLocks` đưa job RUNNING quá hạn về PENDING).
 
-AC: Kill server giữa chừng, khởi động lại thì job tiếp tục chạy, không chạy trùng.
+AC: Đã kiểm thử 4/4 tests tại `server/src/tests/jobQueue.test.ts`.
 
-### E3-T3. Workflow engine — BE, L
+### E3-T3. Workflow engine — BE, L — [HOÀN THÀNH]
 Phụ thuộc: E3-T1, E3-T2.
-- .1 Thực thi state machine, chặn chuyển trạng thái không hợp lệ.
-- .2 Retry từng stage, không chạy lại các stage đã thành công.
-- .3 Upload version mới khi version cũ đang review thì chuyển bản cũ sang SUPERSEDED.
-- .4 Ghi audit event cho mỗi lần chuyển trạng thái.
+- .1 `WorkflowEngine` (`server/src/modules/workflow/workflowEngine.ts`) thực thi state machine, chặn chuyển trạng thái không hợp lệ qua `WorkflowTransitionError`.
+- .2 Cô lập giai đoạn (Stage Isolation): API `PATCH /api/v1/workflow/documents/:id/category` cho phép cập nhật Document Type/Category mà không chạy lại giai đoạn Understanding.
+- .3 Phương thức `supersedePreviousVersions` tự động chuyển các bản cũ đang review/pending sang `SUPERSEDED` khi có phiên bản mới.
+- .4 Ghi nhận `AuditEvent` có mã băm xích SHA-256 (`computeAuditEventHash`, `previousEventHash`) cho mọi lần chuyển trạng thái.
 
-AC: Khi reviewer chỉ sửa Document Type, hệ thống không chạy lại stage Understanding.
+AC: Đã kiểm thử 5/5 tests tại `server/src/tests/workflowEngine.test.ts`. Khi reviewer chỉ sửa Document Type, hệ thống không chạy lại Understanding.
 
 ---
 

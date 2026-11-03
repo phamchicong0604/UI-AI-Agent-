@@ -120,6 +120,44 @@ export interface UploadBatchRecord {
   createdAt: string;
 }
 
+export type WorkflowState = 
+  | 'UPLOADED'
+  | 'FILE_PROCESSING'
+  | 'AI_ANALYSIS'
+  | 'VALIDATION'
+  | 'REVIEW_REQUIRED'
+  | 'ORGANIZED'
+  | 'FEEDBACK_REQUIRED'
+  | 'REANALYSIS'
+  | 'FAILED'
+  | 'CANCELLED'
+  | 'SUPERSEDED';
+
+export type JobType = 
+  | 'EXTRACT_FILE'
+  | 'PIPELINE_RUN'
+  | 'SEMANTIC_VALIDATION'
+  | 'PROMOTE_KNOWLEDGE'
+  | 'REINDEX_FTS';
+
+export type JobStatus = 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
+
+export interface JobRecord {
+  id: string;
+  type: JobType;
+  payload: string; // JSON string
+  status: JobStatus;
+  attempts: number;
+  maxAttempts: number;
+  lockedBy: string | null;
+  lockedAt: string | null;
+  nextRunAt: string;
+  lastError: string | null;
+  result: string | null; // JSON string
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface DocumentVersion {
   version: string;
   updatedAt: string;
