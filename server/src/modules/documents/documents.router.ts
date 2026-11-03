@@ -5,8 +5,16 @@ import path from 'path';
 import { sendSuccess, sendError } from '../../common/response.js';
 import { computeSha256 } from '../../common/crypto.js';
 import { defaultFileStore } from '../../common/fileStore.js';
-import { DocumentCategory, DocumentItem } from '../../common/types.js';
-import { dbRepository } from '../../database/db.js';
+import { 
+  DocumentCategory, 
+  DocumentItem, 
+  UploadBatchRecord, 
+  UploadBatchItemDetail, 
+  UploadBatchStatus 
+} from '../../common/types.js';
+import { db, dbRepository } from '../../database/db.js';
+import { validateFileContent, validateZipArchive } from './uploadSecurity.js';
+import { documentParserManager } from './parsers/index.js';
 
 export const documentsRouter = Router();
 
@@ -86,13 +94,53 @@ function formatBytes(bytes: number): string {
 function generateDocId(): string {
   const allDocs = dbRepository.documents.getAll();
   const existingIds = new Set(allDocs.map(d => d.id));
-  let index = allDocs.length + 1;
+  try {
+    const versionDocIds = db.prepare('SELECT DISTINCT document_id FROM document_versions').all() as { document_id: string }[];
+    versionDocIds.forEach(v => existingIds.add(v.document_id));
+  } catch {}
+
+  let index = existingIds.size + 1;
   let candidate = `DOC-${String(index).padStart(2, '0')}`;
   while (existingIds.has(candidate)) {
     index++;
     candidate = `DOC-${String(index).padStart(2, '0')}`;
   }
   return candidate;
+}
+
+/**
+ * Check if a file with identical sha256 already exists in this project (E2-T2)
+ */
+function findDuplicateDoc(sha256: string, projectId: string): { id: string; title: string } | null {
+  // 1. Check via stored_files linkage to document_versions
+  const existingStored = dbRepository.storedFiles.getBySha256(sha256);
+  if (existingStored) {
+    const row = db.prepare(`
+      SELECT d.id, d.data
+      FROM documents d
+      JOIN document_versions dv ON dv.document_id = d.id
+      WHERE dv.file_id = ? AND d.project_id = ?
+      LIMIT 1
+    `).get(existingStored.id, projectId) as { id: string; data: string } | undefined;
+    if (row) {
+      try {
+        const parsed = JSON.parse(row.data);
+        return { id: row.id, title: parsed.title || row.id };
+      } catch {
+        return { id: row.id, title: row.id };
+      }
+    }
+  }
+
+  // 2. Also check if any document in the project has a version matching this checksum
+  const allDocs = dbRepository.documents.getAll(projectId);
+  for (const doc of allDocs) {
+    if (doc.versions && doc.versions.some(v => v.checksum === sha256 || v.checksum === `sha256:${sha256}`)) {
+      return { id: doc.id, title: doc.title };
+    }
+  }
+
+  return null;
 }
 
 /**
@@ -111,6 +159,32 @@ documentsRouter.get('/', (req: Request, res: Response) => {
   }
 
   sendSuccess(res, result);
+});
+
+/**
+ * GET /api/v1/documents/batches/:id
+ * Retrieve upload batch processing status and per-file details (E2-T2)
+ */
+documentsRouter.get('/batches/:id', (req: Request, res: Response) => {
+  const batch = dbRepository.uploadBatches.getById(req.params.id);
+  if (!batch) return sendError(res, 'Upload batch not found', 404);
+  sendSuccess(res, {
+    ...batch,
+    batchDetails: batch.batchDetails ? JSON.parse(batch.batchDetails) : []
+  });
+});
+
+/**
+ * GET /api/v1/documents/batches/project/:projectId
+ * Retrieve upload batches for a specific project
+ */
+documentsRouter.get('/batches/project/:projectId', (req: Request, res: Response) => {
+  const batches = dbRepository.uploadBatches.getByProjectId(req.params.projectId);
+  const formatted = batches.map(b => ({
+    ...b,
+    batchDetails: b.batchDetails ? JSON.parse(b.batchDetails) : []
+  }));
+  sendSuccess(res, formatted);
 });
 
 /**
@@ -207,7 +281,7 @@ documentsRouter.post('/', (req: Request, res: Response) => {
 
 /**
  * POST /api/v1/documents/upload
- * Bulk / single document upload supporting .md, .zip, .txt, .json, etc.
+ * Bulk / single document upload supporting .md, .zip, .txt, .docx, .pdf, .json (E2-T1, E2-T2, E2-T3)
  */
 documentsRouter.post('/upload', upload.array('files'), async (req: Request, res: Response) => {
   try {
@@ -221,170 +295,315 @@ documentsRouter.post('/upload', upload.array('files'), async (req: Request, res:
     const author = (req.body.author as string) || 'System User';
     const timestamp = new Date().toISOString().replace('T', ' ').slice(0, 16);
 
+    const batchId = `BATCH-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const batchFilename = files.length === 1 ? files[0].originalname : `${files.length} files upload package`;
+
+    // Initialize Batch Record (E2-T2)
+    let totalFiles = 0;
+    let processedFiles = 0;
+    let failedFiles = 0;
+    const batchDetails: UploadBatchItemDetail[] = [];
     const createdDocuments: DocumentItem[] = [];
 
+    // Helper: Process an individual content buffer (from file or zip)
+    const processItemBuffer = async (
+      name: string, 
+      buffer: Buffer, 
+      mimeType: string, 
+      isZipMember = false
+    ): Promise<{ success: boolean; document?: DocumentItem; duplicate?: boolean; duplicateOfId?: string; error?: string; statusCode?: number }> => {
+      // 1. Security Check (E2-T1)
+      const sec = validateFileContent(name, buffer);
+      if (!sec.isValid) {
+        return { success: false, error: sec.error, statusCode: sec.statusCode || 400 };
+      }
+
+      // 2. Duplicate Detection via SHA-256 in same project (E2-T2)
+      const fileSha256 = `sha256:${computeSha256(buffer)}`;
+      const duplicateDoc = findDuplicateDoc(fileSha256, projectId);
+      if (duplicateDoc) {
+        // Record relationship duplicate_of instead of creating duplicate document
+        try {
+          dbRepository.documentRelationships.upsert({
+            id: `REL-DUP-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            sourceDocId: duplicateDoc.id,
+            targetDocId: duplicateDoc.id,
+            relationshipType: 'duplicate_of',
+            confidenceScore: 1.0,
+            createdAt: timestamp
+          });
+        } catch {}
+
+        return { 
+          success: true, 
+          duplicate: true, 
+          duplicateOfId: duplicateDoc.id 
+        };
+      }
+
+      // 3. Document Parsing (E2-T3: .md, .txt, .docx, .pdf, .json)
+      const parseResult = await documentParserManager.parse(buffer, name, mimeType);
+      const rawText = parseResult.markdownText || parseResult.rawText || '';
+      const detectedCat = detectCategory(name, categoryOverride);
+      const { title, description } = parseMarkdownContent(name, rawText);
+      const docId = generateDocId();
+
+      // 4. FileStore byte-for-byte storage (E1-T3)
+      const fileId = `FILE-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const storageKey = `projects/${projectId}/${docId}/${Date.now()}-${path.basename(name)}`;
+      await defaultFileStore.put(name, buffer, storageKey);
+
+      dbRepository.storedFiles.upsert({
+        id: fileId,
+        storageKey,
+        originalName: name,
+        mimeType: mimeType || (name.toLowerCase().endsWith('.md') ? 'text/markdown' : 'text/plain'),
+        sizeBytes: buffer.length,
+        sha256: fileSha256,
+        createdAt: timestamp
+      });
+
+      // 5. Build tags including warnings like NEEDS_OCR
+      const extTag = path.extname(name).replace('.', '').toUpperCase() || 'DOC';
+      const docTags = [extTag, detectedCat.split('_')[1] || 'Doc'];
+      if (parseResult.warnings && parseResult.warnings.includes('NEEDS_OCR')) {
+        docTags.push('NEEDS_OCR');
+      }
+
+      const versionChangeSummary = isZipMember 
+        ? `Trích xuất từ file nén (${name})`
+        : `Tải lên trực tiếp từ ${name}`;
+
+      // 6. Insert Document record first (to satisfy document_versions foreign key)
+      const doc: DocumentItem = {
+        id: docId,
+        projectId,
+        title,
+        category: detectedCat,
+        currentVersion: 'v1.0',
+        status: 'Draft',
+        author,
+        updatedAt: timestamp,
+        description,
+        contentMarkdown: rawText,
+        tags: docTags,
+        linkedRequirementsCount: 0,
+        versions: [
+          {
+            version: 'v1.0',
+            updatedAt: timestamp,
+            author,
+            status: 'Draft',
+            changeSummary: versionChangeSummary,
+            fileSize: formatBytes(buffer.length),
+            checksum: fileSha256
+          }
+        ]
+      };
+
+      dbRepository.documents.upsert(doc);
+
+      // 7. Insert Document Version (E1-T3)
+      dbRepository.documentVersions.upsert({
+        id: `${docId}-v1.0`,
+        documentId: docId,
+        versionNo: 'v1.0',
+        fileId,
+        extractedContent: rawText,
+        status: 'Draft',
+        changeSummary: versionChangeSummary,
+        createdBy: author,
+        createdAt: timestamp
+      });
+      return { success: true, document: doc };
+    };
+
+    // Iterate through uploaded files
     for (const file of files) {
       const originalName = file.originalname;
       const lowerName = originalName.toLowerCase();
 
       // Case 1: ZIP Archive (.zip)
       if (lowerName.endsWith('.zip')) {
-        const zip = new AdmZip(file.buffer);
-        const zipEntries = zip.getEntries();
+        // Validate archive safety (zip bombs, path traversal, entry limits)
+        const zipSec = validateZipArchive(file.buffer);
+        if (!zipSec.isValid) {
+          if (files.length === 1) {
+            return sendError(res, zipSec.error || 'Invalid ZIP archive', zipSec.statusCode || 400);
+          }
+          failedFiles++;
+          batchDetails.push({
+            filename: originalName,
+            status: 'FAILED',
+            error: zipSec.error,
+            sizeBytes: file.size
+          });
+          continue;
+        }
 
-        for (const entry of zipEntries) {
+        let zip: AdmZip;
+        try {
+          zip = new AdmZip(file.buffer);
+        } catch (err: any) {
+          if (files.length === 1) {
+            return sendError(res, `Không thể giải nén tệp ZIP: ${err.message}`, 400);
+          }
+          failedFiles++;
+          batchDetails.push({
+            filename: originalName,
+            status: 'FAILED',
+            error: `Lỗi đọc ZIP: ${err.message}`,
+            sizeBytes: file.size
+          });
+          continue;
+        }
+
+        const entries = zip.getEntries();
+        for (const entry of entries) {
           // Skip directories and MacOS metadata
           if (entry.isDirectory || entry.entryName.includes('__MACOSX') || entry.entryName.includes('.DS_Store')) {
             continue;
           }
 
-          const entryName = entry.entryName;
-          const entryLower = entryName.toLowerCase();
-          
-          // Accept markdown, text, json, html, or specs
-          if (!entryLower.endsWith('.md') && !entryLower.endsWith('.txt') && !entryLower.endsWith('.json') && !entryLower.endsWith('.html') && !entryLower.endsWith('.yaml') && !entryLower.endsWith('.yml')) {
-            continue;
+          totalFiles++;
+          const entryName = entry.name || path.basename(entry.entryName);
+
+          try {
+            const entryBuffer = entry.getData();
+            const result = await processItemBuffer(entryName, entryBuffer, '', true);
+
+            if (!result.success) {
+              failedFiles++;
+              batchDetails.push({
+                filename: entryName,
+                status: 'FAILED',
+                error: result.error,
+                sizeBytes: entryBuffer.length
+              });
+            } else if (result.duplicate) {
+              batchDetails.push({
+                filename: entryName,
+                status: 'DUPLICATE',
+                duplicateOfId: result.duplicateOfId,
+                sizeBytes: entryBuffer.length
+              });
+            } else if (result.document) {
+              processedFiles++;
+              createdDocuments.push(result.document);
+              batchDetails.push({
+                filename: entryName,
+                status: 'SUCCESS',
+                documentId: result.document.id,
+                sizeBytes: entryBuffer.length
+              });
+            }
+          } catch (err: any) {
+            failedFiles++;
+            batchDetails.push({
+              filename: entryName,
+              status: 'FAILED',
+              error: err.message
+            });
           }
+        }
+      } 
+      // Case 2: Standalone file (.md, .txt, .docx, .pdf, .json)
+      else {
+        totalFiles++;
+        try {
+          const result = await processItemBuffer(originalName, file.buffer, file.mimetype, false);
 
-          const rawText = zip.readAsText(entry);
-          const detectedCat = detectCategory(entryName, categoryOverride);
-          const { title, description } = parseMarkdownContent(entry.name || entryName, rawText);
-          const docId = generateDocId();
-          const buffer = Buffer.from(rawText, 'utf-8');
-          const fileSha256 = `sha256:${computeSha256(buffer)}`;
-
-          // 1. Store original file in FileStore (E1-T3)
-          const fileId = `FILE-${fileSha256.slice(7, 17)}`;
-          const storageKey = `projects/${projectId}/${docId}/${path.basename(entryName || 'extracted.md')}`;
-          await defaultFileStore.put(entryName || `${docId}.md`, buffer, storageKey);
-
-          dbRepository.storedFiles.upsert({
-            id: fileId,
-            storageKey,
-            originalName: entry.name || entryName,
-            mimeType: entryLower.endsWith('.md') ? 'text/markdown' : 'text/plain',
-            sizeBytes: buffer.length,
-            sha256: fileSha256,
-            createdAt: timestamp
+          if (!result.success) {
+            if (files.length === 1) {
+              return sendError(res, result.error || 'Lỗi kiểm tra tệp', result.statusCode || 400);
+            }
+            failedFiles++;
+            batchDetails.push({
+              filename: originalName,
+              status: 'FAILED',
+              error: result.error,
+              sizeBytes: file.size
+            });
+          } else if (result.duplicate) {
+            batchDetails.push({
+              filename: originalName,
+              status: 'DUPLICATE',
+              duplicateOfId: result.duplicateOfId,
+              sizeBytes: file.size
+            });
+          } else if (result.document) {
+            processedFiles++;
+            createdDocuments.push(result.document);
+            batchDetails.push({
+              filename: originalName,
+              status: 'SUCCESS',
+              documentId: result.document.id,
+              sizeBytes: file.size
+            });
+          }
+        } catch (err: any) {
+          if (files.length === 1) {
+            return sendError(res, `Lỗi xử lý tệp ${originalName}: ${err.message}`, 500);
+          }
+          failedFiles++;
+          batchDetails.push({
+            filename: originalName,
+            status: 'FAILED',
+            error: err.message,
+            sizeBytes: file.size
           });
-
-          // 2. Insert document_version (E1-T3)
-          dbRepository.documentVersions.upsert({
-            id: `${docId}-v1.0`,
-            documentId: docId,
-            versionNo: 'v1.0',
-            fileId,
-            extractedContent: rawText,
-            status: 'Draft',
-            changeSummary: `Trích xuất từ file nén ${originalName} (${entryName})`,
-            createdBy: author,
-            createdAt: timestamp
-          });
-
-          const doc: DocumentItem = {
-            id: docId,
-            projectId,
-            title,
-            category: detectedCat,
-            currentVersion: 'v1.0',
-            status: 'Draft',
-            author,
-            updatedAt: timestamp,
-            description,
-            contentMarkdown: rawText,
-            tags: ['ZIP-Extracted', detectedCat.split('_')[1] || 'Doc'],
-            linkedRequirementsCount: 0,
-            versions: [
-              {
-                version: 'v1.0',
-                updatedAt: timestamp,
-                author,
-                status: 'Draft',
-                changeSummary: `Trích xuất từ file nén ${originalName} (${entryName})`,
-                fileSize: formatBytes(entry.header.size),
-                checksum: fileSha256
-              }
-            ]
-          };
-
-          dbRepository.documents.upsert(doc);
-          createdDocuments.push(doc);
         }
       }
-      // Case 2: Markdown File (.md) or Text / Document Files
-      else {
-        const rawText = file.buffer.toString('utf-8');
-        const detectedCat = detectCategory(originalName, categoryOverride);
-        const { title, description } = parseMarkdownContent(originalName, rawText);
-        const docId = generateDocId();
-        const fileSha256 = `sha256:${computeSha256(file.buffer)}`;
-
-        // 1. Store original file in FileStore (E1-T3)
-        const fileId = `FILE-${fileSha256.slice(7, 17)}`;
-        const storageKey = `projects/${projectId}/${docId}/${originalName}`;
-        await defaultFileStore.put(originalName, file.buffer, storageKey);
-
-        dbRepository.storedFiles.upsert({
-          id: fileId,
-          storageKey,
-          originalName,
-          mimeType: lowerName.endsWith('.md') ? 'text/markdown' : 'text/plain',
-          sizeBytes: file.buffer.length,
-          sha256: fileSha256,
-          createdAt: timestamp
-        });
-
-        // 2. Insert document_version (E1-T3)
-        dbRepository.documentVersions.upsert({
-          id: `${docId}-v1.0`,
-          documentId: docId,
-          versionNo: 'v1.0',
-          fileId,
-          extractedContent: rawText,
-          status: 'Draft',
-          changeSummary: `Tải lên trực tiếp từ ${originalName}`,
-          createdBy: author,
-          createdAt: timestamp
-        });
-
-        const doc: DocumentItem = {
-          id: docId,
-          projectId,
-          title,
-          category: detectedCat,
-          currentVersion: 'v1.0',
-          status: 'Draft',
-          author,
-          updatedAt: timestamp,
-          description,
-          contentMarkdown: rawText,
-          tags: [lowerName.endsWith('.md') ? 'Markdown' : 'Upload', detectedCat.split('_')[1] || 'Doc'],
-          linkedRequirementsCount: 0,
-          versions: [
-            {
-              version: 'v1.0',
-              updatedAt: timestamp,
-              author,
-              status: 'Draft',
-              changeSummary: `Tải lên trực tiếp từ ${originalName}`,
-              fileSize: formatBytes(file.size),
-              checksum: fileSha256
-            }
-          ]
-        };
-
-        dbRepository.documents.upsert(doc);
-        createdDocuments.push(doc);
-      }
     }
+
+    // Determine final batch status (E2-T2)
+    let finalStatus: UploadBatchStatus = 'COMPLETED';
+    const duplicateCount = batchDetails.filter(d => d.status === 'DUPLICATE').length;
+
+    if (failedFiles > 0 && (processedFiles > 0 || duplicateCount > 0)) {
+      finalStatus = 'PARTIAL';
+    } else if (failedFiles > 0 && processedFiles === 0 && duplicateCount === 0) {
+      finalStatus = 'FAILED';
+    }
+
+    const errorSummary = failedFiles > 0
+      ? batchDetails.filter(d => d.status === 'FAILED').map(d => `${d.filename}: ${d.error}`).join('; ')
+      : null;
+
+    // Persist batch record to database (E2-T2)
+    const batchRecord: UploadBatchRecord = {
+      id: batchId,
+      projectId,
+      filename: batchFilename,
+      totalFiles,
+      processedFiles,
+      failedFiles,
+      status: finalStatus,
+      errorSummary,
+      batchDetails: JSON.stringify(batchDetails),
+      createdAt: timestamp
+    };
+    dbRepository.uploadBatches.upsert(batchRecord);
+
+    const message = finalStatus === 'PARTIAL'
+      ? `Batch hoàn thành một phần (${processedFiles} thành công, ${failedFiles} lỗi, ${duplicateCount} trùng lặp).`
+      : finalStatus === 'COMPLETED'
+      ? `Đã xử lý và lưu thành công ${processedFiles} tài liệu (${duplicateCount} trùng lặp) vào dự án ${projectId}.`
+      : `Batch xử lý thất bại: ${errorSummary}`;
 
     sendSuccess(
       res,
       {
-        totalUploaded: createdDocuments.length,
+        batchId,
+        status: finalStatus,
+        totalFiles,
+        processedFiles,
+        failedFiles,
+        duplicateCount,
+        batchDetails,
         documents: createdDocuments
       },
-      `Đã xử lý và lưu thành công ${createdDocuments.length} tài liệu vào dự án ${projectId}`,
+      message,
       201
     );
   } catch (err: any) {

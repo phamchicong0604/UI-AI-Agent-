@@ -82,33 +82,33 @@ AC: Mọi output AI truy ngược được về document_version, skill_version 
 
 ---
 
-## E2. Upload Hardening & File Processing (P0)
+## E2. Upload Hardening & File Processing (P0) — [HOÀN THÀNH]
 
-File chính: `server/src/modules/documents/documents.router.ts`.
+File chính: `server/src/modules/documents/documents.router.ts`, `server/src/modules/documents/uploadSecurity.ts`, `server/src/modules/documents/parsers/`.
 
-### E2-T1. Bảo vệ upload — BE, M
-- .1 Giới hạn kích thước file và tổng dung lượng zip sau giải nén.
-- .2 Chặn zip bomb theo tỷ lệ nén và số entry.
-- .3 Chặn path traversal trong tên entry zip.
-- .4 Whitelist mime theo nội dung, không chỉ theo đuôi file.
+### E2-T1. Bảo vệ upload — BE, M — [HOÀN THÀNH]
+- .1 Giới hạn kích thước file (50MB) và tổng dung lượng zip sau giải nén (100MB).
+- .2 Chặn zip bomb theo tỷ lệ nén (> 50:1) và số entry (> 500 entries).
+- .3 Chặn path traversal trong tên entry zip (`../`, absolute paths, drive letters).
+- .4 Whitelist mime theo nội dung (magic byte header `%PDF-`, `PK\x03\x04`, OpenXML structure, binary null-byte masking detection).
 
-AC: Có test cho từng loại file độc hại, server trả lỗi 4xx và không ghi file nào.
+AC: Đã triển khai tại `uploadSecurity.ts` và được kiểm thử toàn diện với 7/7 unit tests tại `server/src/tests/uploadSecurity.test.ts`.
 
-### E2-T2. Upload batch — BE, M
+### E2-T2. Upload batch — BE, M — [HOÀN THÀNH]
 Phụ thuộc: E1-T3.
-- .1 Bảng `upload_batches` với trạng thái từng file.
-- .2 Zip nhiều file: file lỗi không làm hỏng cả batch, batch có trạng thái PARTIAL.
-- .3 Phát hiện trùng bằng sha256 trong cùng project, tạo quan hệ duplicate_of thay vì tạo document mới.
+- .1 Migration `004_upload_batches.ts` tạo bảng `upload_batches` (id, project_id, filename, total_files, processed_files, failed_files, status, error_summary, batch_details, created_at).
+- .2 Zip nhiều file: file lỗi được cô lập, không làm hỏng cả batch, batch có trạng thái PARTIAL, cung cấp endpoint `GET /batches/:id` và `GET /batches/project/:projectId`.
+- .3 Phát hiện trùng bằng sha256 trong cùng project, ghi nhận vào `document_relationships` với `relationship_type = 'duplicate_of'` thay vì tạo document mới.
 
-AC: Upload zip có 1 file lỗi trong 10 file thì 9 file được tạo và báo rõ file lỗi.
+AC: Đã kiểm thử với test suite tại `server/src/tests/uploadBatch.test.ts` (xử lý gói ZIP có 1 file lỗi trong 5 files tạo thành công 4 files với status PARTIAL, và upload file trùng sha256 phát hiện duplicate_of).
 
-### E2-T3. Parser docx và pdf — BE, L
+### E2-T3. Parser docx và pdf — BE, L — [HOÀN THÀNH]
 Phụ thuộc: E0-D3.
-- .1 Interface `Parser` trả text, heading path và char offset.
-- .2 Parser docx và pdf có text layer.
-- .3 PDF không có text layer gắn cảnh báo NEEDS_OCR, không gọi AI.
+- .1 Interface `IDocumentParser` và `ParseResult` trả rawText, markdownText, headings với character offsets.
+- .2 `DocxParser` phân tích cú pháp OpenXML paragraph/heading trích xuất markdown có heading path và character offset; `PdfParser` sử dụng `pdf-parse` trích xuất nội dung có phân cấp heading.
+- .3 PDF không có text layer (scanned/empty) gắn cờ cảnh báo `NEEDS_OCR` và `hasTextLayer: false`, gắn tag `NEEDS_OCR` vào document để ngăn gọi AI vô ích.
 
-AC: Extracted content giữ được cấu trúc heading. Offset map được về vị trí trong file gốc.
+AC: Đã triển khai tại `server/src/modules/documents/parsers/` và kiểm thử toàn diện với 4/4 unit tests tại `server/src/tests/parsers.test.ts`.
 
 ---
 

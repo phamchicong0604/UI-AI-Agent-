@@ -96,6 +96,30 @@ export interface DocumentRelationshipRecord {
   createdAt: string;
 }
 
+export type UploadBatchStatus = 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'PARTIAL' | 'FAILED';
+
+export interface UploadBatchItemDetail {
+  filename: string;
+  status: 'SUCCESS' | 'FAILED' | 'DUPLICATE';
+  documentId?: string;
+  duplicateOfId?: string;
+  error?: string;
+  sizeBytes?: number;
+}
+
+export interface UploadBatchRecord {
+  id: string;
+  projectId: string;
+  filename: string;
+  totalFiles: number;
+  processedFiles: number;
+  failedFiles: number;
+  status: UploadBatchStatus;
+  errorSummary: string | null;
+  batchDetails: string | null; // JSON string of UploadBatchItemDetail[]
+  createdAt: string;
+}
+
 export interface DocumentVersion {
   version: string;
   updatedAt: string;

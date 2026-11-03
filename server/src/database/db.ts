@@ -20,7 +20,8 @@ import {
   SkillVersionRecord,
   PipelineRunRecord,
   ReviewDecisionRecord,
-  DocumentRelationshipRecord
+  DocumentRelationshipRecord,
+  UploadBatchRecord
 } from '../common/types.js';
 import { computeSha256, computeAuditEventHash } from '../common/crypto.js';
 import { defaultFileStore } from '../common/fileStore.js';
@@ -849,6 +850,48 @@ export const dbRepository = {
           relationship_type = excluded.relationship_type,
           confidence_score = excluded.confidence_score
       `).run(rel.id, rel.sourceDocId, rel.targetDocId, rel.relationshipType, rel.confidenceScore, rel.createdAt);
+    }
+  },
+
+  uploadBatches: {
+    getById(id: string): UploadBatchRecord | null {
+      const row = db.prepare(`
+        SELECT id, project_id as projectId, filename, total_files as totalFiles,
+               processed_files as processedFiles, failed_files as failedFiles,
+               status, error_summary as errorSummary, batch_details as batchDetails,
+               created_at as createdAt
+        FROM upload_batches
+        WHERE id = ?
+      `).get(id) as UploadBatchRecord | undefined;
+      return row || null;
+    },
+    getByProjectId(projectId: string): UploadBatchRecord[] {
+      const rows = db.prepare(`
+        SELECT id, project_id as projectId, filename, total_files as totalFiles,
+               processed_files as processedFiles, failed_files as failedFiles,
+               status, error_summary as errorSummary, batch_details as batchDetails,
+               created_at as createdAt
+        FROM upload_batches
+        WHERE project_id = ?
+        ORDER BY created_at DESC
+      `).all(projectId) as UploadBatchRecord[];
+      return rows;
+    },
+    upsert(b: UploadBatchRecord): void {
+      const stmt = db.prepare(`
+        INSERT INTO upload_batches (id, project_id, filename, total_files, processed_files, failed_files, status, error_summary, batch_details, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          project_id = excluded.project_id,
+          filename = excluded.filename,
+          total_files = excluded.total_files,
+          processed_files = excluded.processed_files,
+          failed_files = excluded.failed_files,
+          status = excluded.status,
+          error_summary = excluded.error_summary,
+          batch_details = excluded.batch_details
+      `);
+      stmt.run(b.id, b.projectId, b.filename, b.totalFiles, b.processedFiles, b.failedFiles, b.status, b.errorSummary || null, b.batchDetails || null, b.createdAt);
     }
   },
 
