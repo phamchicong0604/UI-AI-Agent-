@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { Button, Badge } from '../../common/components';
 import { ConflictResolutionModal, ConflictData } from './ConflictResolutionModal';
+import { useI18n } from '../../common/i18n/I18nContext';
 
 export interface KnowledgeUnitItem {
   id: string;
@@ -62,6 +63,7 @@ export const KnowledgeReviewModal: React.FC<KnowledgeReviewModalProps> = ({
   onBulkApproveExplicit,
   onConflictResolved
 }) => {
+  const { t } = useI18n();
   const [selectedUnitId, setSelectedUnitId] = useState<string | null>(units[0]?.id || null);
   const [modalError, setModalError] = useState<string | null>(null);
   const [rejectModalUnitId, setRejectModalUnitId] = useState<string | null>(null);
@@ -132,25 +134,25 @@ export const KnowledgeReviewModal: React.FC<KnowledgeReviewModalProps> = ({
       case 'Explicit':
         return (
           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
-            <CheckCircle2 className="w-3 h-3" /> Rõ ràng (Explicit)
+            <CheckCircle2 className="w-3 h-3" /> {t('knowledgeModalEvidenceExplicit')}
           </span>
         );
       case 'Inferred':
         return (
           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/30">
-            <AlertTriangle className="w-3 h-3" /> Suy luận (Inferred) ⚠️
+            <AlertTriangle className="w-3 h-3" /> {t('knowledgeModalEvidenceInferred')} ⚠️
           </span>
         );
       case 'Assumed':
         return (
           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-purple-500/10 text-purple-400 border border-purple-500/30">
-            <Sparkles className="w-3 h-3" /> Giả định (Assumed) ⚠️
+            <Sparkles className="w-3 h-3" /> {t('knowledgeModalEvidenceAssumed')} ⚠️
           </span>
         );
       case 'Conflict':
         return (
           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-rose-500/10 text-rose-400 border border-rose-500/30">
-            <AlertTriangle className="w-3 h-3" /> Mâu thuẫn (Conflict) 🚨
+            <AlertTriangle className="w-3 h-3" /> {t('knowledgeModalEvidenceConflict')} 🚨
           </span>
         );
       default:
@@ -180,9 +182,15 @@ export const KnowledgeReviewModal: React.FC<KnowledgeReviewModalProps> = ({
       );
     }
 
-    // 1. Prioritize Character Offsets
-    const start = selectedUnit.charOffsetStart;
-    const end = selectedUnit.charOffsetEnd;
+    // 1. Prioritize Character Offsets (Support both unit top-level and sources[0] anchor - BUG-028)
+    const firstSource = (selectedUnit as any).sources?.[0];
+    const start = selectedUnit.charOffsetStart !== undefined && selectedUnit.charOffsetStart !== null
+      ? selectedUnit.charOffsetStart
+      : firstSource?.charOffsetStart;
+    const end = selectedUnit.charOffsetEnd !== undefined && selectedUnit.charOffsetEnd !== null
+      ? selectedUnit.charOffsetEnd
+      : firstSource?.charOffsetEnd;
+
     if (typeof start === 'number' && typeof end === 'number' && start >= 0 && end > start && end <= documentContent.length) {
       const before = documentContent.slice(0, start);
       const highlighted = documentContent.slice(start, end);
@@ -201,8 +209,8 @@ export const KnowledgeReviewModal: React.FC<KnowledgeReviewModalProps> = ({
       );
     }
 
-    // 2. Fallback to exact quote
-    const quote = selectedUnit.exactQuote;
+    // 2. Fallback to exact quote (from unit or sources[0] - BUG-028)
+    const quote = selectedUnit.exactQuote || firstSource?.exactQuote;
     if (quote && documentContent.includes(quote)) {
       const idx = documentContent.indexOf(quote);
       const before = documentContent.slice(0, idx);
@@ -429,7 +437,7 @@ export const KnowledgeReviewModal: React.FC<KnowledgeReviewModalProps> = ({
                             }}
                             icon={<XCircle className="w-3.5 h-3.5" />}
                           >
-                            Từ chối
+                            {t('knowledgeModalRejectBtn')}
                           </Button>
                           <Button
                             variant="primary"
@@ -442,7 +450,7 @@ export const KnowledgeReviewModal: React.FC<KnowledgeReviewModalProps> = ({
                             icon={<CheckCircle2 className="w-3.5 h-3.5 text-emerald-300" />}
                             className="bg-emerald-600 hover:bg-emerald-500"
                           >
-                            Phê duyệt
+                            {t('knowledgeModalApproveBtn')}
                           </Button>
                         </div>
                       </div>
@@ -493,7 +501,7 @@ export const KnowledgeReviewModal: React.FC<KnowledgeReviewModalProps> = ({
                 onClick={handleConfirmReject}
                 disabled={isProcessing}
               >
-                Xác nhận từ chối
+                {t('knowledgeModalConfirmReject')}
               </Button>
             </div>
           </div>

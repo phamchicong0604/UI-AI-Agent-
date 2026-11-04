@@ -43,10 +43,24 @@ export const I18nProvider: React.FC<{ children: React.ReactNode }> = ({ children
   );
 };
 
+const defaultI18n: I18nContextType = {
+  language: 'vi',
+  setLanguage: () => {},
+  t: (key: TranslationKey, params?: Record<string, string | number>): string => {
+    let text = vi[key] || en[key] || (key as string);
+    if (params) {
+      Object.entries(params).forEach(([paramKey, val]) => {
+        text = text.replace(new RegExp(`\\{${paramKey}\\}`, 'g'), String(val));
+      });
+    }
+    return text;
+  }
+};
+
 export const useI18n = () => {
   const context = useContext(I18nContext);
   if (!context) {
-    throw new Error('useI18n must be used within an I18nProvider');
+    return defaultI18n;
   }
   return context;
 };

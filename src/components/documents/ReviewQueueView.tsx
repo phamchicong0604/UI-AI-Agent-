@@ -19,6 +19,7 @@ import { DocumentItem, DocumentCategory } from '../../types';
 import { KnowledgeReviewModal, KnowledgeUnitItem } from './KnowledgeReviewModal';
 import { ConflictResolutionModal, ConflictData } from './ConflictResolutionModal';
 import { getAuthToken } from '../../common/services/api';
+import { useI18n } from '../../common/i18n/I18nContext';
 
 export interface ReviewQueueItem {
   document: DocumentItem;
@@ -54,6 +55,7 @@ export const ReviewQueueView: React.FC<ReviewQueueViewProps> = ({
   projectName,
   onOpenDocReader
 }) => {
+  const { t } = useI18n();
   const [queueItems, setQueueItems] = useState<ReviewQueueItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [riskFilter, setRiskFilter] = useState<string>('ALL');
@@ -200,7 +202,7 @@ export const ReviewQueueView: React.FC<ReviewQueueViewProps> = ({
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3.5">
         <div className="p-4 rounded-xl bg-slate-900 border border-slate-800 shadow-sm flex items-center justify-between">
           <div>
-            <span className="text-xs text-slate-400 font-medium">Hàng đợi cần duyệt</span>
+            <span className="text-xs text-slate-400 font-medium">{t('reviewQueueNeedingReview')}</span>
             <div className="text-xl font-bold text-white mt-1">{totalNeedingReview}</div>
           </div>
           <div className="p-2.5 rounded-xl bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
@@ -210,7 +212,7 @@ export const ReviewQueueView: React.FC<ReviewQueueViewProps> = ({
 
         <div className="p-4 rounded-xl bg-slate-900 border border-rose-500/30 shadow-sm flex items-center justify-between">
           <div>
-            <span className="text-xs text-rose-400 font-medium">Nguy cơ cao (High Risk)</span>
+            <span className="text-xs text-rose-400 font-medium">{t('reviewQueueHighRisk')}</span>
             <div className="text-xl font-bold text-rose-300 mt-1">{highRiskCount}</div>
           </div>
           <div className="p-2.5 rounded-xl bg-rose-500/10 text-rose-400 border border-rose-500/20">
@@ -220,7 +222,7 @@ export const ReviewQueueView: React.FC<ReviewQueueViewProps> = ({
 
         <div className="p-4 rounded-xl bg-slate-900 border border-amber-500/30 shadow-sm flex items-center justify-between">
           <div>
-            <span className="text-xs text-amber-400 font-medium">Xung đột nghiêm trọng</span>
+            <span className="text-xs text-amber-400 font-medium">{t('reviewQueueCriticalConflicts')}</span>
             <div className="text-xl font-bold text-amber-300 mt-1">{totalCriticalConflicts}</div>
           </div>
           <div className="p-2.5 rounded-xl bg-amber-500/10 text-amber-400 border border-amber-500/20">
@@ -230,7 +232,7 @@ export const ReviewQueueView: React.FC<ReviewQueueViewProps> = ({
 
         <div className="p-4 rounded-xl bg-slate-900 border border-slate-800 shadow-sm flex items-center justify-between">
           <div>
-            <span className="text-xs text-slate-400 font-medium">Atomic Units trích xuất</span>
+            <span className="text-xs text-slate-400 font-medium">{t('reviewQueueTotalUnits')}</span>
             <div className="text-xl font-bold text-emerald-400 mt-1">{totalUnits}</div>
           </div>
           <div className="p-2.5 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
@@ -298,7 +300,7 @@ export const ReviewQueueView: React.FC<ReviewQueueViewProps> = ({
         ) : filteredItems.length === 0 ? (
           <div className="p-12 text-center rounded-2xl bg-slate-900 border border-slate-800">
             <CheckCircle2 className="w-10 h-10 text-emerald-400 mx-auto mb-3" />
-            <h4 className="text-sm font-bold text-white">Không có tài liệu nào tồn đọng trong hàng đợi review!</h4>
+            <h4 className="text-sm font-bold text-white">{t('reviewQueueEmpty')}</h4>
             <p className="text-xs text-slate-400 mt-1">
               Tất cả tài liệu dự án {projectName} đã được duyệt hoàn tất hoặc không có yêu cầu cần phê duyệt.
             </p>
@@ -387,7 +389,7 @@ export const ReviewQueueView: React.FC<ReviewQueueViewProps> = ({
                         onClick={() => setActiveConflict(item.conflicts[0])}
                         icon={<AlertTriangle className="w-3.5 h-3.5" />}
                       >
-                        Xung đột ({item.conflictsCount})
+                        {t('reviewQueueConflictsBtn')} ({item.conflictsCount})
                       </Button>
                     )}
 
@@ -398,7 +400,7 @@ export const ReviewQueueView: React.FC<ReviewQueueViewProps> = ({
                       icon={<ShieldCheck className="w-4 h-4 text-emerald-300" />}
                       className="bg-indigo-600 hover:bg-indigo-500"
                     >
-                      Duyệt tri thức
+                      {t('reviewQueueReviewKnowledgeBtn')}
                     </Button>
                   </div>
                 </div>

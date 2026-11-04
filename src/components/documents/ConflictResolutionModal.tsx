@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { AlertTriangle, CheckCircle2, XCircle, Shuffle, ShieldAlert, X } from 'lucide-react';
 import { Button, Badge } from '../../common/components';
 import { getAuthToken } from '../../common/services/api';
+import { useI18n } from '../../common/i18n/I18nContext';
 
 export interface ConflictData {
   id: string;
@@ -32,6 +33,7 @@ export const ConflictResolutionModal: React.FC<ConflictResolutionModalProps> = (
   conflict,
   onResolved
 }) => {
+  const { t } = useI18n();
   const [resolutionChoice, setResolutionChoice] = useState<'KEEP_NEW_SUPERSEDE_OLD' | 'REJECT_NEW_PRESERVE_OLD' | 'MERGE_SPECIFICATION'>('KEEP_NEW_SUPERSEDE_OLD');
   const [mergeNotes, setMergeNotes] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -53,7 +55,7 @@ export const ConflictResolutionModal: React.FC<ConflictResolutionModalProps> = (
         body: JSON.stringify({
           resolution: resolutionChoice,
           resolvedBy: 'Lead QA / Reviewer',
-          notes: mergeNotes.trim() || undefined
+          notes: resolutionChoice === 'MERGE_SPECIFICATION' ? (mergeNotes.trim() || undefined) : undefined
         })
       });
 
@@ -93,7 +95,7 @@ export const ConflictResolutionModal: React.FC<ConflictResolutionModalProps> = (
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="text-base font-bold text-white">Xử lý Xung đột Tri thức (Conflict Resolution)</h3>
+                <h3 className="text-base font-bold text-white">{t('conflictModalTitle')}</h3>
                 {getSeverityBadge(conflict.severity)}
               </div>
               <p className="text-xs text-slate-400 mt-0.5">
@@ -195,7 +197,7 @@ export const ConflictResolutionModal: React.FC<ConflictResolutionModalProps> = (
                 className="mt-1 accent-indigo-500"
               />
               <div className="text-xs">
-                <div className="font-semibold text-indigo-300">1. KEEP_NEW_SUPERSEDE_OLD (Phê duyệt mới, lưu trữ bản cũ)</div>
+                <div className="font-semibold text-indigo-300">1. KEEP_NEW_SUPERSEDE_OLD ({t('conflictOptionSupersede')})</div>
                 <div className="text-slate-400 mt-0.5">
                   Chấp thuận đề xuất mới từ tài liệu này. Bản ghi tri thức cũ sẽ chuyển sang trạng thái <strong>Superseded</strong> và tự động đưa các Test Case liên quan về <strong>In Review</strong> (Change Impact).
                 </div>
@@ -219,7 +221,7 @@ export const ConflictResolutionModal: React.FC<ConflictResolutionModalProps> = (
                 className="mt-1 accent-rose-500"
               />
               <div className="text-xs">
-                <div className="font-semibold text-rose-300">2. REJECT_NEW_PRESERVE_OLD (Giữ nguyên cũ, từ chối đề xuất mới)</div>
+                <div className="font-semibold text-rose-300">2. REJECT_NEW_PRESERVE_OLD ({t('conflictOptionReject')})</div>
                 <div className="text-slate-400 mt-0.5">
                   Bảo lưu quy định đã được phê duyệt trước đây. Đề xuất mới bị từ chối do vi phạm quy chuẩn dự án.
                 </div>
@@ -243,7 +245,7 @@ export const ConflictResolutionModal: React.FC<ConflictResolutionModalProps> = (
                 className="mt-1 accent-amber-500"
               />
               <div className="text-xs">
-                <div className="font-semibold text-amber-300">3. MERGE_SPECIFICATION / COEXIST (Cùng tồn tại / Phân định ngữ cảnh áp dụng)</div>
+                <div className="font-semibold text-amber-300">3. MERGE_SPECIFICATION ({t('conflictOptionCoexist')})</div>
                 <div className="text-slate-400 mt-0.5">
                   Cả hai cùng tồn tại song song nhưng phân định cho các điều kiện, phân hệ hoặc ngữ cảnh đặc thù khác nhau (Coexist).
                 </div>
