@@ -3,7 +3,7 @@ import crypto from 'crypto';
 import { sendSuccess, sendError } from '../../common/response.js';
 import { db, dbRepository } from '../../database/db.js';
 import { defaultKnowledgeService } from './knowledgeService.js';
-import { authenticateUser, requireRole, checkProjectAccess } from '../../common/auth.js';
+import { authenticateUser, requireRole, checkProjectAccess, getUserRoleInProject } from '../../common/auth.js';
 import { ConflictRecord } from '../../common/types.js';
 import { computeAuditEventHash } from '../../common/crypto.js';
 
@@ -79,6 +79,12 @@ knowledgeRouter.post(
 
     if (req.user && !checkProjectAccess(req.user, unit.projectId)) {
       return sendError(res, `Bạn không có quyền ra quyết định tri thức thuộc dự án "${unit.projectId}".`, 403);
+    }
+
+    // Role dynamic evaluation per project (Condition 3)
+    const effectiveRole = req.user ? (getUserRoleInProject(req.user.id, unit.projectId) || req.user.role) : null;
+    if (!effectiveRole || !['Project Admin', 'Reviewer / Approver', 'PM / Project Lead'].includes(effectiveRole)) {
+      return sendError(res, `Permission denied: Vai trò "${effectiveRole || 'QA'}" trong dự án "${unit.projectId}" không có quyền phê duyệt/từ chối tri thức (Condition 3).`, 403);
     }
 
     const reviewerName = req.user?.name || req.user?.id || 'Reviewer';
@@ -181,6 +187,11 @@ knowledgeRouter.post(
 
     if (req.user && !checkProjectAccess(req.user, conflict.project_id)) {
       return sendError(res, `Bạn không có quyền giải quyết xung đột thuộc dự án "${conflict.project_id}".`, 403);
+    }
+
+    const effectiveRole = req.user ? (getUserRoleInProject(req.user.id, conflict.project_id) || req.user.role) : null;
+    if (!effectiveRole || !['Project Admin', 'Reviewer / Approver', 'PM / Project Lead'].includes(effectiveRole)) {
+      return sendError(res, `Permission denied: Vai trò "${effectiveRole || 'QA'}" trong dự án "${conflict.project_id}" không có quyền phân giải xung đột (Condition 3).`, 403);
     }
 
     if (conflict.resolution && conflict.resolution !== 'UNRESOLVED') {

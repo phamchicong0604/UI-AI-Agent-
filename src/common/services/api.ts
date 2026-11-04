@@ -63,22 +63,13 @@ export const authApi = {
   },
 
   async switchAdminRole(role: string, projectId?: string): Promise<AuthSessionResponse> {
-    const token = getAuthToken();
-    const res = await fetch(`${API_BASE_URL}/auth/session`, {
+    const data = await fetchJson<AuthSessionResponse>(`${API_BASE_URL}/auth/session`, {
       method: 'POST',
-      headers: { 
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`
-      },
       body: JSON.stringify({ role, projectId })
     });
-    const json = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      throw new Error(json.message || json.error || 'Chuyển vai trò thất bại');
-    }
-    if (json.data?.token) {
-      setAuthToken(json.data.token);
-      return json.data;
+    if (data?.token) {
+      setAuthToken(data.token);
+      return data;
     }
     throw new Error('Không nhận được token xác thực mới');
   },
@@ -87,15 +78,8 @@ export const authApi = {
     const token = getAuthToken();
     if (!token) return null;
     try {
-      const res = await fetch(`${API_BASE_URL}/auth/me`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (!res.ok) {
-        setAuthToken(null);
-        return null;
-      }
-      const json = await res.json();
-      return json.data?.user || null;
+      const data = await fetchJson<any>(`${API_BASE_URL}/auth/me`);
+      return data?.user || data || null;
     } catch {
       return null;
     }
@@ -103,8 +87,38 @@ export const authApi = {
 
   logout(): void {
     setAuthToken(null);
+    try {
+      if (typeof localStorage !== 'undefined') {
+        const keysToRemove: string[] = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k && k.startsWith('docqa_')) {
+            keysToRemove.push(k);
+          }
+        }
+        keysToRemove.forEach(k => localStorage.removeItem(k));
+      }
+    } catch {}
+  },
+
+  async changePassword(currentPassword: string, newPassword: string): Promise<boolean> {
+    return fetchJson<{ success: boolean }>(`${API_BASE_URL}/auth/change-password`, {
+      method: 'POST',
+      body: JSON.stringify({ currentPassword, newPassword })
+    }).then(r => r.success);
   }
 };
+
+let lastUnauthorizedEventTime = 0;
+function dispatchUnauthorizedEvent(): void {
+  const now = Date.now();
+  if (now - lastUnauthorizedEventTime > 800) {
+    lastUnauthorizedEventTime = now;
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('docqa:unauthorized'));
+    }
+  }
+}
 
 async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
   const headers: Record<string, string> = {
@@ -124,6 +138,10 @@ async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
   const json = await res.json().catch(() => ({}));
 
   if (!res.ok) {
+    if (res.status === 401) {
+      setAuthToken(null);
+      dispatchUnauthorizedEvent();
+    }
     throw new Error(json.error || json.message || `HTTP ${res.status}`);
   }
 
@@ -143,8 +161,8 @@ export async function checkBackendHealth(): Promise<boolean> {
  * 0. PROJECTS API
  * ----------------------------------------------------------- */
 export const projectsApi = {
-  async getAll(): Promise<Project[]> {
-    return fetchJson<Project[]>(`${API_BASE_URL}/projects`);
+  async getAll(options?: RequestInit): Promise<Project[]> {
+    return fetchJson<Project[]>(`${API_BASE_URL}/projects`, options);
   },
   async getById(id: string): Promise<Project> {
     return fetchJson<Project>(`${API_BASE_URL}/projects/${id}`);
@@ -161,9 +179,9 @@ export const projectsApi = {
  * 1. DOCUMENTS API
  * ----------------------------------------------------------- */
 export const documentsApi = {
-  async getAll(projectId?: string): Promise<DocumentItem[]> {
+  async getAll(projectId?: string, options?: RequestInit): Promise<DocumentItem[]> {
     const query = projectId && projectId !== 'ALL' ? `?projectId=${encodeURIComponent(projectId)}` : '';
-    return fetchJson<DocumentItem[]>(`${API_BASE_URL}/documents${query}`);
+    return fetchJson<DocumentItem[]>(`${API_BASE_URL}/documents${query}`, options);
   },
   async getById(id: string): Promise<DocumentItem> {
     return fetchJson<DocumentItem>(`${API_BASE_URL}/documents/${id}`);
@@ -207,8 +225,8 @@ export const documentsApi = {
  * 2. REQUIREMENTS API
  * ----------------------------------------------------------- */
 export const requirementsApi = {
-  async getAll(): Promise<RequirementItem[]> {
-    return fetchJson<RequirementItem[]>(`${API_BASE_URL}/requirements`);
+  async getAll(options?: RequestInit): Promise<RequirementItem[]> {
+    return fetchJson<RequirementItem[]>(`${API_BASE_URL}/requirements`, options);
   },
   async getById(id: string): Promise<RequirementItem> {
     return fetchJson<RequirementItem>(`${API_BASE_URL}/requirements/${id}`);
@@ -231,8 +249,8 @@ export const requirementsApi = {
  * 3. EVIDENCE (EVD) API
  * ----------------------------------------------------------- */
 export const evidenceApi = {
-  async getAll(): Promise<EvidenceItem[]> {
-    return fetchJson<EvidenceItem[]>(`${API_BASE_URL}/evidence`);
+  async getAll(options?: RequestInit): Promise<EvidenceItem[]> {
+    return fetchJson<EvidenceItem[]>(`${API_BASE_URL}/evidence`, options);
   },
   async getById(id: string): Promise<EvidenceItem> {
     return fetchJson<EvidenceItem>(`${API_BASE_URL}/evidence/${id}`);
@@ -255,8 +273,8 @@ export const evidenceApi = {
  * 4. TEST CASES API (Section 7.1 Workspace)
  * ----------------------------------------------------------- */
 export const testCasesApi = {
-  async getAll(): Promise<TestCaseItem[]> {
-    return fetchJson<TestCaseItem[]>(`${API_BASE_URL}/testcases`);
+  async getAll(options?: RequestInit): Promise<TestCaseItem[]> {
+    return fetchJson<TestCaseItem[]>(`${API_BASE_URL}/testcases`, options);
   },
   async getById(id: string): Promise<TestCaseItem> {
     return fetchJson<TestCaseItem>(`${API_BASE_URL}/testcases/${id}`);
@@ -288,8 +306,8 @@ export const testCasesApi = {
  * 5. TEST RUNS API
  * ----------------------------------------------------------- */
 export const testRunsApi = {
-  async getAll(): Promise<TestRunItem[]> {
-    return fetchJson<TestRunItem[]>(`${API_BASE_URL}/testruns`);
+  async getAll(options?: RequestInit): Promise<TestRunItem[]> {
+    return fetchJson<TestRunItem[]>(`${API_BASE_URL}/testruns`, options);
   },
   async getById(id: string): Promise<TestRunItem> {
     return fetchJson<TestRunItem>(`${API_BASE_URL}/testruns/${id}`);
@@ -318,8 +336,8 @@ export const testRunsApi = {
  * 6. BUGS / DEFECTS API
  * ----------------------------------------------------------- */
 export const bugsApi = {
-  async getAll(): Promise<BugItem[]> {
-    return fetchJson<BugItem[]>(`${API_BASE_URL}/bugs`);
+  async getAll(options?: RequestInit): Promise<BugItem[]> {
+    return fetchJson<BugItem[]>(`${API_BASE_URL}/bugs`, options);
   },
   async create(bug: Partial<BugItem>): Promise<BugItem> {
     return fetchJson<BugItem>(`${API_BASE_URL}/bugs`, {
@@ -339,8 +357,8 @@ export const bugsApi = {
  * 7. AUDIT TRAIL API (Tamper-Evident SHA-256 Chained Block Hash)
  * ----------------------------------------------------------- */
 export const auditApi = {
-  async getEvents(): Promise<AuditEvent[]> {
-    return fetchJson<AuditEvent[]>(`${API_BASE_URL}/audit/events`);
+  async getEvents(options?: RequestInit): Promise<AuditEvent[]> {
+    return fetchJson<AuditEvent[]>(`${API_BASE_URL}/audit/events`, options);
   },
   async logEvent(payload: {
     user: string;

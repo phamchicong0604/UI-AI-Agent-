@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import { sendSuccess, sendError } from '../../common/response.js';
 import { TestCaseItem } from '../../common/types.js';
 import { dbRepository } from '../../database/db.js';
-import { authenticateUser, requireAuth, checkProjectAccess } from '../../common/auth.js';
+import { authenticateUser, requireAuth, checkProjectAccess, getUserRoleInProject } from '../../common/auth.js';
 
 export const testcasesRouter = Router();
 
@@ -106,15 +106,16 @@ testcasesRouter.patch('/:id/status', authenticateUser, requireAuth, (req: Reques
   const tc = dbRepository.testCases.getById(req.params.id);
   if (!tc) return sendError(res, 'Test case not found', 404);
 
-  if (req.user && (tc as any).projectId && !checkProjectAccess(req.user, (tc as any).projectId)) {
-    return sendError(res, `Bạn không có quyền cập nhật test case thuộc dự án "${(tc as any).projectId}".`, 403);
+  const projId = (tc as any).projectId || (tc as any).project_id || 'PRJ-01';
+  if (req.user && !checkProjectAccess(req.user, projId)) {
+    return sendError(res, `Bạn không có quyền cập nhật test case thuộc dự án "${projId}".`, 403);
   }
 
-  // BR-AUTH-01: Only Approver/Admin roles can approve test cases (NEW-11)
+  // BR-AUTH-01: Only Approver/Admin roles in the target project can approve test cases (Condition 3, NEW-11, R4-07)
   if (status === 'Approved') {
-    const userRole = req.user?.role;
-    if (!userRole || !['Project Admin', 'Reviewer / Approver', 'PM / Project Lead'].includes(userRole)) {
-      return sendError(res, 'Permission denied: Approver role required to approve test cases', 403);
+    const effectiveRole = req.user ? (getUserRoleInProject(req.user.id, projId) || req.user.role) : null;
+    if (!effectiveRole || !['Project Admin', 'Reviewer / Approver', 'PM / Project Lead'].includes(effectiveRole)) {
+      return sendError(res, `Permission denied: Vai trò "${effectiveRole || 'QA'}" trong dự án "${projId}" không có quyền phê duyệt test case (Condition 3).`, 403);
     }
   }
 
@@ -129,12 +130,27 @@ testcasesRouter.post('/:id/comments', authenticateUser, requireAuth, (req: Reque
   const tc = dbRepository.testCases.getById(req.params.id);
   if (!tc) return sendError(res, 'Test case not found', 404);
 
-  if (req.user && (tc as any).projectId && !checkProjectAccess(req.user, (tc as any).projectId)) {
-    return sendError(res, `Bạn không có quyền thêm nhận xét vào test case thuộc dự án "${(tc as any).projectId}".`, 403);
+  const projId = (tc as any).projectId || (tc as any).project_id || 'PRJ-01';
+  if (req.user && !checkProjectAccess(req.user, projId)) {
+    return sendError(res, `Bạn không có quyền thêm nhận xét vào test case thuộc dự án "${projId}".`, 403);
   }
 
-  const author = req.user?.name || req.body.author || 'Reviewer';
-  const role = req.user?.role || req.body.role || 'QA';
+  // Enforce role authorization for approval/rejection decisions (R4-07, NEW-11, Condition 3)
+  if (decision === 'Approved' || decision === 'Changes Requested') {
+    const userRole = req.user ? getUserRoleInProject(req.user.id, projId) : null;
+    const allowedRoles = ['Reviewer / Approver', 'PM / Project Lead', 'Project Admin'];
+    if (!userRole || !allowedRoles.includes(userRole)) {
+      return sendError(
+        res,
+        `Chỉ có vai trò ${allowedRoles.join(', ')} trong dự án "${projId}" mới có quyền phê duyệt hoặc yêu cầu chỉnh sửa test case (R4-07).`,
+        403
+      );
+    }
+  }
+
+  const effectiveRole = req.user ? (getUserRoleInProject(req.user.id, projId) || req.user.role) : 'QA';
+  const author = req.user?.name || req.user?.username || 'Reviewer';
+  const role = effectiveRole;
 
   const newComment = {
     id: `RC-0${tc.reviewComments.length + 1}`,

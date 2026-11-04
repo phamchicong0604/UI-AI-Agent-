@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { sendSuccess, sendError } from '../../common/response.js';
 import { Project } from '../../common/types.js';
-import { dbRepository } from '../../database/db.js';
+import { db, dbRepository } from '../../database/db.js';
 import { authenticateUser, requireAuth, requireRole, checkProjectAccess } from '../../common/auth.js';
 
 export const projectsRouter = Router();
@@ -62,9 +62,22 @@ projectsRouter.post('/', authenticateUser, requireAuth, requireRole(['Project Ad
       return sendError(res, `Project key "${cleanKey}" already exists`, 409);
     }
 
-    const nextIndex = all.length + 1;
-    const nextId = `PRJ-${String(nextIndex).padStart(2, '0')}`;
+    let maxIndex = 0;
+    for (const p of all) {
+      const match = p.id.match(/^PRJ-(\d+)$/);
+      if (match) {
+        const num = parseInt(match[1], 10);
+        if (num > maxIndex) maxIndex = num;
+      }
+    }
+    let nextId = `PRJ-${String(maxIndex + 1).padStart(2, '0')}`;
+    while (all.some(p => p.id === nextId)) {
+      maxIndex++;
+      nextId = `PRJ-${String(maxIndex + 1).padStart(2, '0')}`;
+    }
+
     const now = new Date().toISOString().split('T')[0];
+    const nowIso = new Date().toISOString();
 
     const newProject: Project = {
       id: nextId,
@@ -78,7 +91,19 @@ projectsRouter.post('/', authenticateUser, requireAuth, requireRole(['Project Ad
       updatedAt: now
     };
 
-    dbRepository.projects.upsert(newProject);
+    const creatorId = req.user?.id || 'usr_admin';
+    const creatorRole = req.user?.role || 'PM / Project Lead';
+
+    const tx = db.transaction(() => {
+      dbRepository.projects.upsert(newProject);
+      // Ensure creator is immediately enrolled as member to prevent 403 on newly created project (R4-08)
+      db.prepare(`
+        INSERT OR REPLACE INTO project_members (id, project_id, user_id, role, created_at)
+        VALUES (?, ?, ?, ?, ?)
+      `).run(`pm_${newProject.id}_${creatorId}`, newProject.id, creatorId, creatorRole, nowIso);
+    });
+    tx.immediate();
+
     sendSuccess(res, newProject, `Dự án "${newProject.name}" ([${cleanKey}]) đã được tạo thành công!`, 201);
   } catch (err: any) {
     sendError(res, `Failed to create project: ${err.message}`, 500);

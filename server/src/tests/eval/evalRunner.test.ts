@@ -31,9 +31,11 @@ describe('AI Document Pipeline Evaluation Framework (Epic E9-T3, E9-T4)', () => 
     expect(metrics.conflictDetectionPrecision).toBeGreaterThanOrEqual(85.0);
     expect(metrics.conflictFalsePositives).toBe(0);
 
-    // Grounded verbatim extraction precision >= 80% and recall >= 80% (BUG-007)
+    // Grounded verbatim extraction precision >= 80% and recall >= 80% with baseline gate (BUG-007, R4-14)
     expect(metrics.extractionPrecision).toBeGreaterThanOrEqual(80.0);
     expect(metrics.extractionRecall).toBeGreaterThanOrEqual(80.0);
+    expect(metrics.extractionPrecision).toBeGreaterThanOrEqual(baselineJson.extractionPrecision - 5.0);
+    expect(metrics.extractionRecall).toBeGreaterThanOrEqual(baselineJson.extractionRecall - 5.0);
 
     // All test results must have valid classifications
     expect(detailedResults.length).toBe(metrics.totalCases);

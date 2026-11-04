@@ -8,7 +8,7 @@ import { accountModelsService, resolveSource, ModelSyncError } from './account-m
 import { db, dbRepository } from '../../database/db.js';
 import { sendSuccess, sendError } from '../../common/response.js';
 import { ObservabilityService } from './observabilityService.js';
-import { authenticateUser, requireAuth, requireRole } from '../../common/auth.js';
+import { authenticateUser, requireAuth, requireRole, requireSystemAdmin, checkProjectAccess } from '../../common/auth.js';
 
 export const aiRouter = Router();
 const aiService = new AiService();
@@ -30,7 +30,7 @@ aiRouter.get('/connection', authenticateUser, requireAuth, (req: Request, res: R
  * POST /api/v1/ai/connection
  * Saves unified AI connection settings (API Key or CLI Subscription) - Restricted to Project Admin (R3-04)
  */
-aiRouter.post('/connection', authenticateUser, requireRole(['Project Admin']), (req: Request, res: Response) => {
+aiRouter.post('/connection', authenticateUser, requireSystemAdmin, (req: Request, res: Response) => {
   try {
     const { provider, authMethod, apiKey, baseUrl, model, effortLevel, maxOutputTokens, cliBinary } = req.body;
     const updated = aiConnectionManager.saveConnection({
@@ -66,7 +66,7 @@ aiRouter.get('/observability', authenticateUser, requireAuth, (req: Request, res
  * POST /api/v1/ai/connection/select-model
  * Saves a chosen model separately into SQLite and loads its per-model effort configuration.
  */
-aiRouter.post('/connection/select-model', authenticateUser, requireRole(['Project Admin', 'PM / Project Lead']), (req: Request, res: Response) => {
+aiRouter.post('/connection/select-model', authenticateUser, requireSystemAdmin, (req: Request, res: Response) => {
   try {
     const { provider, modelId, effortLevel } = req.body;
     if (!modelId) {
@@ -83,7 +83,7 @@ aiRouter.post('/connection/select-model', authenticateUser, requireRole(['Projec
  * POST /api/v1/ai/connection/test
  * Tests active or pending AI connection (supports both API Key and CLI Subscription)
  */
-aiRouter.post('/connection/test', authenticateUser, requireRole(['Project Admin', 'PM / Project Lead']), async (req: Request, res: Response) => {
+aiRouter.post('/connection/test', authenticateUser, requireSystemAdmin, async (req: Request, res: Response) => {
   try {
     const { provider, authMethod, apiKey, baseUrl, model, effortLevel, maxOutputTokens, cliBinary } = req.body;
     const result = await aiConnectionManager.testConnection({
@@ -120,7 +120,7 @@ aiRouter.get('/connection/cli-detect', authenticateUser, requireAuth, async (req
  * POST /api/v1/ai/connection/disconnect
  * Disconnects the active AI provider
  */
-aiRouter.post('/connection/disconnect', authenticateUser, requireRole(['Project Admin']), (req: Request, res: Response) => {
+aiRouter.post('/connection/disconnect', authenticateUser, requireSystemAdmin, (req: Request, res: Response) => {
   try {
     aiConnectionManager.disconnect();
     sendSuccess(res, { connectionStatus: 'disconnected' }, 'AI connection disconnected');
@@ -150,7 +150,7 @@ aiRouter.get('/models', authenticateUser, requireAuth, async (req: Request, res:
  * POST /api/v1/ai/models/fetch
  * Queries live models directly from provider API or local server using current credentials
  */
-aiRouter.post('/models/fetch', authenticateUser, requireRole(['Project Admin', 'PM / Project Lead']), async (req: Request, res: Response) => {
+aiRouter.post('/models/fetch', authenticateUser, requireSystemAdmin, async (req: Request, res: Response) => {
   try {
     const { provider, authMethod, apiKey, baseUrl, cliBinary } = req.body;
     const result = await modelFetcher.fetchLiveModels({
@@ -193,7 +193,7 @@ aiRouter.get('/models/account', authenticateUser, requireAuth, (req: Request, re
  * POST /api/v1/ai/models/account/sync
  * Queries the connected account (CLI subscription or API key) for its models and saves them to SQLite.
  */
-aiRouter.post('/models/account/sync', authenticateUser, requireRole(['Project Admin']), async (req: Request, res: Response) => {
+aiRouter.post('/models/account/sync', authenticateUser, requireSystemAdmin, async (req: Request, res: Response) => {
   const active = aiConnectionManager.getActiveConnection();
   const ref = {
     provider: req.body.provider || active?.provider || 'google',
@@ -245,7 +245,7 @@ aiRouter.get('/models/efforts', authenticateUser, requireAuth, (req: Request, re
  * POST /api/v1/ai/models/effort
  * Saves effort level specifically for a selected model into SQLite.
  */
-aiRouter.post('/models/effort', authenticateUser, requireRole(['Project Admin', 'PM / Project Lead']), (req: Request, res: Response) => {
+aiRouter.post('/models/effort', authenticateUser, requireSystemAdmin, (req: Request, res: Response) => {
   try {
     const { provider, modelId, effortLevel, maxOutputTokens, resolvedVariant } = req.body;
     if (!modelId || !effortLevel) {
@@ -355,8 +355,13 @@ aiRouter.post('/generate-testcases', authenticateUser, requireAuth, async (req: 
       return sendError(res, 'Không thể xác thực dự án nguồn cho requirement này.', 403);
     }
 
+    if (req.user && !checkProjectAccess(req.user, projectId)) {
+      return sendError(res, `Bạn không có quyền sinh test case cho yêu cầu thuộc dự án "${projectId}" (BUG-001).`, 403);
+    }
+
+    // Construct prompt strictly from trusted DB requirement to prevent client data poisoning/leakage (BUG-001)
     const result = await aiService.generateGroundedDrafts({
-      requirement,
+      requirement: dbReq,
       sourceDoc,
       userPrompt,
       projectId
@@ -377,6 +382,14 @@ aiRouter.post('/impact-analysis', authenticateUser, requireAuth, async (req: Req
     const { documentId, requirements, testCases } = req.body;
     if (!documentId) {
       return sendError(res, 'Missing required field: documentId', 400);
+    }
+
+    const dbDoc = dbRepository.documents.getById(documentId);
+    if (!dbDoc) {
+      return sendError(res, `Tài liệu "${documentId}" không tồn tại trong cơ sở dữ liệu.`, 404);
+    }
+    if (req.user && !checkProjectAccess(req.user, dbDoc.projectId)) {
+      return sendError(res, `Bạn không có quyền phân tích tác động tài liệu thuộc dự án "${dbDoc.projectId}" (BUG-001).`, 403);
     }
 
     const result = await aiService.analyzeChangeImpact({

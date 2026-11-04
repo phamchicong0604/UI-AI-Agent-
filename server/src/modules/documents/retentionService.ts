@@ -95,12 +95,7 @@ export class RetentionService {
         WHERE json_extract(payload, '$.projectId') = ?
       `).run(projectId);
 
-      // d.2 Delete requirements, test cases, test runs, evidence and bugs belonging to project (BUG-008, R3-12)
-      db.prepare(`
-        DELETE FROM requirements 
-        WHERE project_id = ? OR json_extract(data, '$.projectId') = ?
-      `).run(projectId, projectId);
-
+      // d.2 Delete test cases, test runs, evidence and bugs BEFORE deleting requirements (R4-11, BUG-008, R3-12)
       db.prepare(`
         DELETE FROM test_cases 
         WHERE json_extract(data, '$.projectId') = ? 
@@ -114,7 +109,14 @@ export class RetentionService {
       db.prepare(`
         DELETE FROM bugs 
         WHERE json_extract(data, '$.projectId') = ? 
+           OR json_extract(data, '$.linkedRequirementId') IN (SELECT id FROM requirements WHERE project_id = ?)
            OR json_extract(data, '$.requirementId') IN (SELECT id FROM requirements WHERE project_id = ?)
+      `).run(projectId, projectId, projectId);
+
+      // Delete requirements after child entities referencing them have been deleted
+      db.prepare(`
+        DELETE FROM requirements 
+        WHERE project_id = ? OR json_extract(data, '$.projectId') = ?
       `).run(projectId, projectId);
 
       // e. Delete document_relationships

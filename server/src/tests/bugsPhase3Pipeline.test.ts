@@ -31,11 +31,13 @@ describe('Bug Review Phase 3: Pipeline & Job Queue (BUG-010, BUG-012, BUG-013, B
   });
 
   beforeEach(() => {
+    db.prepare("UPDATE users SET must_change_password = 0 WHERE id = 'usr_admin'").run();
     db.prepare("DELETE FROM jobs WHERE id LIKE 'JOB-P3-%'").run();
     db.prepare(`
       INSERT OR REPLACE INTO projects (id, name, key, description, version, author, members_count, ai_policy, data, created_at, updated_at)
       VALUES (?, 'Pipeline Test Project', 'PTP', 'Desc', 'v1.0', 'Admin', 1, 'ALLOW_EXTERNAL', '{}', datetime('now'), datetime('now'))
     `).run(testProjectId);
+    db.prepare("INSERT OR REPLACE INTO project_members (id, project_id, user_id, role, created_at) VALUES (?, ?, 'usr_admin', 'Project Admin', datetime('now'))").run(`pm_${testProjectId}_admin`, testProjectId);
   });
 
   describe('BUG-010: Job Queue & Workflow Integration in App', () => {

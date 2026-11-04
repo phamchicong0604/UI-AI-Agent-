@@ -23,15 +23,15 @@ export interface TransitionRequest {
 
 export const ALLOWED_TRANSITIONS: Record<WorkflowState, readonly WorkflowState[]> = {
   UPLOADED: ['FILE_PROCESSING', 'CANCELLED', 'SUPERSEDED'],
-  FILE_PROCESSING: ['AI_ANALYSIS', 'REVIEW_REQUIRED', 'FAILED', 'SUPERSEDED'],
+  FILE_PROCESSING: ['AI_ANALYSIS', 'REVIEW_REQUIRED', 'FAILED', 'CANCELLED', 'SUPERSEDED'],
   AI_ANALYSIS: ['VALIDATION', 'FAILED', 'CANCELLED', 'SUPERSEDED'],
-  VALIDATION: ['REVIEW_REQUIRED', 'ORGANIZED', 'FAILED', 'SUPERSEDED'],
+  VALIDATION: ['REVIEW_REQUIRED', 'ORGANIZED', 'FAILED', 'CANCELLED', 'SUPERSEDED'],
   REVIEW_REQUIRED: ['ORGANIZED', 'FEEDBACK_REQUIRED', 'REANALYSIS', 'CANCELLED', 'SUPERSEDED'],
   FEEDBACK_REQUIRED: ['REANALYSIS', 'CANCELLED', 'SUPERSEDED'],
-  REANALYSIS: ['VALIDATION', 'FAILED', 'SUPERSEDED'],
+  REANALYSIS: ['VALIDATION', 'FAILED', 'CANCELLED', 'SUPERSEDED'],
   ORGANIZED: ['SUPERSEDED'],
   FAILED: ['FILE_PROCESSING', 'AI_ANALYSIS', 'CANCELLED', 'SUPERSEDED'],
-  CANCELLED: [],
+  CANCELLED: ['SUPERSEDED'],
   SUPERSEDED: []
 } as const;
 
@@ -65,7 +65,7 @@ export class WorkflowEngine {
       return ['Document Author', 'Project Admin', 'PM / Project Lead', 'Reviewer / Approver', 'System Worker'].includes(role);
     }
     if (toState === 'CANCELLED') {
-      return ['Document Author', 'Project Admin', 'PM / Project Lead', 'Reviewer / Approver'].includes(role);
+      return ['Document Author', 'Project Admin', 'PM / Project Lead', 'Reviewer / Approver', 'System Worker'].includes(role);
     }
     if (toState === 'REANALYSIS') {
       return ['Reviewer / Approver', 'Document Author', 'System Worker', 'Project Admin', 'PM / Project Lead'].includes(role);
@@ -197,15 +197,30 @@ export class WorkflowEngine {
   public async supersedePreviousVersions(documentId: string, currentVersionNo: string, actor: string): Promise<number> {
     const timestamp = new Date().toISOString();
 
-    // Query older versions that are not already SUPERSEDED or CANCELLED (BUG-018: include in-flight and FAILED)
+    // Query older versions that are not already SUPERSEDED (BUG-018: include in-flight and FAILED)
     const olderVersions = db.prepare(`
       SELECT id, version_no, status FROM document_versions
-      WHERE document_id = ? AND version_no != ? AND status NOT IN ('SUPERSEDED', 'CANCELLED')
+      WHERE document_id = ? AND version_no != ? AND status NOT IN ('SUPERSEDED')
     `).all(documentId, currentVersionNo) as Array<{ id: string; version_no: string; status: WorkflowState }>;
 
     let supersededCount = 0;
     for (const oldVer of olderVersions) {
       try {
+        const freshRow = db.prepare('SELECT id, version_no, status FROM document_versions WHERE id = ?').get(oldVer.id) as { id: string; version_no: string; status: WorkflowState } | undefined;
+        if (!freshRow || freshRow.status === 'SUPERSEDED') continue;
+
+        // Transition to SUPERSEDED first before job cancellation so jobs do not override state to CANCELLED (R4-05)
+        await this.transition({
+          documentId,
+          versionNo: freshRow.version_no,
+          fromState: freshRow.status,
+          toState: 'SUPERSEDED',
+          actor,
+          role: 'System Worker',
+          reason: `Được thay thế bởi phiên bản mới ${currentVersionNo}`
+        });
+        supersededCount++;
+
         // Cancel any pending or in-flight jobs for this version (BUG-018)
         try {
           const pendingJobs = db.prepare(`
@@ -218,17 +233,6 @@ export class WorkflowEngine {
           }
         } catch {}
 
-        await this.transition({
-          documentId,
-          versionNo: oldVer.version_no,
-          fromState: oldVer.status,
-          toState: 'SUPERSEDED',
-          actor,
-          role: 'System Worker',
-          reason: `Được thay thế bởi phiên bản mới ${currentVersionNo}`
-        });
-        supersededCount++;
-
         // Close pending knowledge units belonging to older version
         db.prepare(`
           UPDATE knowledge_units
@@ -237,14 +241,14 @@ export class WorkflowEngine {
             AND status IN ('Draft', 'In Review')
         `).run(timestamp, oldVer.id);
 
-        // Close open conflicts involving units of the superseded version (BUG-018)
+        // Close open conflicts involving units of the superseded version (BUG-018, R4-05, Condition 5)
         db.prepare(`
           UPDATE conflicts
-          SET status = 'RESOLVED',
-              resolution = 'SUPERSEDED',
+          SET resolution = 'KEEP_NEW_SUPERSEDE_OLD',
+              resolved_by = 'SYSTEM_SUPERSEDED',
               resolution_notes = ?,
               resolved_at = ?
-          WHERE status = 'OPEN'
+          WHERE resolution = 'UNRESOLVED'
             AND (
               unit_a_id IN (SELECT unit_id FROM knowledge_sources WHERE document_version_id = ?)
               OR unit_b_id IN (SELECT unit_id FROM knowledge_sources WHERE document_version_id = ?)

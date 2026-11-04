@@ -161,7 +161,7 @@ export const Header: React.FC = () => {
         {/* Active AI Model Pill (Direct /model quick switcher trigger) */}
         <button
           onClick={() => setIsModelSwitcherOpen(true)}
-          title={`Đang dùng model: ${aiConfig?.model || 'gemini-3.8-flash-medium'} (Nhấp để mở /model switcher)`}
+          title={t('headerActiveModelTitle').replace('{model}', aiConfig?.model || 'gemini-3.8-flash-medium')}
           className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border border-purple-500/40 bg-purple-950/40 hover:bg-purple-900/60 text-purple-200 text-xs font-medium transition-all shadow-sm group whitespace-nowrap shrink-0"
         >
           <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
@@ -179,7 +179,7 @@ export const Header: React.FC = () => {
         {/* Live Backend API Connection Status & Manual Sync */}
         <button
           onClick={() => syncWithBackend()}
-          title="Nhấp để đồng bộ lại với SQLite Backend API (port 5001)"
+          title={t('headerSyncBackendTitle')}
           className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-xs font-semibold transition-all whitespace-nowrap shrink-0 ${
             backendConnected
               ? 'bg-emerald-950/40 border-emerald-500/30 text-emerald-300 hover:bg-emerald-900/40'
@@ -324,10 +324,10 @@ export const Header: React.FC = () => {
                 <button
                   onClick={logout}
                   className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium text-slate-400 hover:text-rose-300 hover:bg-rose-950/40 border border-slate-800 hover:border-rose-500/30 transition-all"
-                  title="Đăng xuất"
+                  title={t('headerLogout')}
                 >
                   <LogOut className="w-3.5 h-3.5" />
-                  <span className="hidden md:inline">Đăng xuất</span>
+                  <span className="hidden md:inline">{t('headerLogout')}</span>
                 </button>
               </div>
             </div>
@@ -337,7 +337,7 @@ export const Header: React.FC = () => {
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition-all shadow-md"
             >
               <LogIn className="w-4 h-4" />
-              <span>Đăng nhập</span>
+              <span>{t('headerLogin')}</span>
             </button>
           )}
         </div>

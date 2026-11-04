@@ -16,6 +16,7 @@ declare global {
   namespace Express {
     interface Request {
       user?: AuthUser;
+      projectRole?: UserRole;
     }
   }
 }
@@ -50,6 +51,7 @@ export function getAuthSecret(): string {
 export function hashPassword(password: string, salt: string): string {
   return crypto.pbkdf2Sync(password, salt, 10000, 64, 'sha512').toString('hex');
 }
+export const computePbkdf2Hash = hashPassword;
 
 /**
  * Constant-time password verification preventing timing analysis
@@ -154,17 +156,70 @@ export function verifyUserSession(token: string): AuthUser | null {
  * Headers:
  *   Authorization: Bearer <signed_session_token>
  */
-export function authenticateUser(req: Request, _res: Response, next: NextFunction): void {
+/**
+ * Middleware that authenticates incoming requests strictly via cryptographically signed session tokens (NEW-01, R4-01).
+ * Returns 401 if token is missing, invalid, or expired.
+ */
+export function authenticateUser(req: Request, res: Response, next: NextFunction): void {
+  const authHeader = req.headers['authorization'];
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    sendError(res, 'Unauthorized: Missing or invalid authentication credentials (Bearer token required)', 401);
+    return;
+  }
+
+  const token = authHeader.slice(7).trim();
+  const verified = verifyUserSession(token);
+  if (!verified) {
+    sendError(res, 'Unauthorized: Invalid or expired session token. Please log in again.', 401);
+    return;
+  }
+
+  req.user = verified;
+
+  // Enforce Condition 4: Users with must_change_password enabled cannot access any APIs except password change and logout
+  const isExemptAuthRoute = req.originalUrl.includes('/auth/change-password') ||
+                            req.originalUrl.includes('/auth/me') ||
+                            req.originalUrl.includes('/auth/logout');
+  if (!isExemptAuthRoute) {
+    const dbUser = dbRepository.users.getById(verified.id);
+    if (dbUser && dbUser.mustChangePassword) {
+      sendError(res, 'Tài khoản bắt buộc phải đổi mật khẩu lần đầu trước khi truy cập tài nguyên hệ thống (Condition 4, R4-15).', 403, 'MUST_CHANGE_PASSWORD');
+      return;
+    }
+  }
+
+  next();
+}
+
+/**
+ * Guard middleware requiring genuine global system administrator privileges (R5-02).
+ * Verifies directly from SQLite users table, rejecting forged or project-level tokens.
+ */
+export function requireSystemAdmin(req: Request, res: Response, next: NextFunction): void {
+  if (!req.user) {
+    sendError(res, 'Unauthorized: Authentication required (valid signed session required)', 401);
+    return;
+  }
+  const dbUser = dbRepository.users.getById(req.user.id);
+  if (!dbUser || normalizeRole(dbUser.role) !== 'Project Admin') {
+    sendError(res, 'Permission denied: Quản trị viên hệ thống (System Administrator) mới có quyền truy cập chức năng này (R5-02).', 403);
+    return;
+  }
+  next();
+}
+
+/**
+ * Optional authentication middleware for public endpoints that can optionally take advantage of user context.
+ */
+export function optionalAuthenticateUser(req: Request, _res: Response, next: NextFunction): void {
   const authHeader = req.headers['authorization'];
   if (authHeader && authHeader.startsWith('Bearer ')) {
     const token = authHeader.slice(7).trim();
     const verified = verifyUserSession(token);
     if (verified) {
       req.user = verified;
-      return next();
     }
   }
-
   next();
 }
 
@@ -207,20 +262,41 @@ export function requireRole(allowedRoles: Array<UserRole | string>) {
 }
 
 /**
- * Verifies that the authenticated user has access to the target project (R3-05).
- * Project Admin has global access. Other roles must belong to the project.
+ * Retrieve the active role of a user specifically within a target project from the DB (R4-06).
+ * Queries SQLite project_members table.
+ * If user is a global Project Admin in the users table, returns 'Project Admin'.
+ * Otherwise returns the member's project-specific role, or null if not a member.
  */
-export function checkProjectAccess(user: AuthUser | undefined, targetProjectId: string | undefined): boolean {
-  if (!user) return false;
-  if (user.role === 'Project Admin') return true;
-  if (!targetProjectId) return false;
-  if (user.projectId === targetProjectId) return true;
-  const memberRole = dbRepository.projectMembers.getRole(targetProjectId, user.id);
-  return Boolean(memberRole);
+export function getUserRoleInProject(userId: string, targetProjectId: string): UserRole | null {
+  if (!userId || !targetProjectId) return null;
+
+  // 1. Check project-specific role in project_members
+  const memberRole = dbRepository.projectMembers.getRole(targetProjectId, userId);
+  if (memberRole) {
+    return (normalizeRole(memberRole) || memberRole) as UserRole;
+  }
+
+  // 2. Check global system admin role in users table
+  const user = dbRepository.users.getById(userId);
+  if (user && normalizeRole(user.role) === 'Project Admin') {
+    return 'Project Admin';
+  }
+
+  return null;
 }
 
 /**
- * Middleware ensuring the authenticated user has permission to view/modify the requested project (R3-05).
+ * Verifies that the authenticated user has access to the target project (R4-01, R4-06).
+ * Must be a verified member of the project or a global Project Admin in the DB.
+ */
+export function checkProjectAccess(user: AuthUser | undefined, targetProjectId: string | undefined): boolean {
+  if (!user || !targetProjectId) return false;
+  const role = getUserRoleInProject(user.id, targetProjectId);
+  return Boolean(role);
+}
+
+/**
+ * Middleware ensuring the authenticated user has permission to view/modify the requested project (R3-05, R4-01).
  */
 export function requireProjectAccess(getProjectId: (req: Request) => string | undefined) {
   return (req: Request, res: Response, next: NextFunction): void => {
@@ -229,10 +305,55 @@ export function requireProjectAccess(getProjectId: (req: Request) => string | un
       return;
     }
     const targetProjectId = getProjectId(req);
-    if (targetProjectId && !checkProjectAccess(req.user, targetProjectId)) {
-      sendError(res, `Permission denied: Bạn không có quyền truy cập dữ liệu thuộc dự án "${targetProjectId}" (R3-05).`, 403);
+    if (!targetProjectId) {
+      sendError(res, 'Yêu cầu mã dự án (projectId)', 400);
       return;
     }
+    if (!checkProjectAccess(req.user, targetProjectId)) {
+      sendError(res, `Permission denied: Bạn không có quyền truy cập dữ liệu thuộc dự án "${targetProjectId}" (R3-05, R4-01).`, 403);
+      return;
+    }
+    next();
+  };
+}
+
+/**
+ * Middleware ensuring the authenticated user has a specific role in the requested project (R4-06).
+ */
+export function requireProjectRole(
+  getProjectId: (req: Request) => string | undefined,
+  allowedRoles: Array<UserRole | string>
+) {
+  const normalizedAllowed = new Set(allowedRoles.map(r => normalizeRole(r) || r));
+
+  return (req: Request, res: Response, next: NextFunction): void => {
+    if (!req.user) {
+      sendError(res, 'Unauthorized: Authentication required', 401);
+      return;
+    }
+
+    const targetProjectId = getProjectId(req);
+    if (!targetProjectId) {
+      sendError(res, 'Yêu cầu mã dự án (projectId)', 400);
+      return;
+    }
+
+    const effectiveRole = getUserRoleInProject(req.user.id, targetProjectId);
+    if (!effectiveRole) {
+      sendError(res, `Permission denied: Bạn không phải là thành viên của dự án "${targetProjectId}".`, 403);
+      return;
+    }
+
+    if (!normalizedAllowed.has(effectiveRole)) {
+      sendError(
+        res,
+        `Permission denied: Vai trò "${effectiveRole}" trong dự án "${targetProjectId}" không có quyền thực hiện thao tác này. Yêu cầu: ${allowedRoles.join(', ')}`,
+        403
+      );
+      return;
+    }
+
+    req.projectRole = effectiveRole;
     next();
   };
 }

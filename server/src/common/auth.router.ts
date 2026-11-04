@@ -1,6 +1,8 @@
 import { Router, Request, Response } from 'express';
-import { signUserSession, verifyUserSession, verifyPassword, normalizeRole, VALID_ROLES, AuthUser } from './auth.js';
+import crypto from 'crypto';
+import { signUserSession, verifyUserSession, verifyPassword, normalizeRole, VALID_ROLES, AuthUser, authenticateUser, checkProjectAccess } from './auth.js';
 import { sendSuccess, sendError } from './response.js';
+import { computeAuditEventHash } from './crypto.js';
 import { dbRepository } from '../database/db.js';
 
 export const authRouter = Router();
@@ -39,108 +41,152 @@ authRouter.post('/login', (req: Request, res: Response) => {
   const resolvedRole = memberRole || dbUser.role;
   const canonicalRole = normalizeRole(resolvedRole) || 'QA';
 
-  const user: AuthUser = {
+  const user: AuthUser & { mustChangePassword?: boolean } = {
     id: dbUser.id,
     username: dbUser.username,
     name: dbUser.name,
     role: canonicalRole,
-    projectId: targetProject
+    projectId: targetProject,
+    mustChangePassword: Boolean(dbUser.mustChangePassword)
   };
 
   const token = signUserSession(user);
-  sendSuccess(res, { token, user }, 'Đăng nhập thành công');
+  sendSuccess(res, {
+    token,
+    user,
+    mustChangePassword: Boolean(dbUser.mustChangePassword)
+  }, 'Đăng nhập thành công');
+});
+
+/**
+ * POST /api/v1/auth/change-password
+ * Enforces secure password change for authenticated users (R4-15, Condition 4).
+ */
+authRouter.post('/change-password', authenticateUser, (req: Request, res: Response) => {
+  const { currentPassword, newPassword } = req.body || {};
+  if (!currentPassword || !newPassword) {
+    return sendError(res, 'Vui lòng cung cấp mật khẩu hiện tại và mật khẩu mới.', 400);
+  }
+
+  const user = req.user;
+  if (!user || !user.username) {
+    return sendError(res, 'Unauthorized', 401);
+  }
+
+  const username = user.username;
+  const dbUser = dbRepository.users.getByUsername(username);
+  if (!dbUser) {
+    return sendError(res, 'Không tìm thấy thông tin người dùng.', 404);
+  }
+
+  if (!verifyPassword(String(currentPassword), dbUser.passwordHash, dbUser.passwordSalt)) {
+    return sendError(res, 'Mật khẩu hiện tại không chính xác.', 400);
+  }
+
+  if (String(newPassword).length < 8) {
+    return sendError(res, 'Mật khẩu mới phải có tối thiểu 8 ký tự.', 400);
+  }
+
+  if (String(newPassword) === String(currentPassword)) {
+    return sendError(res, 'Mật khẩu mới không được trùng với mật khẩu cũ.', 400);
+  }
+
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.pbkdf2Sync(String(newPassword), salt, 10000, 64, 'sha512').toString('hex');
+
+  const updated = dbRepository.users.updatePassword(dbUser.id, hash, salt);
+  if (!updated) {
+    return sendError(res, 'Không thể cập nhật mật khẩu.', 500);
+  }
+
+  // Record audit trail
+  try {
+    const latestHash = dbRepository.auditEvents.getLatestHash();
+    const eventId = `EVT-PASS-${Date.now()}`;
+    const timestamp = new Date().toISOString();
+    const action = 'USER_PASSWORD_CHANGE';
+    const details = `User "${username}" changed their password.`;
+    const eventHash = computeAuditEventHash(latestHash, eventId, username, user.role, action, 'User', user.id, timestamp);
+    dbRepository.auditEvents.add({
+      id: eventId,
+      user: username,
+      role: user.role,
+      action,
+      entityType: 'User',
+      entityId: user.id,
+      details,
+      timestamp,
+      previousEventHash: latestHash,
+      eventHash
+    });
+  } catch {}
+
+  return sendSuccess(res, { success: true }, 'Đổi mật khẩu thành công');
 });
 
 /**
  * POST /api/v1/auth/session
- * Generates or switches a cryptographic session token with verified server-side credentials (R2-01).
- * Strictly requires either username+password or role+password matching the database.
- * Arbitrary role declaration without valid credentials is rejected with 401.
+ * Swapping role / project context for authenticated Project Admin users (R4-06).
+ * All standard logins MUST use POST /api/v1/auth/login.
  */
-authRouter.post('/session', (req: Request, res: Response) => {
-  const { role, username, password, credential, projectId } = req.body || {};
-
-  // Case 1: Standard login via username and password
-  const targetUsername = (username || role || '').toString().trim().toLowerCase();
-  const targetPassword = password || credential;
-
-  if (!targetPassword) {
-    // If request contains an existing Authorization token, allow role switch if user has Project Admin privileges
-    const authHeader = req.headers['authorization'];
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-      const verified = verifyUserSession(authHeader.slice(7).trim());
-      if (verified && verified.role === 'Project Admin' && role) {
-        const normalizedTargetRole = normalizeRole(role);
-        if (normalizedTargetRole) {
-          const switchedUser: AuthUser = {
-            id: verified.id,
-            username: verified.username,
-            name: verified.name,
-            role: normalizedTargetRole,
-            projectId: projectId || verified.projectId || 'PRJ-01'
-          };
-          const token = signUserSession(switchedUser);
-          return sendSuccess(res, { token, user: switchedUser }, 'Chuyển vai trò quản trị thành công');
-        }
-      }
-    }
-
-    return sendError(
-      res,
-      'Yêu cầu xác thực: Vui lòng cung cấp mật khẩu/thông tin đăng nhập hợp lệ để cấp phiên làm việc (R2-01).',
-      401
-    );
+authRouter.post('/session', authenticateUser, (req: Request, res: Response) => {
+  const verified = req.user;
+  if (!verified) {
+    return sendError(res, 'Unauthorized: Yêu cầu đăng nhập trước khi thao tác (R4-01).', 401);
   }
 
-  // Find user by username or role alias in database
-  let dbUser = dbRepository.users.getByUsername(targetUsername);
-  if (!dbUser && role) {
-    // Look up default seed user for this role
-    const normalizedRole = normalizeRole(role);
-    if (normalizedRole) {
-      const roleMap: Record<string, string> = {
-        'Project Admin': 'admin',
-        'PM / Project Lead': 'pm',
-        'BA': 'ba',
-        'Tech Lead / DEV': 'dev',
-        'QA': 'qa',
-        'Reviewer / Approver': 'reviewer'
-      };
-      const userKey = roleMap[normalizedRole];
-      if (userKey) {
-        dbUser = dbRepository.users.getByUsername(userKey);
-      }
-    }
+  // Look up user in DB to check genuine global system admin privilege (R5-02)
+  const dbUser = dbRepository.users.getById(verified.id);
+  const isGlobalAdmin = dbUser && normalizeRole(dbUser.role) === 'Project Admin';
+  if (!isGlobalAdmin) {
+    return sendError(res, 'Chỉ có Quản trị viên hệ thống (Project Admin) mới có quyền chuyển đổi vai trò phiên làm việc (R4-06, R5-02).', 403);
   }
 
-  if (!dbUser) {
-    return sendError(res, 'Người dùng không tồn tại trong hệ thống.', 401);
+  const { role, projectId } = req.body || {};
+  const targetProject = projectId || verified.projectId || 'PRJ-01';
+  if (targetProject && !checkProjectAccess(verified, targetProject)) {
+    return sendError(res, `Bạn không có quyền chuyển phiên làm việc sang dự án "${targetProject}".`, 403);
+  }
+  const normalizedTargetRole = role ? normalizeRole(role) : verified.role;
+
+  if (!normalizedTargetRole) {
+    return sendError(res, 'Vai trò không hợp lệ.', 400);
   }
 
-  const isValidPassword = verifyPassword(String(targetPassword), dbUser.passwordHash, dbUser.passwordSalt);
-  if (!isValidPassword) {
-    return sendError(res, 'Mật khẩu xác thực vai trò không chính xác.', 401);
-  }
-
-  const targetProject = projectId || 'PRJ-01';
-  const memberRole = dbRepository.projectMembers.getRole(targetProject, dbUser.id);
-  if (!memberRole && dbUser.role !== 'Project Admin') {
-    return sendError(res, `Người dùng "${dbUser.username}" không có quyền truy cập dự án "${targetProject}".`, 403);
-  }
-  let resolvedRole = memberRole || dbUser.role;
-
-  const canonicalRole = normalizeRole(resolvedRole) || 'QA';
-
-  const user: AuthUser = {
-    id: dbUser.id,
-    username: dbUser.username,
-    name: dbUser.name,
-    role: canonicalRole,
+  const switchedUser: AuthUser = {
+    id: verified.id,
+    username: verified.username,
+    name: verified.name,
+    role: normalizedTargetRole,
     projectId: targetProject
   };
 
-  const token = signUserSession(user);
-  sendSuccess(res, { token, user }, 'Xác thực phiên làm việc thành công');
+  // Record audit trail for role/project switch
+  try {
+    const adminUsername = verified.username || verified.name || 'Admin';
+    const latestHash = dbRepository.auditEvents.getLatestHash();
+    const eventId = `EVT-SWITCH-${Date.now()}`;
+    const timestamp = new Date().toISOString();
+    const action = 'ADMIN_ROLE_SWITCH';
+    const details = `Admin "${adminUsername}" switched role to "${normalizedTargetRole}" in project "${targetProject}"`;
+    const hash = computeAuditEventHash(latestHash, eventId, adminUsername, 'Project Admin', action, 'Document', targetProject, timestamp);
+
+    dbRepository.auditEvents.add({
+      id: eventId,
+      user: adminUsername,
+      role: 'Project Admin',
+      action,
+      entityType: 'Document',
+      entityId: targetProject,
+      details,
+      timestamp,
+      previousEventHash: latestHash,
+      eventHash: hash
+    });
+  } catch {}
+
+  const token = signUserSession(switchedUser);
+  return sendSuccess(res, { token, user: switchedUser }, 'Chuyển vai trò quản trị thành công');
 });
 
 /**

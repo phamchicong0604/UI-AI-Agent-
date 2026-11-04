@@ -10,6 +10,7 @@ import { migration008FtsApprovedKnowledge } from './008_fts_approved_knowledge.j
 import { migration009EnforceOfflinePolicyDefault } from './009_enforce_offline_policy_default.js';
 import { migration010UsersProjectMembersAndReqProjectId } from './010_users_project_members_and_req_project_id.js';
 import { migration011CleanProjectsAndEnforceOfflinePolicy } from './011_clean_projects_and_enforce_offline_policy.js';
+import { migration012RemoveSeedUsersAndEnforceAdminSecurity } from './012_remove_seed_users_and_enforce_admin_security.js';
 
 export const allMigrations: Migration[] = [
   migration001InitialSchema,
@@ -22,5 +23,6 @@ export const allMigrations: Migration[] = [
   migration008FtsApprovedKnowledge,
   migration009EnforceOfflinePolicyDefault,
   migration010UsersProjectMembersAndReqProjectId,
-  migration011CleanProjectsAndEnforceOfflinePolicy
+  migration011CleanProjectsAndEnforceOfflinePolicy,
+  migration012RemoveSeedUsersAndEnforceAdminSecurity
 ];

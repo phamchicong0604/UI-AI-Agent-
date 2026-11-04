@@ -18,7 +18,7 @@ import { db, dbRepository } from '../../database/db.js';
 import { validateFileContent, validateZipArchive, UPLOAD_LIMITS } from './uploadSecurity.js';
 import { documentParserManager } from './parsers/index.js';
 import { SemanticRiskScorer } from '../knowledge/semanticValidator.js';
-import { authenticateUser, requireRole, requireAuth, checkProjectAccess } from '../../common/auth.js';
+import { authenticateUser, requireRole, requireAuth, checkProjectAccess, getUserRoleInProject } from '../../common/auth.js';
 import { defaultJobQueue } from '../workflow/jobQueue.js';
 import { defaultWorkflowEngine } from '../workflow/workflowEngine.js';
 
@@ -296,9 +296,6 @@ documentsRouter.get('/:id', authenticateUser, (req: Request, res: Response) => {
   if (!doc) return sendError(res, 'Document not found', 404);
 
   if (req.user && !checkProjectAccess(req.user, doc.projectId)) {
-    return sendError(res, `Bạn không có quyền chuyển đổi trạng thái tài liệu thuộc dự án "${doc.projectId}".`, 403);
-  }
-  if (req.user && !checkProjectAccess(req.user, doc.projectId)) {
     return sendError(res, `Bạn không có quyền truy cập tài liệu thuộc dự án "${doc.projectId}".`, 403);
   }
   sendSuccess(res, doc);
@@ -325,15 +322,11 @@ export function getSafeMimeType(fileName: string): string {
 
 /**
  * GET /api/v1/documents/:id/file
- * Download/retrieve byte-for-byte original stored file with verified Content-Type (BUG-031, R3-06, BUG-019)
+ * Download/retrieve byte-for-byte original stored file with verified Content-Type (BUG-031, R3-06, BUG-019, R4-10, R4-16)
  */
 documentsRouter.get('/:id/file', authenticateUser, async (req: Request, res: Response) => {
   const doc = dbRepository.documents.getById(req.params.id);
   if (!doc) return sendError(res, 'Document not found', 404);
-
-  if (req.user && !checkProjectAccess(req.user, doc.projectId)) {
-    return sendError(res, `Bạn không có quyền chuyển đổi trạng thái tài liệu thuộc dự án "${doc.projectId}".`, 403);
-  }
 
   if (req.user && !checkProjectAccess(req.user, doc.projectId)) {
     return sendError(res, `Bạn không có quyền tải tệp tin từ dự án "${doc.projectId}".`, 403);
@@ -341,7 +334,7 @@ documentsRouter.get('/:id/file', authenticateUser, async (req: Request, res: Res
 
   const versions = dbRepository.documentVersions.getByDocumentId(doc.id);
   const targetVersionNo = (req.query.version as string) || (req.query.versionNo as string) || doc.currentVersion;
-  const targetVersion = (targetVersionNo ? versions.find(v => v.versionNo === targetVersionNo) : null) || versions[0];
+  const targetVersion = (targetVersionNo ? versions.find(v => v.versionNo === targetVersionNo) : null) || versions[versions.length - 1];
   
   if (targetVersion && targetVersion.fileId) {
     const stored = dbRepository.storedFiles.getById(targetVersion.fileId);
@@ -349,9 +342,11 @@ documentsRouter.get('/:id/file', authenticateUser, async (req: Request, res: Res
       try {
         const buffer = await defaultFileStore.get(stored.storageKey);
         const safeMime = getSafeMimeType(stored.originalName);
+        const safeFilename = path.basename(stored.originalName).replace(/["\r\n\\]/g, '_');
+        const encodedFilename = encodeURIComponent(path.basename(stored.originalName));
         res.setHeader('Content-Type', safeMime);
         res.setHeader('X-Content-Type-Options', 'nosniff');
-        res.setHeader('Content-Disposition', `attachment; filename="${path.basename(stored.originalName)}"`);
+        res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}"; filename*=UTF-8''${encodedFilename}`);
         res.setHeader('X-Checksum-SHA256', stored.sha256);
         return res.send(buffer);
       } catch {}
@@ -361,9 +356,11 @@ documentsRouter.get('/:id/file', authenticateUser, async (req: Request, res: Res
   // Fallback if raw stored file missing (BUG-019: prefer target version's extracted content over doc.contentMarkdown)
   const versionText = targetVersion?.extractedContent || doc.contentMarkdown;
   if (versionText) {
+    const safeDocName = `${doc.id}.md`.replace(/["\r\n\\]/g, '_');
+    const encodedDocName = encodeURIComponent(`${doc.id}.md`);
     res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
     res.setHeader('X-Content-Type-Options', 'nosniff');
-    res.setHeader('Content-Disposition', `attachment; filename="${doc.id}.md"`);
+    res.setHeader('Content-Disposition', `attachment; filename="${safeDocName}"; filename*=UTF-8''${encodedDocName}`);
     return res.send(versionText);
   }
 
@@ -389,6 +386,13 @@ documentsRouter.post('/', authenticateUser, requireAuth, async (req: Request, re
   const proj = dbRepository.projects.getById(projId);
   if (!proj) {
     return sendError(res, `Project "${projId}" does not exist`, 400);
+  }
+
+  if (req.body.id) {
+    const existingDoc = dbRepository.documents.getById(req.body.id);
+    if (existingDoc && existingDoc.projectId !== projId) {
+      return sendError(res, 'Tài liệu thuộc dự án khác. Không được phép ghi đè chéo dự án (R4-03).', 403);
+    }
   }
 
   const isExistingDoc = Boolean(req.body.id && dbRepository.documents.getById(req.body.id));
@@ -499,13 +503,13 @@ documentsRouter.post('/upload', authenticateUser, requireAuth, upload.array('fil
     }
 
     const projectId = (req.body.projectId as string) || (req.user as any)?.projectId || 'PRJ-01';
-    if (req.user && !checkProjectAccess(req.user, projectId)) {
-      return sendError(res, `Bạn không có quyền tải tài liệu lên dự án "${projectId}".`, 403);
-    }
     // Validate project existence immediately (BUG-021)
     const projectRow = db.prepare('SELECT id FROM projects WHERE id = ?').get(projectId) as { id: string } | undefined;
     if (!projectRow) {
       return sendError(res, `Dự án "${projectId}" không tồn tại. Vui lòng chọn một dự án hợp lệ trước khi tải lên.`, 400);
+    }
+    if (req.user && !checkProjectAccess(req.user, projectId)) {
+      return sendError(res, `Bạn không có quyền tải tài liệu lên dự án "${projectId}".`, 403);
     }
     const categoryOverride = (req.body.category as string) || 'AUTO';
     const author = req.user?.name || (req.body.author as string) || 'System User';
@@ -956,11 +960,12 @@ documentsRouter.patch('/:id/status', authenticateUser, requireAuth, (req: Reques
     return sendError(res, `Bạn không có quyền chuyển đổi trạng thái tài liệu thuộc dự án "${doc.projectId}".`, 403);
   }
 
-  // Enforce rule BR-AUTH-01: Approver/Admin role required for governed transitions (BUG-006, R2-10)
-  const userRole = req.user?.role;
+  // Enforce rule BR-AUTH-01: Approver/Admin role required in this specific project for governed transitions (Condition 3, BUG-006, R2-10)
+  const targetDocProj = doc.projectId || 'PRJ-01';
+  const effectiveRole = req.user ? (getUserRoleInProject(req.user.id, targetDocProj) || req.user.role) : null;
   if (['Approved', 'Rejected', 'Deprecated'].includes(status) || doc.status === 'Approved') {
-    if (!userRole || !['Project Admin', 'Reviewer / Approver', 'PM / Project Lead'].includes(userRole)) {
-      return sendError(res, `Permission denied: Approver or Admin role required to transition document to/from Approved status`, 403);
+    if (!effectiveRole || !['Project Admin', 'Reviewer / Approver', 'PM / Project Lead'].includes(effectiveRole)) {
+      return sendError(res, `Permission denied: Vai trò "${effectiveRole || 'QA'}" trong dự án "${doc.projectId}" không có quyền phê duyệt/chuyển trạng thái tài liệu (Condition 3).`, 403);
     }
   }
 
@@ -1036,7 +1041,27 @@ documentsRouter.post('/:id/versions', authenticateUser, requireAuth, upload.sing
   const parseResult = await documentParserManager.parse(buffer, fileName, mimeType);
   const rawText = parseResult.markdownText || parseResult.rawText || '';
 
-  const nextVersionNo = req.body.versionNo || `v1.${currentVersions.length}`;
+  let maxMinor = -1;
+  for (const v of currentVersions) {
+    const match = v.versionNo.match(/^v?1\.(\d+)$/);
+    if (match) {
+      const minor = parseInt(match[1], 10);
+      if (minor > maxMinor) maxMinor = minor;
+    }
+  }
+
+  let nextVersionNo = req.body.versionNo;
+  if (!nextVersionNo) {
+    nextVersionNo = maxMinor >= 0 ? `v1.${maxMinor + 1}` : `v1.${currentVersions.length}`;
+    while (currentVersions.some(v => v.versionNo === nextVersionNo)) {
+      maxMinor++;
+      nextVersionNo = `v1.${maxMinor + 1}`;
+    }
+  }
+
+  if (currentVersions.some(v => v.versionNo === nextVersionNo)) {
+    return sendError(res, `Phiên bản "${nextVersionNo}" đã tồn tại cho tài liệu này. Không được ghi đè phiên bản cũ.`, 409);
+  }
   const versionId = `${doc.id}-${nextVersionNo}`;
 
   const fileSha256 = `sha256:${computeSha256(buffer)}`;
@@ -1081,7 +1106,7 @@ documentsRouter.post('/:id/versions', authenticateUser, requireAuth, upload.sing
           fileSize: formatBytes(buffer.length),
           checksum: fileSha256
         },
-        ...doc.versions
+        ...(doc.versions || [])
       ];
       dbRepository.documents.upsert(doc);
 

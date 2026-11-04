@@ -4,7 +4,7 @@ import net from 'net';
 import AdmZip from 'adm-zip';
 import { app } from '../app.js';
 import { db, dbRepository } from '../database/db.js';
-import { signUserSession } from '../common/auth.js';
+import { signUserSession, computePbkdf2Hash } from '../common/auth.js';
 import { defaultDataPolicyService, PolicyViolationError } from '../modules/ai/dataPolicyService.js';
 import { aiConnectionManager } from '../modules/ai/ai.connection.manager.js';
 import { AiService } from '../modules/ai/ai.service.js';
@@ -16,9 +16,9 @@ describe('Bug Review Phase 1: Security & Governance (BUG-001 to BUG-006, BUG-009
   let server: http.Server;
   let baseUrl: string;
 
-  const adminToken = signUserSession({ id: 'U-ADMIN', name: 'Admin', role: 'Project Admin' });
-  const devToken = signUserSession({ id: 'U-DEV', name: 'Dev', role: 'Tech Lead / DEV' });
-  const qaToken = signUserSession({ id: 'U-QA', name: 'QA', role: 'QA' });
+  const adminToken = signUserSession({ id: 'usr_admin', username: 'admin', name: 'Admin', role: 'Project Admin' });
+  const devToken = signUserSession({ id: 'usr_dev', username: 'dev', name: 'Dev', role: 'Tech Lead / DEV' });
+  const qaToken = signUserSession({ id: 'usr_qa', username: 'qa', name: 'QA', role: 'QA' });
 
   beforeAll(async () => {
     await new Promise<void>((resolve) => {
@@ -69,6 +69,27 @@ describe('Bug Review Phase 1: Security & Governance (BUG-001 to BUG-006, BUG-009
       '2026-11-03',
       '2026-11-03'
     );
+
+    // Ensure test users exist in users table
+    const testAdminSalt = 'enterprise_admin_salt_16bytes';
+    const testAdminHash = computePbkdf2Hash('admin123', testAdminSalt);
+    db.prepare(`
+      INSERT OR REPLACE INTO users (id, username, password_hash, password_salt, name, role, must_change_password, created_at)
+      VALUES ('usr_admin', 'admin', ?, ?, 'Admin', 'Project Admin', 0, datetime('now'))
+    `).run(testAdminHash, testAdminSalt);
+    db.prepare(`
+      INSERT OR REPLACE INTO users (id, username, password_hash, password_salt, name, role, must_change_password, created_at)
+      VALUES ('usr_dev', 'dev', 'hash', 'salt', 'Dev', 'Tech Lead / DEV', 0, datetime('now'))
+    `).run();
+    db.prepare(`
+      INSERT OR REPLACE INTO users (id, username, password_hash, password_salt, name, role, must_change_password, created_at)
+      VALUES ('usr_qa', 'qa', 'hash', 'salt', 'QA', 'QA', 0, datetime('now'))
+    `).run();
+
+    // Enroll test users into test project memberships (R4-06)
+    db.prepare(`INSERT OR REPLACE INTO project_members (id, project_id, user_id, role, created_at) VALUES (?, ?, 'usr_admin', 'Project Admin', datetime('now'))`).run(`pm_${testProjectId}_admin`, testProjectId);
+    db.prepare(`INSERT OR REPLACE INTO project_members (id, project_id, user_id, role, created_at) VALUES (?, ?, 'usr_dev', 'Tech Lead / DEV', datetime('now'))`).run(`pm_${testProjectId}_dev`, testProjectId);
+    db.prepare(`INSERT OR REPLACE INTO project_members (id, project_id, user_id, role, created_at) VALUES (?, ?, 'usr_qa', 'QA', datetime('now'))`).run(`pm_${testProjectId}_qa`, testProjectId);
   });
 
   describe('BUG-001 & BUG-002: AI Policy Fail-Closed Enforcement', () => {
@@ -595,14 +616,15 @@ describe('Bug Review Phase 1: Security & Governance (BUG-001 to BUG-006, BUG-009
       expect(res.status).toBe(401);
       const json = await res.json() as any;
       expect(json.success).toBe(false);
-      expect(json.error).toContain('Vui lòng cung cấp mật khẩu');
+      expect(json.error).toMatch(/Unauthorized|credentials|token/i);
     });
 
-    it('R2-01: POST /api/v1/auth/session issues valid signed token when valid PBKDF2 credentials provided', async () => {
-      const res = await fetch(`${baseUrl}/api/v1/auth/session`, {
+    it('R2-01: POST /api/v1/auth/login issues valid signed token when valid PBKDF2 credentials provided', async () => {
+      db.prepare(`UPDATE users SET must_change_password = 1 WHERE id = 'usr_admin'`).run();
+      const res = await fetch(`${baseUrl}/api/v1/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ role: 'Project Admin', credential: 'admin123' })
+        body: JSON.stringify({ username: 'admin', password: 'admin123', projectId: 'PRJ-01' })
       });
 
       expect(res.status).toBe(200);
@@ -610,6 +632,7 @@ describe('Bug Review Phase 1: Security & Governance (BUG-001 to BUG-006, BUG-009
       expect(json.success).toBe(true);
       expect(json.data.token).toBeDefined();
       expect(json.data.user.role).toBe('Project Admin');
+      expect(json.data.mustChangePassword).toBe(true);
     });
 
     it('R2-02: verifyUserSession rejects tampered session tokens with constant-time verification', async () => {

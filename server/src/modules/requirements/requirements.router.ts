@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import { sendSuccess, sendError } from '../../common/response.js';
 import { RequirementItem } from '../../common/types.js';
 import { dbRepository } from '../../database/db.js';
-import { authenticateUser, requireAuth, requireRole, checkProjectAccess } from '../../common/auth.js';
+import { authenticateUser, requireAuth, requireRole, checkProjectAccess, getUserRoleInProject } from '../../common/auth.js';
 
 export const requirementsRouter = Router();
 
@@ -63,11 +63,12 @@ requirementsRouter.patch('/:id/status', authenticateUser, requireAuth, (req: Req
     return sendError(res, `Bạn không có quyền cập nhật yêu cầu thuộc dự án "${reqItem.projectId}".`, 403);
   }
 
-  // BR-AUTH-01: Only Approver/Admin roles can approve requirements (NEW-11)
+  // BR-AUTH-01: Only Approver/Admin roles in the target project can approve/reject requirements (Condition 3, NEW-11)
+  const targetProj = reqItem.projectId || 'PRJ-01';
+  const effectiveRole = req.user ? (getUserRoleInProject(req.user.id, targetProj) || req.user.role) : null;
   if (status === 'Approved' || status === 'Rejected') {
-    const userRole = req.user?.role;
-    if (!userRole || !['Project Admin', 'Reviewer / Approver', 'PM / Project Lead'].includes(userRole)) {
-      return sendError(res, 'Permission denied: Approver role required to approve/reject requirement', 403);
+    if (!effectiveRole || !['Project Admin', 'Reviewer / Approver', 'PM / Project Lead'].includes(effectiveRole)) {
+      return sendError(res, `Permission denied: Vai trò "${effectiveRole || 'QA'}" trong dự án "${targetProj}" không có quyền phê duyệt/từ chối yêu cầu (Condition 3).`, 403);
     }
   }
 

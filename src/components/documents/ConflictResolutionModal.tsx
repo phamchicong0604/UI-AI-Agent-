@@ -61,13 +61,13 @@ export const ConflictResolutionModal: React.FC<ConflictResolutionModalProps> = (
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || data.message || 'Không thể giải quyết xung đột');
+        throw new Error(data.error || data.message || t('conflictResolveError'));
       }
 
       onResolved(conflict.id, resolutionChoice);
       onClose();
     } catch (err: any) {
-      setErrorMsg(err.message || 'Lỗi xử lý');
+      setErrorMsg(err.message || t('conflictProcessError'));
     } finally {
       setIsSubmitting(false);
     }
@@ -141,14 +141,14 @@ export const ConflictResolutionModal: React.FC<ConflictResolutionModalProps> = (
                   <span className="text-[10px] text-slate-400 font-mono">{conflict.unitBId.slice(0, 8)}</span>
                 </div>
                 <div className="text-xs text-slate-400 mb-1">
-                  {t('subjectLabel')}: <span className="text-slate-200 font-medium">{conflict.unitBSubject || 'Quy tắc đã duyệt'}</span>
+                  {t('subjectLabel')}: <span className="text-slate-200 font-medium">{conflict.unitBSubject || t('conflictApprovedRuleFallback')}</span>
                 </div>
                 <div className="p-3 rounded-lg bg-slate-900 border border-slate-800 text-xs text-slate-300 italic font-serif">
-                  "{conflict.unitBContent || 'Nội dung quy chuẩn hiện tại trong kho tri thức.'}"
+                  "{conflict.unitBContent || t('conflictApprovedContentFallback')}"
                 </div>
               </div>
               <div className="text-[11px] text-slate-400 mt-2">
-                {t('sourceLabel')}: <span className="text-slate-400">{conflict.unitBSource || 'Tài liệu đã phê duyệt trước đây'}</span>
+                {t('sourceLabel')}: <span className="text-slate-400">{conflict.unitBSource || t('conflictApprovedSourceFallback')}</span>
               </div>
             </div>
 
@@ -162,14 +162,14 @@ export const ConflictResolutionModal: React.FC<ConflictResolutionModalProps> = (
                   <span className="text-[10px] text-slate-400 font-mono">{conflict.unitAId.slice(0, 8)}</span>
                 </div>
                 <div className="text-xs text-slate-400 mb-1">
-                  {t('subjectLabel')}: <span className="text-slate-200 font-medium">{conflict.unitASubject || 'Đề xuất mới'}</span>
+                  {t('subjectLabel')}: <span className="text-slate-200 font-medium">{conflict.unitASubject || t('conflictIncomingRuleFallback')}</span>
                 </div>
                 <div className="p-3 rounded-lg bg-slate-900 border border-slate-800 text-xs text-slate-200 italic font-serif">
-                  "{conflict.unitAContent || 'Nội dung đề xuất mới đang chờ kiểm duyệt.'}"
+                  "{conflict.unitAContent || t('conflictIncomingContentFallback')}"
                 </div>
               </div>
               <div className="text-[11px] text-slate-400 mt-2">
-                {t('sourceLabel')}: <span className="text-slate-400">{conflict.unitASource || 'Tài liệu đang xét duyệt'}</span>
+                {t('sourceLabel')}: <span className="text-slate-400">{conflict.unitASource || t('conflictIncomingSourceFallback')}</span>
               </div>
             </div>
           </div>
@@ -257,7 +257,7 @@ export const ConflictResolutionModal: React.FC<ConflictResolutionModalProps> = (
                 <textarea
                   value={mergeNotes}
                   onChange={(e) => setMergeNotes(e.target.value)}
-                  placeholder="Ghi chú phân tách điều kiện hợp nhất (ví dụ: áp dụng 15m cho QR Code, 30m cho thanh toán thẻ quốc tế)..."
+                  placeholder={t('conflictMergeNotesPlaceholder')}
                   className="w-full h-20 p-3 rounded-xl bg-slate-950 border border-amber-500/40 text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
                 />
               </div>
@@ -268,7 +268,7 @@ export const ConflictResolutionModal: React.FC<ConflictResolutionModalProps> = (
         {/* Footer */}
         <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-slate-800 bg-slate-950/80">
           <Button variant="ghost" size="sm" onClick={onClose} disabled={isSubmitting}>
-            Hủy bỏ
+            {t('conflictCancel')}
           </Button>
           <Button
             variant="primary"
@@ -277,7 +277,7 @@ export const ConflictResolutionModal: React.FC<ConflictResolutionModalProps> = (
             disabled={isSubmitting}
             className="bg-indigo-600 hover:bg-indigo-500"
           >
-            {isSubmitting ? 'Đang xử lý...' : 'Xác nhận Phân giải'}
+            {isSubmitting ? t('conflictResolving') : t('conflictConfirmResolution')}
           </Button>
         </div>
       </div>

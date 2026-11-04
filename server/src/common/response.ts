@@ -17,10 +17,11 @@ export function sendSuccess<T>(res: Response, data: T, message?: string, statusC
   });
 }
 
-export function sendError(res: Response, error: string, statusCode = 400) {
+export function sendError(res: Response, error: string, statusCode = 400, code?: string) {
   return res.status(statusCode).json({
     success: false,
     error,
+    code,
     timestamp: new Date().toISOString()
   });
 }

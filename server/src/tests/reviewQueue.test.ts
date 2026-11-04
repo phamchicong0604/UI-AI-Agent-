@@ -6,13 +6,15 @@ import { randomUUID } from 'crypto';
 import { DatabaseMigrator } from '../database/migrator.js';
 import { allMigrations } from '../database/migrations/index.js';
 import { documentsRouter } from '../modules/documents/documents.router.js';
-import { dbRepository } from '../database/db.js';
+import { db, dbRepository } from '../database/db.js';
 import { DocumentItem } from '../common/types.js';
+import { signUserSession } from '../common/auth.js';
 
 describe('Review Queue API (Epic E8-T1, E8-T2)', () => {
   let app: express.Express;
   let server: Server;
   let baseUrl: string;
+  const adminToken = signUserSession({ id: 'usr_admin', username: 'admin', name: 'Admin', role: 'Project Admin' });
   const testProjectId = 'PRJ-QUEUE-TEST';
 
   beforeEach(async () => {
@@ -29,6 +31,7 @@ describe('Review Queue API (Epic E8-T1, E8-T2)', () => {
     });
 
     // Seed test project
+    db.prepare("UPDATE users SET must_change_password = 0 WHERE id = 'usr_admin'").run();
     dbRepository.projects.upsert({
       id: testProjectId,
       name: 'Queue Test Project',
@@ -39,6 +42,7 @@ describe('Review Queue API (Epic E8-T1, E8-T2)', () => {
       membersCount: 2,
       createdAt: new Date().toISOString()
     });
+    db.prepare("INSERT OR REPLACE INTO project_members (id, project_id, user_id, role, created_at) VALUES (?, ?, 'usr_admin', 'Project Admin', datetime('now'))").run(`pm_${testProjectId}_admin`, testProjectId);
   });
 
   afterEach(async () => {
@@ -126,7 +130,9 @@ describe('Review Queue API (Epic E8-T1, E8-T2)', () => {
       createdAt: new Date().toISOString()
     });
 
-    const res = await fetch(`${baseUrl}/api/v1/documents/review-queue?projectId=${testProjectId}`);
+    const res = await fetch(`${baseUrl}/api/v1/documents/review-queue?projectId=${testProjectId}`, {
+      headers: { Authorization: `Bearer ${adminToken}` }
+    });
     expect(res.status).toBe(200);
 
     const json = (await res.json()) as any;
@@ -146,7 +152,9 @@ describe('Review Queue API (Epic E8-T1, E8-T2)', () => {
   });
 
   it('filters review queue by category and risk level', async () => {
-    const res = await fetch(`${baseUrl}/api/v1/documents/review-queue?projectId=${testProjectId}&category=01_Project_Overview`);
+    const res = await fetch(`${baseUrl}/api/v1/documents/review-queue?projectId=${testProjectId}&category=01_Project_Overview`, {
+      headers: { Authorization: `Bearer ${adminToken}` }
+    });
     expect(res.status).toBe(200);
     const json = (await res.json()) as any;
     expect(json.success).toBe(true);
