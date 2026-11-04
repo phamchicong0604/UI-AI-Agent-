@@ -5,8 +5,10 @@ import { sendError } from './response.js';
 
 export interface AuthUser {
   id: string;
+  username?: string;
   name: string;
   role: UserRole;
+  projectId?: string;
 }
 
 declare global {
@@ -26,7 +28,41 @@ export const VALID_ROLES: readonly UserRole[] = [
   'Reviewer / Approver'
 ];
 
-const AUTH_SECRET = process.env.AUTH_SECRET || 'docqa-enterprise-session-secret-key-2026';
+/**
+ * Retrieves the cryptographic session secret.
+ * Enforces fail-closed boot requirement: AUTH_SECRET must be set in production/runtime (R2-02).
+ */
+export function getAuthSecret(): string {
+  const secret = process.env.AUTH_SECRET;
+  if (!secret) {
+    if (process.env.NODE_ENV === 'test' || process.env.VITEST) {
+      return 'docqa-test-only-auth-secret-key-32chars-min!!';
+    }
+    throw new Error('[Security Error] AUTH_SECRET environment variable is strictly required. Server refused to start without a cryptographic secret (R2-02).');
+  }
+  return secret;
+}
+
+/**
+ * PBKDF2 Password hashing with salt for enterprise credentials (R2-01)
+ */
+export function hashPassword(password: string, salt: string): string {
+  return crypto.pbkdf2Sync(password, salt, 10000, 64, 'sha512').toString('hex');
+}
+
+/**
+ * Constant-time password verification preventing timing analysis
+ */
+export function verifyPassword(password: string, hash: string, salt: string): boolean {
+  try {
+    const computed = hashPassword(password, salt);
+    const a = Buffer.from(computed, 'hex');
+    const b = Buffer.from(hash, 'hex');
+    return a.length === b.length && crypto.timingSafeEqual(a, b);
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Normalizes role string to canonical UserRole if compatible
@@ -55,16 +91,19 @@ export function normalizeRole(roleInput?: string): UserRole | undefined {
  * Prevents client-side spoofing of roles and user identities in audit trails.
  */
 export function signUserSession(user: AuthUser): string {
+  const secret = getAuthSecret();
   const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
   const payload = Buffer.from(JSON.stringify({
     id: user.id,
+    username: user.username,
     name: user.name,
     role: user.role,
+    projectId: user.projectId,
     iat: Math.floor(Date.now() / 1000),
     exp: Math.floor(Date.now() / 1000) + 86400 * 7 // 7 days
   })).toString('base64url');
 
-  const signature = crypto.createHmac('sha256', AUTH_SECRET)
+  const signature = crypto.createHmac('sha256', secret)
     .update(`${header}.${payload}`)
     .digest('base64url');
 
@@ -72,7 +111,7 @@ export function signUserSession(user: AuthUser): string {
 }
 
 /**
- * Verifies and decodes a signed session token. Returns verified AuthUser or null if invalid/tampered.
+ * Verifies and decodes a signed session token using constant-time comparison (R2-02).
  */
 export function verifyUserSession(token: string): AuthUser | null {
   try {
@@ -80,11 +119,16 @@ export function verifyUserSession(token: string): AuthUser | null {
     if (parts.length !== 3) return null;
     const [header, payload, signature] = parts;
 
-    const expectedSig = crypto.createHmac('sha256', AUTH_SECRET)
+    const secret = getAuthSecret();
+    const expectedSig = crypto.createHmac('sha256', secret)
       .update(`${header}.${payload}`)
       .digest('base64url');
 
-    if (signature !== expectedSig) return null;
+    const sigBuf = Buffer.from(signature, 'base64url');
+    const expectedBuf = Buffer.from(expectedSig, 'base64url');
+    if (sigBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(sigBuf, expectedBuf)) {
+      return null;
+    }
 
     const decoded = JSON.parse(Buffer.from(payload, 'base64url').toString('utf-8'));
     if (decoded.exp && decoded.exp < Math.floor(Date.now() / 1000)) return null;
@@ -94,8 +138,10 @@ export function verifyUserSession(token: string): AuthUser | null {
 
     return {
       id: decoded.id || `USER-${role.replace(/\s+/g, '-').toUpperCase()}`,
+      username: decoded.username,
       name: decoded.name || role,
-      role
+      role,
+      projectId: decoded.projectId
     };
   } catch {
     return null;

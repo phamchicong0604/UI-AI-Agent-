@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { sendSuccess, sendError } from '../../common/response.js';
 import { TestCaseItem } from '../../common/types.js';
 import { dbRepository } from '../../database/db.js';
+import { authenticateUser, requireAuth } from '../../common/auth.js';
 
 export const testcasesRouter = Router();
 
@@ -81,13 +82,17 @@ testcasesRouter.post('/', (req: Request, res: Response) => {
   sendSuccess(res, newTc, 'Test case created and persisted to SQLite', 201);
 });
 
-testcasesRouter.patch('/:id/status', (req: Request, res: Response) => {
-  const { status, userRole } = req.body;
+testcasesRouter.patch('/:id/status', authenticateUser, requireAuth, (req: Request, res: Response) => {
+  const { status } = req.body;
   const tc = dbRepository.testCases.getById(req.params.id);
   if (!tc) return sendError(res, 'Test case not found', 404);
 
-  if (status === 'Approved' && userRole && !['Project Admin', 'Reviewer / Approver', 'PM / Project Lead'].includes(userRole)) {
-    return sendError(res, 'Permission denied: Approver role required to approve test cases', 403);
+  // BR-AUTH-01: Only Approver/Admin roles can approve test cases (NEW-11)
+  if (status === 'Approved') {
+    const userRole = req.user?.role;
+    if (!userRole || !['Project Admin', 'Reviewer / Approver', 'PM / Project Lead'].includes(userRole)) {
+      return sendError(res, 'Permission denied: Approver role required to approve test cases', 403);
+    }
   }
 
   tc.status = status;
@@ -96,10 +101,13 @@ testcasesRouter.patch('/:id/status', (req: Request, res: Response) => {
   sendSuccess(res, tc, `Test case transitioned to ${status}`);
 });
 
-testcasesRouter.post('/:id/comments', (req: Request, res: Response) => {
-  const { author, role, content, decision } = req.body;
+testcasesRouter.post('/:id/comments', authenticateUser, requireAuth, (req: Request, res: Response) => {
+  const { content, decision } = req.body;
   const tc = dbRepository.testCases.getById(req.params.id);
   if (!tc) return sendError(res, 'Test case not found', 404);
+
+  const author = req.user?.name || req.body.author || 'Reviewer';
+  const role = req.user?.role || req.body.role || 'QA';
 
   const newComment = {
     id: `RC-0${tc.reviewComments.length + 1}`,

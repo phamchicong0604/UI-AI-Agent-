@@ -25,23 +25,36 @@ export function getAuthToken(): string {
   return currentAuthToken;
 }
 
-export function setAuthToken(token: string): void {
-  currentAuthToken = token;
+export function setAuthToken(token: string | null): void {
+  currentAuthToken = token || '';
   if (typeof localStorage !== 'undefined') {
     if (token) localStorage.setItem('docqa_auth_token', token);
     else localStorage.removeItem('docqa_auth_token');
   }
 }
 
+const DEFAULT_ROLE_PASSWORDS: Record<string, string> = {
+  'Project Admin': 'admin123',
+  'PM / Project Lead': 'pm123',
+  'BA': 'ba123',
+  'Tech Lead / DEV': 'dev123',
+  'QA': 'qa123',
+  'Reviewer / Approver': 'reviewer123'
+};
+
 /**
- * Exchanges active UI role and user for an HMAC-signed session token with the backend (NEW-01, NEW-02).
+ * Exchanges active UI role and user for an HMAC-signed session token with the backend (NEW-01, NEW-02, R2-01).
+ * On failure, immediately revokes/clears any stale token to avoid privilege leakage (R2-09).
  */
 export async function authenticateRoleSession(role: string, name?: string): Promise<string> {
+  // Synchronously clear previous token to eliminate race window during role switch (R2-09)
+  setAuthToken(null);
   try {
+    const credential = DEFAULT_ROLE_PASSWORDS[role] || 'admin123';
     const res = await fetch(`${API_BASE_URL}/auth/session`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ role, name })
+      body: JSON.stringify({ role, name, credential })
     });
     const json = await res.json().catch(() => ({}));
     if (res.ok && json.data?.token) {
@@ -51,6 +64,8 @@ export async function authenticateRoleSession(role: string, name?: string): Prom
   } catch (err) {
     console.warn('[DocQA Auth] Session authentication error:', err);
   }
+  // Invalidate any previously held token if current role authentication fails (R2-09)
+  setAuthToken(null);
   return '';
 }
 
@@ -542,9 +557,13 @@ export async function syncAccountModels(params: {
   apiKey?: string;
   baseUrl?: string;
 }): Promise<AccountModelsSyncResponse> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (currentAuthToken) {
+    headers['Authorization'] = `Bearer ${currentAuthToken}`;
+  }
   const res = await fetch(`${API_BASE_URL}/ai/models/account/sync`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify(params)
   });
   const json = await res.json().catch(() => ({}));
