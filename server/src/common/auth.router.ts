@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import crypto from 'crypto';
-import { signUserSession, verifyUserSession, verifyPassword, normalizeRole, VALID_ROLES, AuthUser, authenticateUser, checkProjectAccess } from './auth.js';
+import { signUserSession, verifyUserSession, verifyPassword, normalizeRole, VALID_ROLES, AuthUser, authenticateUser, checkProjectAccess, requireSystemAdmin } from './auth.js';
 import { sendSuccess, sendError } from './response.js';
 import { computeAuditEventHash } from './crypto.js';
 import { dbRepository } from '../database/db.js';
@@ -99,10 +99,10 @@ authRouter.post('/change-password', authenticateUser, (req: Request, res: Respon
     return sendError(res, 'Không thể cập nhật mật khẩu.', 500);
   }
 
-  // Record audit trail
+  // Record audit trail (R6-04: collision-free ID)
   try {
     const latestHash = dbRepository.auditEvents.getLatestHash();
-    const eventId = `EVT-PASS-${Date.now()}`;
+    const eventId = `AUD-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
     const timestamp = new Date().toISOString();
     const action = 'USER_PASSWORD_CHANGE';
     const details = `User "${username}" changed their password.`;
@@ -119,7 +119,9 @@ authRouter.post('/change-password', authenticateUser, (req: Request, res: Respon
       previousEventHash: latestHash,
       eventHash
     });
-  } catch {}
+  } catch (err: any) {
+    console.error('[Audit] Failed to record password change audit event:', err);
+  }
 
   return sendSuccess(res, { success: true }, 'Đổi mật khẩu thành công');
 });
@@ -161,11 +163,11 @@ authRouter.post('/session', authenticateUser, (req: Request, res: Response) => {
     projectId: targetProject
   };
 
-  // Record audit trail for role/project switch
+  // Record audit trail for role/project switch (R6-04: collision-free ID)
   try {
     const adminUsername = verified.username || verified.name || 'Admin';
     const latestHash = dbRepository.auditEvents.getLatestHash();
-    const eventId = `EVT-SWITCH-${Date.now()}`;
+    const eventId = `AUD-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
     const timestamp = new Date().toISOString();
     const action = 'ADMIN_ROLE_SWITCH';
     const details = `Admin "${adminUsername}" switched role to "${normalizedTargetRole}" in project "${targetProject}"`;
@@ -183,10 +185,76 @@ authRouter.post('/session', authenticateUser, (req: Request, res: Response) => {
       previousEventHash: latestHash,
       eventHash: hash
     });
-  } catch {}
+  } catch (err: any) {
+    console.error('[Audit] Failed to record role switch audit event:', err);
+  }
 
   const token = signUserSession(switchedUser);
   return sendSuccess(res, { token, user: switchedUser }, 'Chuyển vai trò quản trị thành công');
+});
+
+/**
+ * GET /api/v1/auth/users
+ * Lists registered enterprise users (Restricted to System Admin) (R6-06)
+ */
+authRouter.get('/users', authenticateUser, requireSystemAdmin, (_req: Request, res: Response) => {
+  const users = dbRepository.users.getAll();
+  sendSuccess(res, users);
+});
+
+/**
+ * POST /api/v1/auth/users
+ * Creates a new user with mandatory initial password change (Restricted to System Admin) (R6-06)
+ */
+authRouter.post('/users', authenticateUser, requireSystemAdmin, (req: Request, res: Response) => {
+  const { username, password, name, role } = req.body || {};
+  if (!username || !password || !name) {
+    return sendError(res, 'Tên đăng nhập, mật khẩu và tên hiển thị là bắt buộc.', 400);
+  }
+
+  const cleanUsername = String(username).trim().toLowerCase();
+  const existing = dbRepository.users.getByUsername(cleanUsername);
+  if (existing) {
+    return sendError(res, `Tên đăng nhập "${cleanUsername}" đã tồn tại.`, 409);
+  }
+
+  const normalizedRole = role ? normalizeRole(role) : 'QA';
+  if (!normalizedRole) {
+    return sendError(res, 'Vai trò không hợp lệ.', 400);
+  }
+
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.pbkdf2Sync(String(password), salt, 10000, 64, 'sha512').toString('hex');
+  const userId = `usr_${cleanUsername}_${Date.now().toString(36)}`;
+
+  dbRepository.users.create({
+    id: userId,
+    username: cleanUsername,
+    passwordHash: hash,
+    passwordSalt: salt,
+    name: String(name).trim(),
+    role: normalizedRole,
+    mustChangePassword: 1
+  });
+
+  sendSuccess(res, { id: userId, username: cleanUsername, name, role: normalizedRole }, 'Tạo người dùng thành công', 201);
+});
+
+/**
+ * DELETE /api/v1/auth/users/:id
+ * Removes a user account (Restricted to System Admin) (R6-06)
+ */
+authRouter.delete('/users/:id', authenticateUser, requireSystemAdmin, (req: Request, res: Response) => {
+  const targetId = req.params.id;
+  if (req.user?.id === targetId) {
+    return sendError(res, 'Không thể tự xóa tài khoản của chính mình.', 400);
+  }
+
+  const deleted = dbRepository.users.delete(targetId);
+  if (!deleted) {
+    return sendError(res, 'Người dùng không tồn tại.', 404);
+  }
+  sendSuccess(res, { id: targetId }, 'Xóa người dùng thành công');
 });
 
 /**
@@ -204,5 +272,17 @@ authRouter.get('/me', (req: Request, res: Response) => {
     return sendError(res, 'Phiên làm việc hết hạn hoặc không hợp lệ.', 401);
   }
 
-  sendSuccess(res, verified);
+  const dbUser = dbRepository.users.getById(verified.id);
+  sendSuccess(res, {
+    ...verified,
+    mustChangePassword: Boolean(dbUser?.mustChangePassword)
+  });
+});
+
+/**
+ * POST /api/v1/auth/logout
+ * Exempt session termination endpoint (R6-02)
+ */
+authRouter.post('/logout', (_req: Request, res: Response) => {
+  sendSuccess(res, { success: true }, 'Đăng xuất thành công');
 });

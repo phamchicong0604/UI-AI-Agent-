@@ -111,11 +111,11 @@ testcasesRouter.patch('/:id/status', authenticateUser, requireAuth, (req: Reques
     return sendError(res, `Bạn không có quyền cập nhật test case thuộc dự án "${projId}".`, 403);
   }
 
-  // BR-AUTH-01: Only Approver/Admin roles in the target project can approve test cases (Condition 3, NEW-11, R4-07)
+  // BR-AUTH-01: Only Approver/Admin roles in the target project can approve test cases (Condition 3, NEW-11, R4-07, R6-01)
   if (status === 'Approved') {
-    const effectiveRole = req.user ? (getUserRoleInProject(req.user.id, projId) || req.user.role) : null;
+    const effectiveRole = req.user ? getUserRoleInProject(req.user.id, projId) : null;
     if (!effectiveRole || !['Project Admin', 'Reviewer / Approver', 'PM / Project Lead'].includes(effectiveRole)) {
-      return sendError(res, `Permission denied: Vai trò "${effectiveRole || 'QA'}" trong dự án "${projId}" không có quyền phê duyệt test case (Condition 3).`, 403);
+      return sendError(res, `Permission denied: Vai trò "${effectiveRole || 'QA'}" trong dự án "${projId}" không có quyền phê duyệt test case (Condition 3, R6-01).`, 403);
     }
   }
 
@@ -148,7 +148,7 @@ testcasesRouter.post('/:id/comments', authenticateUser, requireAuth, (req: Reque
     }
   }
 
-  const effectiveRole = req.user ? (getUserRoleInProject(req.user.id, projId) || req.user.role) : 'QA';
+  const effectiveRole = req.user ? getUserRoleInProject(req.user.id, projId) : 'QA';
   const author = req.user?.name || req.user?.username || 'Reviewer';
   const role = effectiveRole;
 

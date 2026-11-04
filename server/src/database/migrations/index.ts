@@ -11,6 +11,7 @@ import { migration009EnforceOfflinePolicyDefault } from './009_enforce_offline_p
 import { migration010UsersProjectMembersAndReqProjectId } from './010_users_project_members_and_req_project_id.js';
 import { migration011CleanProjectsAndEnforceOfflinePolicy } from './011_clean_projects_and_enforce_offline_policy.js';
 import { migration012RemoveSeedUsersAndEnforceAdminSecurity } from './012_remove_seed_users_and_enforce_admin_security.js';
+import { migration013BackfillProjectIdsAndTokenVersion } from './013_backfill_project_ids_and_token_version.js';
 
 export const allMigrations: Migration[] = [
   migration001InitialSchema,
@@ -24,5 +25,6 @@ export const allMigrations: Migration[] = [
   migration009EnforceOfflinePolicyDefault,
   migration010UsersProjectMembersAndReqProjectId,
   migration011CleanProjectsAndEnforceOfflinePolicy,
-  migration012RemoveSeedUsersAndEnforceAdminSecurity
+  migration012RemoveSeedUsersAndEnforceAdminSecurity,
+  migration013BackfillProjectIdsAndTokenVersion
 ];

@@ -16,7 +16,7 @@ export const migration012RemoveSeedUsersAndEnforceAdminSecurity: Migration = {
       db.exec('ALTER TABLE users ADD COLUMN must_change_password INTEGER DEFAULT 0;');
     }
 
-    // 2. Renumber any pre-existing duplicate document_versions to preserve all data and files without loss (R4-10, R5-03)
+    // 2. Renumber any pre-existing duplicate document_versions to preserve all data and files without loss (R4-10, R5-03, R6-07)
     try {
       const dupes = db.prepare(`
         SELECT document_id, version_no, count(*) as count
@@ -32,14 +32,26 @@ export const migration012RemoveSeedUsersAndEnforceAdminSecurity: Migration = {
           ORDER BY created_at ASC, id ASC
         `).all(d.document_id, d.version_no) as Array<{ id: string; version_no: string }>;
 
-        // Keep the original record unchanged, suffix duplicates with -dup1, -dup2...
-        // This ensures zero data loss: no rows deleted, no orphaned files, no broken references
+        const allExisting = new Set(
+          (db.prepare('SELECT version_no FROM document_versions WHERE document_id = ?').all(d.document_id) as Array<{ version_no: string }>).map(r => r.version_no)
+        );
+
+        // Keep the original record unchanged, suffix duplicates with collision-resistant -dup1, -dup2...
+        // This ensures zero data loss: no rows deleted, no orphaned files, no broken references (R6-07)
         for (let i = 1; i < records.length; i++) {
-          const newVersionNo = `${records[i].version_no}-dup${i}`;
-          db.prepare('UPDATE document_versions SET version_no = ? WHERE id = ?').run(newVersionNo, records[i].id);
+          let counter = i;
+          let candidate = `${records[i].version_no}-dup${counter}`;
+          while (allExisting.has(candidate)) {
+            counter++;
+            candidate = `${records[i].version_no}-dup${counter}`;
+          }
+          allExisting.add(candidate);
+          db.prepare('UPDATE document_versions SET version_no = ? WHERE id = ?').run(candidate, records[i].id);
         }
       }
-    } catch {}
+    } catch (err: any) {
+      console.error('[Migration 012] Error renumbering duplicate versions:', err);
+    }
 
     // Add unique constraint on document_versions (document_id, version_no) (R4-10)
     db.exec(`

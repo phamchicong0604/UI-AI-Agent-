@@ -13,8 +13,7 @@ const ALLOWED_AUDIT_ACTIONS = new Set([
   'REQUIREMENT_CREATED', 'REQUIREMENT_UPDATED', 'REQUIREMENT_STATUS_TRANSITION',
   'TESTCASE_CREATED', 'TESTCASE_UPDATED', 'TESTCASE_STATUS_TRANSITION',
   'TEST_RUN_RECORDED', 'BUG_LOGGED', 'BUG_UPDATED', 'EVIDENCE_ATTACHED',
-  'KNOWLEDGE_PROMOTED', 'KNOWLEDGE_REJECTED', 'CONFLICT_RESOLVED',
-  'ADMIN_ROLE_SWITCH', 'USER_PASSWORD_CHANGE'
+  'KNOWLEDGE_PROMOTED', 'KNOWLEDGE_REJECTED', 'CONFLICT_RESOLVED'
 ]);
 
 auditRouter.get('/events', authenticateUser, (req: Request, res: Response) => {
@@ -62,6 +61,38 @@ auditRouter.post('/events', authenticateUser, requireAuth, (req: Request, res: R
     return sendError(res, `Bạn không có quyền ghi sự kiện kiểm toán cho dự án "${targetProjectId}".`, 403);
   }
 
+  // R6-04: Bind entityId strictly to targetProjectId to prevent cross-project audit forgery
+  let entityBelongsToProject = true;
+  if (entityType === 'Document') {
+    const doc = dbRepository.documents.getById(entityId);
+    entityBelongsToProject = Boolean(doc && doc.projectId === targetProjectId);
+  } else if (entityType === 'Requirement') {
+    const reqItem = dbRepository.requirements.getById(entityId);
+    entityBelongsToProject = Boolean(reqItem && (reqItem as any).projectId === targetProjectId);
+  } else if (entityType === 'TestCase') {
+    const tc = dbRepository.testCases.getById(entityId);
+    const tcProj = (tc as any)?.projectId || (tc as any)?.project_id;
+    entityBelongsToProject = Boolean(tc && tcProj === targetProjectId);
+  } else if (entityType === 'Evidence') {
+    const evd = dbRepository.evidence.getById(entityId);
+    const evdProj = (evd as any)?.projectId || (evd as any)?.project_id;
+    entityBelongsToProject = Boolean(evd && evdProj === targetProjectId);
+  } else if (entityType === 'TestRun') {
+    const run = dbRepository.testRuns.getById(entityId);
+    const runProj = (run as any)?.projectId || (run as any)?.project_id;
+    entityBelongsToProject = Boolean(run && runProj === targetProjectId);
+  } else if (entityType === 'Bug') {
+    const bug = dbRepository.bugs.getById(entityId);
+    const bugProj = (bug as any)?.projectId || (bug as any)?.project_id;
+    entityBelongsToProject = Boolean(bug && bugProj === targetProjectId);
+  } else if (entityType === 'Project') {
+    entityBelongsToProject = (entityId === targetProjectId);
+  }
+
+  if (!entityBelongsToProject) {
+    return sendError(res, `Thực thể "${entityId}" (${entityType}) không thuộc dự án "${targetProjectId}" hoặc không tồn tại (R6-04).`, 400);
+  }
+
   // Enforce authentic user and role from cryptographically signed token (R4-04)
   const user = req.user!.username || req.user!.name;
   const role = req.user!.role;
@@ -92,10 +123,30 @@ auditRouter.post('/events', authenticateUser, requireAuth, (req: Request, res: R
 
 /**
  * POST /api/v1/audit/verify-chain
- * Validates cryptographic block-chain integrity of all audit events
+ * Validates cryptographic block-chain integrity of audit events (Scoped to authorized projects, R6-04)
  */
 auditRouter.post('/verify-chain', authenticateUser, requireAuth, (req: Request, res: Response) => {
-  const auditStore = dbRepository.auditEvents.getAll();
+  const { projectId } = req.body || {};
+  const targetProjectId = projectId || (req.query?.projectId as string | undefined);
+  if (targetProjectId) {
+    if (req.user && !checkProjectAccess(req.user, targetProjectId)) {
+      return sendError(res, `Bạn không có quyền xác thực chuỗi kiểm toán của dự án "${targetProjectId}".`, 403);
+    }
+  }
+
+  let auditStore = dbRepository.auditEvents.getAll();
+  if (targetProjectId) {
+    auditStore = auditStore.filter(e => e.details.includes(targetProjectId) || e.entityId === targetProjectId);
+  } else if (req.user) {
+    const isSysAdmin = dbRepository.users.getById(req.user.id)?.role === 'Project Admin';
+    if (!isSysAdmin) {
+      const allowedProjects = new Set(dbRepository.projectMembers.getProjectsForUser(req.user.id));
+      auditStore = auditStore.filter(e => {
+        return Array.from(allowedProjects).some(p => e.details.includes(p) || e.entityId === p);
+      });
+    }
+  }
+
   let isChainValid = true;
   const verificationLog: any[] = [];
 

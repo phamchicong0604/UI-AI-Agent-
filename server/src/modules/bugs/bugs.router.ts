@@ -10,18 +10,41 @@ bugsRouter.get('/', authenticateUser, (req: Request, res: Response) => {
   const { status, severity, projectId } = req.query;
   const targetProjectId = (projectId as string) || (req.user as any)?.projectId;
 
-  if (req.user && targetProjectId && !checkProjectAccess(req.user, targetProjectId)) {
-    return sendError(res, `Bạn không có quyền truy cập lỗi của dự án "${targetProjectId}".`, 403);
+  if (targetProjectId) {
+    if (req.user && !checkProjectAccess(req.user, targetProjectId)) {
+      return sendError(res, `Bạn không có quyền truy cập lỗi của dự án "${targetProjectId}".`, 403);
+    }
   }
 
   let result = dbRepository.bugs.getAll();
   if (targetProjectId) {
     result = result.filter(b => (b as any).projectId === targetProjectId || (b as any).project_id === targetProjectId);
+  } else if (req.user) {
+    const isSysAdmin = dbRepository.users.getById(req.user.id)?.role === 'Project Admin';
+    if (!isSysAdmin) {
+      const allowedProjects = new Set(dbRepository.projectMembers.getProjectsForUser(req.user.id));
+      result = result.filter(b => {
+        const pId = (b as any).projectId || (b as any).project_id;
+        return pId && allowedProjects.has(pId);
+      });
+    }
   }
 
   if (status && status !== 'ALL') result = result.filter(b => b.status === status);
   if (severity && severity !== 'ALL') result = result.filter(b => b.severity === severity);
   sendSuccess(res, result);
+});
+
+bugsRouter.get('/:id', authenticateUser, (req: Request, res: Response) => {
+  const bug = dbRepository.bugs.getById(req.params.id);
+  if (!bug) return sendError(res, 'Bug not found', 404);
+
+  // Fail-closed project isolation (R6-03)
+  const projId = (bug as any).projectId || (bug as any).project_id;
+  if (!projId || (req.user && !checkProjectAccess(req.user, projId))) {
+    return sendError(res, `Bạn không có quyền truy cập lỗi thuộc dự án "${projId || 'không xác định'}" (R6-03).`, 403);
+  }
+  sendSuccess(res, bug);
 });
 
 bugsRouter.post('/', authenticateUser, requireAuth, (req: Request, res: Response) => {
@@ -65,8 +88,10 @@ bugsRouter.patch('/:id/status', authenticateUser, requireAuth, (req: Request, re
   const bug = dbRepository.bugs.getById(req.params.id);
   if (!bug) return sendError(res, 'Bug not found', 404);
 
-  if (req.user && (bug as any).projectId && !checkProjectAccess(req.user, (bug as any).projectId)) {
-    return sendError(res, `Bạn không có quyền cập nhật lỗi thuộc dự án "${(bug as any).projectId}".`, 403);
+  // Fail-closed project isolation (R6-03)
+  const projId = (bug as any).projectId || (bug as any).project_id;
+  if (!projId || (req.user && !checkProjectAccess(req.user, projId))) {
+    return sendError(res, `Bạn không có quyền cập nhật lỗi thuộc dự án "${projId || 'không xác định'}" (R6-03).`, 403);
   }
 
   bug.status = status;

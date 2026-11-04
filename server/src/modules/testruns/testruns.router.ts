@@ -10,13 +10,24 @@ testrunsRouter.get('/', authenticateUser, (req: Request, res: Response) => {
   const { projectId } = req.query;
   const targetProjectId = (projectId as string) || (req.user as any)?.projectId;
 
-  if (req.user && targetProjectId && !checkProjectAccess(req.user, targetProjectId)) {
-    return sendError(res, `Bạn không có quyền truy cập đợt kiểm thử của dự án "${targetProjectId}".`, 403);
+  if (targetProjectId) {
+    if (req.user && !checkProjectAccess(req.user, targetProjectId)) {
+      return sendError(res, `Bạn không có quyền truy cập đợt kiểm thử của dự án "${targetProjectId}".`, 403);
+    }
   }
 
   let runs = dbRepository.testRuns.getAll();
   if (targetProjectId) {
     runs = runs.filter(r => (r as any).projectId === targetProjectId || (r as any).project_id === targetProjectId);
+  } else if (req.user) {
+    const isSysAdmin = dbRepository.users.getById(req.user.id)?.role === 'Project Admin';
+    if (!isSysAdmin) {
+      const allowedProjects = new Set(dbRepository.projectMembers.getProjectsForUser(req.user.id));
+      runs = runs.filter(r => {
+        const pId = (r as any).projectId || (r as any).project_id;
+        return pId && allowedProjects.has(pId);
+      });
+    }
   }
   sendSuccess(res, runs);
 });
@@ -24,8 +35,11 @@ testrunsRouter.get('/', authenticateUser, (req: Request, res: Response) => {
 testrunsRouter.get('/:id', authenticateUser, (req: Request, res: Response) => {
   const run = dbRepository.testRuns.getById(req.params.id);
   if (!run) return sendError(res, 'Test run not found', 404);
-  if (req.user && (run as any).projectId && !checkProjectAccess(req.user, (run as any).projectId)) {
-    return sendError(res, `Bạn không có quyền truy cập đợt kiểm thử thuộc dự án "${(run as any).projectId}".`, 403);
+
+  // Fail-closed project isolation (R6-03)
+  const projId = (run as any).projectId || (run as any).project_id;
+  if (!projId || (req.user && !checkProjectAccess(req.user, projId))) {
+    return sendError(res, `Bạn không có quyền truy cập đợt kiểm thử thuộc dự án "${projId || 'không xác định'}" (R6-03).`, 403);
   }
   sendSuccess(res, run);
 });
@@ -69,8 +83,10 @@ testrunsRouter.post('/:id/execute', authenticateUser, requireAuth, (req: Request
   const run = dbRepository.testRuns.getById(req.params.id);
   if (!run) return sendError(res, 'Test run not found', 404);
 
-  if (req.user && (run as any).projectId && !checkProjectAccess(req.user, (run as any).projectId)) {
-    return sendError(res, `Bạn không có quyền thực thi đợt kiểm thử thuộc dự án "${(run as any).projectId}".`, 403);
+  // Fail-closed project isolation (R6-03)
+  const projId = (run as any).projectId || (run as any).project_id;
+  if (!projId || (req.user && !checkProjectAccess(req.user, projId))) {
+    return sendError(res, `Bạn không có quyền thực thi đợt kiểm thử thuộc dự án "${projId || 'không xác định'}" (R6-03).`, 403);
   }
 
   let record = run.records.find(r => r.testCaseId === testCaseId);

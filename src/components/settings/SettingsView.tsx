@@ -246,7 +246,7 @@ export const SettingsView: React.FC = () => {
         } else if (c.connectionStatus === 'connected') {
           setTestResult({
             success: true,
-            message: `Đã kết nối thành công (${c.model || c.cliBinary})`,
+            message: t('settingsConnectedSuccess', { detail: c.model || c.cliBinary || 'N/A' }),
             connectionStatus: 'connected',
             latencyMs: c.latencyMs,
             details: { account: 'connorpham' }
@@ -305,7 +305,7 @@ export const SettingsView: React.FC = () => {
         setEffortLevel(savedEffort.effortLevel as ReasoningEffortLevel);
       }
 
-      setModelSelectSuccessMsg(`✅ Đã chọn & lưu mô hình "${baseName}" riêng vào SQLite database!`);
+      setModelSelectSuccessMsg(t('settingsModelSavedDb', { model: baseName }));
       setTimeout(() => setModelSelectSuccessMsg(null), 3500);
 
       handleCheckQuota({ model: newConn?.model || selectedModelId });
@@ -359,7 +359,7 @@ export const SettingsView: React.FC = () => {
       }));
 
       setEffortSavedMsg(
-        `✅ Đã lưu Mức độ Out "${newEffort.toUpperCase()}" cho mô hình "${baseName}" (Mã thực thi: ${actualVariant}) vào Database!`
+        t('settingsEffortSavedVariant', { effort: newEffort.toUpperCase(), model: baseName, variant: actualVariant })
       );
       setTimeout(() => setEffortSavedMsg(null), 4000);
 
@@ -457,7 +457,7 @@ export const SettingsView: React.FC = () => {
           count: snap.models.length
         });
         setModelsSyncStatus(
-          `✅ Đã quét từ tài khoản Subscription ("${snap.account || snap.source}") và lưu thành công ${snap.models.length} model vào SQLite database!`
+          t('settingsScannedSubSuccess', { account: snap.account || snap.source, count: snap.models.length })
         );
         setModel(prevModel => {
           if (prevModel && snap.models.some(m => m.id === prevModel)) {
@@ -469,7 +469,7 @@ export const SettingsView: React.FC = () => {
       } else {
         if (res.code === 'auth_required') {
           setModelsSyncStatus(
-            `⚠️ Yêu cầu xác thực tài khoản: ${res.message}${res.loginCommand ? ` (Chạy lệnh: "${res.loginCommand}")` : ''}`
+            t('settingsAuthReqPrompt', { message: `${res.message}${res.loginCommand ? ` (${res.loginCommand})` : ''}` })
           );
         } else {
           setModelsSyncStatus(`⚠️ ${res.message}`);
@@ -486,7 +486,7 @@ export const SettingsView: React.FC = () => {
         }
       }
     } catch (err: any) {
-      setModelsSyncStatus(`Lỗi đồng bộ: ${err.message}`);
+      setModelsSyncStatus(t('settingsSyncErr', { message: err.message }));
     } finally {
       setIsFetchingModels(false);
     }
@@ -604,7 +604,7 @@ export const SettingsView: React.FC = () => {
       const data = res.data || res;
       setTestResult({
         success: Boolean(data.success),
-        message: data.message || (data.success ? 'Kết nối thành công' : 'Lỗi kết nối'),
+        message: data.message || (data.success ? t('settingsConnSuccess') : t('settingsConnError')),
         latencyMs: data.latencyMs,
         connectionStatus: data.connectionStatus,
         details: data.details
@@ -616,7 +616,7 @@ export const SettingsView: React.FC = () => {
       await handleScanClis();
       await handleCheckQuota();
     } catch (err: any) {
-      const msg = err.message || 'Lỗi kiểm tra kết nối';
+      const msg = err.message || t('settingsConnCheckError');
       const isAuthErr = authMethod === 'cli_subscription' && (msg.includes('login') || msg.includes('OAuth') || msg.includes('authenticate'));
       setTestResult({
         success: false,
@@ -632,7 +632,7 @@ export const SettingsView: React.FC = () => {
   };
 
   const handleDisconnect = async () => {
-    if (!confirm('Bạn có chắc chắn muốn ngắt kết nối AI hiện tại?')) return;
+    if (!confirm(t('settingsDisconnectConfirm'))) return;
     try {
       await disconnectAiConnection();
       setConnectionStatus('disconnected');
@@ -971,7 +971,7 @@ export const SettingsView: React.FC = () => {
                   {t('aiConfigSectionTitle')}
                 </label>
                 <span className="text-[11px] text-slate-400">
-                  {authMethod === 'api_key' ? 'Cấu hình API Key & Models' : 'Cấu hình CLI Subscription đã đăng nhập'}
+                  {authMethod === 'api_key' ? t('settingsConfigApiKey') : t('settingsConfigCliLoggedIn')}
                 </span>
               </div>
 
@@ -985,7 +985,7 @@ export const SettingsView: React.FC = () => {
                       {maskedKey && !apiKey && (
                         <span className="text-[11px] text-emerald-400 flex items-center gap-1 font-normal">
                           <CheckCircle2 className="w-3 h-3" />
-                          Đã lưu: {maskedKey}
+                          {t('settingsSavedMasked', { key: maskedKey })}
                         </span>
                       )}
                     </label>
@@ -994,14 +994,14 @@ export const SettingsView: React.FC = () => {
                         type={showKey ? 'text' : 'password'}
                         value={apiKey}
                         onChange={(e) => setApiKey(e.target.value)}
-                        placeholder={maskedKey ? `Giữ nguyên (${maskedKey}) hoặc nhập key mới` : t('aiApiKeyPlaceholder')}
+                        placeholder={maskedKey ? t('settingsMaskedKeyPlaceholder', { key: maskedKey }) : t('aiApiKeyPlaceholder')}
                         className="w-full bg-slate-900 border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-purple-500 font-mono pr-10"
                       />
                       <button
                         type="button"
                         onClick={() => setShowKey(!showKey)}
                         className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-200"
-                        title={showKey ? 'Ẩn' : 'Hiện'}
+                        title={showKey ? t('settingsHide') : t('settingsShow')}
                       >
                         {showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                       </button>
@@ -1017,7 +1017,7 @@ export const SettingsView: React.FC = () => {
                       type="text"
                       value={baseUrl}
                       onChange={(e) => setBaseUrl(e.target.value)}
-                      placeholder={provider === 'custom' ? 'http://localhost:11434/v1' : 'https://api.openai.com/v1 (Tuỳ chọn)'}
+                      placeholder={provider === 'custom' ? 'http://localhost:11434/v1' : 'https://api.openai.com/v1'}
                       className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-purple-500 font-mono"
                     />
                   </div>
@@ -1031,17 +1031,17 @@ export const SettingsView: React.FC = () => {
                   <div className="p-3.5 rounded-xl bg-indigo-950/20 border border-indigo-800/30 text-xs text-indigo-200/90 space-y-1">
                     <div className="font-bold text-white flex items-center gap-1.5">
                       <Terminal className="w-3.5 h-3.5 text-indigo-400" />
-                      <span>Cơ chế kết nối CLI Subscription:</span>
+                      <span>{t('settingsCliMechanism')}</span>
                     </div>
                     <p className="text-[11px] text-slate-300 leading-relaxed">
-                      Backend của hệ thống chạy cục bộ sẽ giao tiếp trực tiếp với CLI chính thức trên máy của bạn (Subprocess Bridge). 
-                      Hệ thống tận dụng phiên đăng nhập (OAuth session) của gói thuê bao Pro/Team có sẵn mà <strong>không yêu cầu API Key trả tiền theo token</strong>.
+                      {t('settingsCliDesc1')} 
+                      {t('settingsCliDesc2')}
                     </p>
                   </div>
 
                   <div className="flex items-center justify-between">
                     <label className="text-xs font-semibold text-slate-300 block">
-                      Công cụ CLI tương ứng cho nhà cung cấp <span className="text-purple-400 font-bold uppercase">{provider}</span>:
+                      {t('settingsCliToolForProvider', { provider })}
                     </label>
                     <Button
                       variant="outline"
@@ -1085,17 +1085,13 @@ export const SettingsView: React.FC = () => {
                                 {cli.name}
                               </span>
                               {cli.installed ? (
-                                <span className="px-2 py-0.5 rounded text-[10px] bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-medium">
-                                  Đã cài đặt
-                                </span>
+                                <span className="px-2 py-0.5 rounded text-[10px] bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-medium">{t('settingsCliInstalled')}</span>
                               ) : (
-                                <span className="px-2 py-0.5 rounded text-[10px] bg-slate-800 text-slate-400">
-                                  Chưa cài đặt
-                                </span>
+                                <span className="px-2 py-0.5 rounded text-[10px] bg-slate-800 text-slate-400">{t('settingsCliNotInstalled')}</span>
                               )}
                             </div>
                             <div className="mt-2 text-[11px] text-slate-400 space-y-0.5">
-                              <div>Phiên bản: <span className="text-slate-300 font-mono">{cli.version || 'N/A'}</span></div>
+                              <div>{t('settingsCliVersion')}: <span className="text-slate-300 font-mono">{cli.version || 'N/A'}</span></div>
                               {cli.path && <div className="truncate font-mono text-[10px] text-slate-500">{cli.path}</div>}
                             </div>
                           </div>
@@ -1107,26 +1103,26 @@ export const SettingsView: React.FC = () => {
                   {activeCliInfo && (
                     <div className="p-4 rounded-xl bg-slate-900/90 border border-slate-800 mt-3 space-y-3">
                       <div className="flex items-center justify-between text-xs">
-                        <span className="text-slate-400">Trạng thái đăng nhập Subscription:</span>
+                        <span className="text-slate-400">{t('settingsCliSubStatus')}</span>
                         {activeCliInfo.authStatus === 'authenticated' ? (
                           <span className="flex items-center gap-1.5 text-emerald-400 font-semibold text-xs">
                             <CheckCircle2 className="w-3.5 h-3.5" />
-                            Đã xác thực Subscription {activeCliInfo.account ? `(@${activeCliInfo.account})` : ''}
+                            {t('settingsCliAuthOk')} {activeCliInfo.account ? `(@${activeCliInfo.account})` : ''}
                           </span>
                         ) : activeCliInfo.installed ? (
                           <span className="flex items-center gap-1.5 text-amber-400 font-semibold text-xs">
                             <AlertCircle className="w-3.5 h-3.5" />
-                            Phiên đăng nhập hết hạn / Cần login
+                            {t('settingsCliAuthExpired')}
                           </span>
                         ) : (
-                          <span className="text-rose-400 text-xs">CLI chưa có trong PATH máy</span>
+                          <span className="text-rose-400 text-xs">{t('settingsCliNotInPath')}</span>
                         )}
                       </div>
 
                       {activeCliInfo.authStatus !== 'authenticated' && activeCliInfo.loginCommand && (
                         <div className="p-3 rounded-xl bg-slate-950 border border-amber-900/30 text-xs text-slate-300 space-y-1.5">
                           <span className="text-amber-400/90 block text-[11px] font-medium">
-                            Để liên kết tài khoản trả phí, vui lòng mở Terminal của bạn và chạy lệnh sau:
+                            {t('settingsCliLoginPrompt')}
                           </span>
                           <div className="flex items-center justify-between bg-slate-900 px-3 py-2 rounded-lg border border-slate-800">
                             <code className="text-purple-300 font-mono font-bold text-xs">{activeCliInfo.loginCommand}</code>
@@ -1140,11 +1136,11 @@ export const SettingsView: React.FC = () => {
                               className="text-[11px] text-slate-400 hover:text-white flex items-center gap-1 ml-2"
                             >
                               {copiedCmd ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                              <span>{copiedCmd ? 'Đã sao chép' : 'Sao chép'}</span>
+                              <span>{copiedCmd ? t('settingsCopiedCmd') : t('settingsCopyCmd')}</span>
                             </button>
                           </div>
                           <span className="text-[10px] text-slate-400 block pt-0.5">
-                            Sau khi đăng nhập xong trên terminal, bấm nút <strong>[ Kiểm tra kết nối ]</strong> bên dưới để ứng dụng kích hoạt.
+                            {t('settingsTestConnectionAfterLogin')}
                           </span>
                         </div>
                       )}
@@ -1153,7 +1149,7 @@ export const SettingsView: React.FC = () => {
                 </div>
               )}
 
-              {/* 4. CHỌN LỰA MÔ HÌNH AI (SELECT AI MODEL) */}
+              {/* 4. SELECT AI MODEL */}
               <div className="space-y-4 pt-2">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                   <div>
@@ -1177,7 +1173,7 @@ export const SettingsView: React.FC = () => {
                       <span>{isFetchingModels ? t('aiSyncingAccountModels') : t('aiSyncAccountModelsBtn')}</span>
                     </Button>
                     <span className="text-[11px] px-2.5 py-1 rounded-full bg-slate-800 text-slate-300 border border-slate-700 font-mono">
-                      Đang chọn: <span className="text-purple-400 font-bold">{model}</span>
+                      {t('settingsSelecting')} <span className="text-purple-400 font-bold">{model}</span>
                     </span>
                   </div>
                 </div>
@@ -1219,7 +1215,7 @@ export const SettingsView: React.FC = () => {
                   </div>
 
                   <div className="text-[11px] text-slate-400 font-mono">
-                    <span>Đang có <strong className="text-white">{availableModels[provider]?.length || 0}</strong> model</span>
+                    <span>{t('settingsModelsCount', { count: availableModels[provider]?.length || 0 })}</span>
                   </div>
                 </div>
 
@@ -1254,18 +1250,18 @@ export const SettingsView: React.FC = () => {
                     defaultModel: providerModels[0] || {
                       id: model,
                       name: model,
-                      description: 'Mô hình được cấu hình sử dụng trực tiếp',
+                      description: t('settingsDirectConfig'),
                       contextWindow: '128,000 tokens',
                       maxOutput: '8,192 tokens',
                       category: 'flagship',
                       rateLimits: { rpm: 500, tpm: 800000 },
                       pricingType: 'token_billed',
-                      bestFor: 'Tác vụ phân tích & kiểm thử tổng quát',
+                      bestFor: t('settingsGeneralQa'),
                       isLive: false
                     },
                     recommended: false,
                     category: 'flagship' as const,
-                    description: 'Mô hình AI',
+                    description: t('settingsAiModel'),
                     contextWindow: '128,000 tokens',
                     maxOutput: '32,768 tokens',
                     rateLimits: { rpm: 500, tpm: 800000 }
@@ -1309,7 +1305,7 @@ export const SettingsView: React.FC = () => {
                               <Layers className="w-4 h-4 text-purple-400" />
                               <span>{t('aiSelectModelDropdownLabel')}</span>
                               <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30 font-normal">
-                                {baseModels.length} mô hình chính ({providerModels.length} biến thể)
+                                {t('settingsBaseVariantsCount', { baseCount: baseModels.length, variantCount: providerModels.length })}
                               </span>
                             </label>
                           </div>
@@ -1361,19 +1357,17 @@ export const SettingsView: React.FC = () => {
                                     {currentBase.baseId}
                                   </code>
                                   {currentBase.recommended && (
-                                    <span className="px-1.5 py-0.2 rounded text-[9px] bg-purple-500/20 text-purple-300 border border-purple-500/30 font-semibold">
-                                      Khuyên dùng
-                                    </span>
+                                    <span className="px-1.5 py-0.2 rounded text-[9px] bg-purple-500/20 text-purple-300 border border-purple-500/30 font-semibold">{t('settingsRecommended')}</span>
                                   )}
                                   <span className="px-1.5 py-0.2 rounded text-[9px] bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 font-mono flex items-center gap-1">
                                     <Database className="w-2.5 h-2.5" />
-                                    Đã lưu DB riêng
+                                    {t('settingsSavedDb')}
                                   </span>
                                 </div>
                                 <div className="flex flex-wrap items-center gap-2 text-[10px] text-slate-400 font-mono mt-0.5">
                                   <span>Context: {currentBase.contextWindow || '128K'}</span>
                                   <span>•</span>
-                                  <span>Hỗ trợ {currentBase.supportedEfforts.length} mức Effort ({currentBase.supportedEfforts.join(', ')})</span>
+                                  <span>{t('settingsSupportedEfforts', { count: currentBase.supportedEfforts.length, efforts: currentBase.supportedEfforts.join(', ') })}</span>
                                   <span>•</span>
                                   <span className="text-cyan-400">{currentBase.rateLimits?.rpm || 500} RPM</span>
                                 </div>
@@ -1381,7 +1375,7 @@ export const SettingsView: React.FC = () => {
                             </div>
 
                             <div className="flex items-center gap-2 shrink-0">
-                              <span className="text-[11px] text-purple-300 font-medium hidden sm:inline">Chọn model khác</span>
+                              <span className="text-[11px] text-purple-300 font-medium hidden sm:inline">{t('settingsSelectOtherModel')}</span>
                               <ChevronDown className={`w-4 h-4 text-purple-400 transition-transform duration-200 ${isModelDropdownOpen ? 'rotate-180' : ''}`} />
                             </div>
                           </button>
@@ -1415,10 +1409,10 @@ export const SettingsView: React.FC = () => {
                                 {/* Category Filter Tabs */}
                                 <div className="flex items-center gap-1.5 text-[10px] overflow-x-auto pb-0.5">
                                   {[
-                                    { id: 'all', label: `Tất cả (${modelViewMode === 'base' ? baseModels.length : providerModels.length})` },
-                                    { id: 'recommended', label: `⭐ Khuyên dùng` },
-                                    { id: 'reasoning', label: `🧠 Suy luận` },
-                                    { id: 'fast', label: `⚡ Tốc độ cao` }
+                                    { id: 'all', label: `${t('settingsTabAll')} (${modelViewMode === 'base' ? baseModels.length : providerModels.length})` },
+                                    { id: 'recommended', label: t('settingsTabRecommended') },
+                                    { id: 'reasoning', label: t('settingsTabReasoning') },
+                                    { id: 'fast', label: t('settingsTabFast') }
                                   ].map(tab => (
                                     <button
                                       key={tab.id}
@@ -1442,7 +1436,7 @@ export const SettingsView: React.FC = () => {
                                   /* BASE MODELS LIST */
                                   filteredBaseModels.length === 0 ? (
                                     <div className="p-4 text-center text-xs text-slate-400">
-                                      Không tìm thấy model nào phù hợp "{modelSearch}"
+                                      {t('settingsNoModelsFound', { query: modelSearch })}
                                     </div>
                                   ) : (
                                     filteredBaseModels.map((b) => {
@@ -1470,18 +1464,16 @@ export const SettingsView: React.FC = () => {
                                                 {b.baseId}
                                               </code>
                                               {b.recommended && (
-                                                <span className="px-1.5 py-0.2 rounded text-[9px] bg-purple-500/20 text-purple-300 font-semibold">
-                                                  Khuyên dùng
-                                                </span>
+                                                <span className="px-1.5 py-0.2 rounded text-[9px] bg-purple-500/20 text-purple-300 font-semibold">{t('settingsRecommended')}</span>
                                               )}
                                               {savedEff && (
                                                 <span className="px-1.5 py-0.2 rounded text-[9px] bg-cyan-950/60 text-cyan-300 border border-cyan-800/50 font-mono font-semibold">
-                                                  Effort đã lưu: {savedEff.toUpperCase()}
+                                                  {t('settingsEffortSavedLabel', { effort: savedEff.toUpperCase() })}
                                                 </span>
                                               )}
                                               <span className="px-1.5 py-0.2 rounded text-[9px] bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 font-mono flex items-center gap-0.5">
                                                 <Database className="w-2.5 h-2.5" />
-                                                Lưu DB riêng
+                                                {t('settingsSaveDb')}
                                               </span>
                                             </div>
                                             <p className="text-[10px] text-slate-400 line-clamp-1">
@@ -1490,9 +1482,9 @@ export const SettingsView: React.FC = () => {
                                             <div className="flex flex-wrap items-center gap-3 text-[9px] text-slate-400 font-mono">
                                               <span>Context: <strong className="text-slate-300">{b.contextWindow}</strong></span>
                                               <span>•</span>
-                                              <span>Hỗ trợ Effort: <strong className="text-amber-300">{b.supportedEfforts.join(', ')}</strong></span>
+                                              <span>{t('settingsEffortSupport')} <strong className="text-amber-300">{b.supportedEfforts.join(', ')}</strong></span>
                                               <span>•</span>
-                                              <span>Tốc độ: <strong className="text-cyan-400">{b.rateLimits?.rpm || 500} RPM</strong></span>
+                                              <span>{t('settingsSpeedRpm')} <strong className="text-cyan-400">{b.rateLimits?.rpm || 500} RPM</strong></span>
                                             </div>
                                           </div>
 
@@ -1513,7 +1505,7 @@ export const SettingsView: React.FC = () => {
                                   /* RAW VARIANTS LIST */
                                   filteredRawModels.length === 0 ? (
                                     <div className="p-4 text-center text-xs text-slate-400">
-                                      Không tìm thấy biến thể nào phù hợp "{modelSearch}"
+                                      {t('settingsNoVariantsFound', { query: modelSearch })}
                                     </div>
                                   ) : (
                                     filteredRawModels.map((m) => {
@@ -1540,7 +1532,7 @@ export const SettingsView: React.FC = () => {
                                             </div>
                                             <div className="flex items-center gap-3 text-[9px] text-slate-400 font-mono">
                                               <span>Context: <strong className="text-slate-300">{m.contextWindow}</strong></span>
-                                              <span>Tốc độ: <strong className="text-cyan-400">{m.rateLimits?.rpm || 500} RPM</strong></span>
+                                              <span>{t('settingsSpeedRpm')} <strong className="text-cyan-400">{m.rateLimits?.rpm || 500} RPM</strong></span>
                                             </div>
                                           </div>
                                           <div className="shrink-0">
@@ -1579,17 +1571,15 @@ export const SettingsView: React.FC = () => {
                                 {currentBase.baseId}
                               </code>
                               {currentBase.recommended && (
-                                <span className="px-1.5 py-0.5 rounded text-[9px] bg-purple-500/20 text-purple-300 border border-purple-500/30 font-semibold">
-                                  Khuyên dùng
-                                </span>
+                                <span className="px-1.5 py-0.5 rounded text-[9px] bg-purple-500/20 text-purple-300 border border-purple-500/30 font-semibold">{t('settingsRecommended')}</span>
                               )}
                               <span className="px-1.5 py-0.5 rounded text-[9px] bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 font-mono flex items-center gap-1">
                                 <Database className="w-2.5 h-2.5" />
-                                Lưu SQLite riêng
+                                {t('settingsSaveSqlite')}
                               </span>
                             </div>
                             <div className="text-[10px] text-slate-400 font-mono">
-                              Mã thực thi hiện tại: <span className="text-purple-300 font-bold">{model}</span>
+                              {t('settingsCurrentRuntime')} <span className="text-purple-300 font-bold">{model}</span>
                             </div>
                           </div>
 
@@ -1603,16 +1593,16 @@ export const SettingsView: React.FC = () => {
                               <span className="font-mono text-slate-200 font-semibold">{currentBase.contextWindow}</span>
                             </div>
                             <div>
-                              <span className="text-slate-400 block">Mức Effort hỗ trợ:</span>
+                              <span className="text-slate-400 block">{t('settingsEffortSupport')}</span>
                               <span className="font-mono text-amber-300 font-semibold">{currentBase.supportedEfforts.join(', ')}</span>
                             </div>
                             <div>
-                              <span className="text-slate-400 block">Tốc độ tối đa:</span>
+                              <span className="text-slate-400 block">{t('settingsMaxSpeed')}</span>
                               <span className="font-mono text-cyan-400 font-semibold">{currentBase.rateLimits?.rpm || 500} RPM</span>
                             </div>
                             <div>
-                              <span className="text-slate-400 block">Tối ưu cho QA:</span>
-                              <span className="text-purple-200 truncate block font-medium">{currentBase.defaultModel.bestFor || 'Tổng hợp tài liệu'}</span>
+                              <span className="text-slate-400 block">{t('settingsOptimizedForQa')}</span>
+                              <span className="text-purple-200 truncate block font-medium">{currentBase.defaultModel.bestFor || t('settingsDocSynthesis')}</span>
                             </div>
                           </div>
                         </div>
@@ -1621,8 +1611,8 @@ export const SettingsView: React.FC = () => {
                       {/* Quick 1-Touch Base Model Cards */}
                       <div className="space-y-2">
                         <div className="flex items-center justify-between text-[11px] text-slate-400 font-medium">
-                          <span>{t('aiStepSelectModelFirst')} – Bấm thẻ để chọn & lưu model riêng:</span>
-                          <span className="text-slate-500 text-[10px]">Tự động nạp Effort đã lưu của model đó</span>
+                          <span>{t('aiStepSelectModelFirst')} – {t('settingsStepSelectFirst')}</span>
+                          <span className="text-slate-500 text-[10px]">{t('settingsAutoLoadEffort')}</span>
                         </div>
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                           {baseModels.slice(0, 6).map((b) => {
@@ -1643,9 +1633,7 @@ export const SettingsView: React.FC = () => {
                                     <div className="flex flex-wrap items-center gap-1.5 font-bold text-white text-xs">
                                       <span>{b.baseName}</span>
                                       {b.recommended && (
-                                        <span className="px-1.5 py-0.5 rounded text-[9px] bg-purple-500/20 text-purple-300 border border-purple-500/30 font-semibold">
-                                          Khuyên dùng
-                                        </span>
+                                        <span className="px-1.5 py-0.5 rounded text-[9px] bg-purple-500/20 text-purple-300 border border-purple-500/30 font-semibold">{t('settingsRecommended')}</span>
                                       )}
                                       {savedEff && (
                                         <span className="px-1.5 py-0.5 rounded text-[9px] bg-cyan-950/60 text-cyan-300 border border-cyan-800/50 font-mono font-semibold">
@@ -1685,7 +1673,7 @@ export const SettingsView: React.FC = () => {
                       <div className="p-3.5 rounded-xl bg-slate-900/60 border border-slate-800/80 space-y-1.5">
                         <div className="flex items-center justify-between text-[11px] text-slate-300">
                           <span className="font-semibold">{t('aiCustomModelLabel')}</span>
-                          <span className="text-[10px] text-slate-500">Cho phép nhập trực tiếp bất kỳ model ID nào</span>
+                          <span className="text-[10px] text-slate-500">{t('settingsAllowCustomId')}</span>
                         </div>
                         <div className="flex items-center gap-2">
                           <input
@@ -1702,9 +1690,7 @@ export const SettingsView: React.FC = () => {
                             size="sm"
                             onClick={() => handleSelectModel(model)}
                             className="border-purple-800/60 text-purple-300 text-xs shrink-0 h-8"
-                          >
-                            Lưu model này
-                          </Button>
+                          >{t('settingsSaveThisModel')}</Button>
                         </div>
                       </div>
                     </div>
@@ -1712,7 +1698,7 @@ export const SettingsView: React.FC = () => {
                 })()}
               </div>
 
-              {/* 5. MỨC ĐỘ OUT & DUNG LƯỢNG OUTPUT (REASONING EFFORT) CHO MÔ HÌNH ĐANG CHỌN */}
+              {/* 5. REASONING EFFORT */}
               {(() => {
                 const { baseId, baseName: rawBaseName } = parseModelBase(model, model);
                 const providerModels = availableModels[provider] || DEFAULT_PROVIDER_MODELS[provider] || [];
@@ -1729,11 +1715,11 @@ export const SettingsView: React.FC = () => {
                   badge: string;
                   variantSuffix: string;
                 }> = [
-                  { id: 'low', name: 'Low', desc: 'Tốc độ phản hồi cực nhanh', icon: '⚡', badge: 'Fast', variantSuffix: '-low' },
-                  { id: 'medium', name: 'Medium', desc: 'Cân bằng tốc độ & chất lượng', icon: '⚖️', badge: 'Khuyên dùng', variantSuffix: '-medium' },
-                  { id: 'high', name: 'High', desc: 'Suy luận logic sâu cho QA', icon: '🧠', badge: 'Deep', variantSuffix: '-high' },
-                  { id: 'xhigh', name: 'X-High', desc: 'Phân tích mở rộng mã nguồn', icon: '🔬', badge: 'Heavy', variantSuffix: '-xhigh' },
-                  { id: 'max', name: 'Max', desc: 'Nỗ lực tư duy tối đa mô hình', icon: '🚀', badge: 'Max', variantSuffix: '-max' }
+                  { id: 'low', name: 'Low', desc: t('settingsEffortLowDesc'), icon: '⚡', badge: 'Fast', variantSuffix: '-low' },
+                  { id: 'medium', name: 'Medium', desc: t('settingsEffortMedDesc'), icon: '⚖️', badge: t('settingsRecommended'), variantSuffix: '-medium' },
+                  { id: 'high', name: 'High', desc: t('settingsEffortHighDesc'), icon: '🧠', badge: 'Deep', variantSuffix: '-high' },
+                  { id: 'xhigh', name: 'X-High', desc: t('settingsEffortXhighDesc'), icon: '🔬', badge: 'Heavy', variantSuffix: '-xhigh' },
+                  { id: 'max', name: 'Max', desc: t('settingsEffortMaxDesc'), icon: '🚀', badge: 'Max', variantSuffix: '-max' }
                 ];
 
                 return (
@@ -1754,11 +1740,11 @@ export const SettingsView: React.FC = () => {
                           <span>{t('aiEffortConfiguredFor')} <strong className="text-purple-300 normal-case">{baseName}</strong></span>
                         </h3>
                         <p className="text-[11px] text-slate-400 mt-0.5">
-                          Sau khi đã chọn mô hình <strong className="text-white">{baseName}</strong> ở trên, chọn mức độ Out bên dưới. Lựa chọn sẽ được lưu riêng cho chính mô hình này vào SQLite DB.
+                          {t('settingsSelectEffortNotice', { model: baseName })}
                         </p>
                       </div>
                       <div className="shrink-0 font-mono text-[11px] text-purple-300 px-2.5 py-1 rounded bg-slate-900 border border-slate-800">
-                        Mã thực thi CLI: <span className="text-white font-bold">{model}</span>
+                        {t('settingsCliRuntimeCode')} <span className="text-white font-bold">{model}</span>
                       </div>
                     </div>
 
@@ -1766,19 +1752,19 @@ export const SettingsView: React.FC = () => {
                       {/* Active Model Effort Context Card */}
                       <div className="p-3 rounded-xl bg-purple-950/30 border border-purple-800/40 text-xs flex flex-wrap items-center justify-between gap-2.5">
                         <div className="flex flex-wrap items-center gap-2">
-                          <span className="text-slate-400 font-medium">Mô hình áp dụng:</span>
+                          <span className="text-slate-400 font-medium">{t('settingsAppliedModel')}</span>
                           <span className="font-bold text-white px-2 py-0.5 rounded bg-purple-900/60 border border-purple-700/60">
                             {baseName} ({baseId})
                           </span>
                           <span className="text-slate-500">•</span>
-                          <span className="text-slate-400">Mức độ Out hiện tại:</span>
+                          <span className="text-slate-400">{t('settingsCurrentEffortLevel')}</span>
                           <span className="font-bold text-amber-300 uppercase font-mono px-2 py-0.5 rounded bg-amber-950/50 border border-amber-700/50">
                             {effortLevel}
                           </span>
                         </div>
                         <div className="flex items-center gap-1.5 text-[10px] text-emerald-400 font-mono">
                           <Database className="w-3 h-3" />
-                          <span>Bảng ai_model_efforts (SQLite)</span>
+                          <span>{t('settingsTableAiModelEfforts')}</span>
                         </div>
                       </div>
 
@@ -1807,7 +1793,7 @@ export const SettingsView: React.FC = () => {
                             {t('aiEffortLabel')}
                           </span>
                           <span className="text-[11px] text-slate-400">
-                            Bấm để lưu Mức độ Out cho mô hình <strong className="text-purple-300">{baseName}</strong>:
+                            {t('settingsClickSaveEffort', { model: baseName })}
                           </span>
                         </div>
 
@@ -1879,12 +1865,12 @@ export const SettingsView: React.FC = () => {
 
                         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
                           {[
-                            { val: 4096, label: '4,096', note: 'Ngắn gọn' },
-                            { val: 8192, label: '8,192', note: 'Cơ bản' },
-                            { val: 16384, label: '16,384', note: 'Vừa phải' },
-                            { val: 32768, label: '32,768', note: 'Chuẩn QA' },
-                            { val: 65536, label: '65,536', note: 'Chi tiết' },
-                            { val: 128000, label: '128,000', note: 'Tối đa' }
+                            { val: 4096, label: '4,096', note: t('settingsNoteBrief') },
+                            { val: 8192, label: '8,192', note: t('settingsNoteBasic') },
+                            { val: 16384, label: '16,384', note: t('settingsNoteModerate') },
+                            { val: 32768, label: '32,768', note: t('settingsNoteStandardQa') },
+                            { val: 65536, label: '65,536', note: t('settingsNoteDetailed') },
+                            { val: 128000, label: '128,000', note: t('settingsNoteMax') }
                           ].map((tok) => {
                             const isSelected = maxOutputTokens === tok.val;
                             return (
@@ -1914,7 +1900,7 @@ export const SettingsView: React.FC = () => {
                 );
               })()}
 
-              {/* 5. THÔNG TIN HẠN MỨC & DUNG LƯỢNG (QUOTA & RATE LIMITS) */}
+              {/* 5. QUOTA & RATE LIMITS */}
               <div className="space-y-3 pt-2">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                   <div>
@@ -1977,7 +1963,7 @@ export const SettingsView: React.FC = () => {
                       <div className="p-3 rounded-lg bg-slate-900/80 border border-slate-800">
                         <div className="flex items-center gap-1.5 text-slate-400 text-[11px]">
                           <Activity className="w-3.5 h-3.5 text-cyan-400" />
-                          <span>RPM (Yêu cầu/phút)</span>
+                          <span>{t('settingsRpmLabel')}</span>
                         </div>
                         <div className="text-base font-bold text-white mt-1 font-mono">
                           {quotaInfo.rateLimits.rpm.toLocaleString()} <span className="text-[10px] text-slate-400 font-normal">req/m</span>
@@ -1988,7 +1974,7 @@ export const SettingsView: React.FC = () => {
                       <div className="p-3 rounded-lg bg-slate-900/80 border border-slate-800">
                         <div className="flex items-center gap-1.5 text-slate-400 text-[11px]">
                           <Zap className="w-3.5 h-3.5 text-amber-400" />
-                          <span>TPM (Tokens/phút)</span>
+                          <span>{t('settingsTpmLabel')}</span>
                         </div>
                         <div className="text-base font-bold text-white mt-1 font-mono">
                           {quotaInfo.rateLimits.tpm.toLocaleString()} <span className="text-[10px] text-slate-400 font-normal">tok/m</span>
@@ -1999,7 +1985,7 @@ export const SettingsView: React.FC = () => {
                       <div className="p-3 rounded-lg bg-slate-900/80 border border-slate-800">
                         <div className="flex items-center gap-1.5 text-slate-400 text-[11px]">
                           <Layers className="w-3.5 h-3.5 text-purple-400" />
-                          <span>Ngữ cảnh tối đa</span>
+                          <span>{t('settingsMaxContext')}</span>
                         </div>
                         <div className="text-xs font-bold text-purple-300 mt-1.5 font-mono truncate">
                           {quotaInfo.rateLimits.contextWindow}
@@ -2010,10 +1996,10 @@ export const SettingsView: React.FC = () => {
                       <div className="p-3 rounded-lg bg-slate-900/80 border border-slate-800">
                         <div className="flex items-center gap-1.5 text-slate-400 text-[11px]">
                           <Shield className="w-3.5 h-3.5 text-emerald-400" />
-                          <span>Cơ chế cước</span>
+                          <span>{t('settingsBillingModel')}</span>
                         </div>
                         <div className="text-xs font-semibold text-emerald-400 mt-1.5 truncate">
-                          {quotaInfo.usage.billingModel === 'subscription_included' ? 'Subscription (0đ/token)' : 'Pay-per-token'}
+                          {quotaInfo.usage.billingModel === 'subscription_included' ? 'Subscription' : 'Pay-per-token'}
                         </div>
                       </div>
                     </div>
@@ -2027,7 +2013,7 @@ export const SettingsView: React.FC = () => {
                         </span>
                         {quotaInfo.usage.remainingQuotaPercent !== undefined && (
                           <span className="text-emerald-400 font-bold font-mono">
-                            {quotaInfo.usage.remainingQuotaPercent}% hạn ngạch khả dụng
+                            {t('settingsQuotaPercentAvailable', { pct: quotaInfo.usage.remainingQuotaPercent })}
                           </span>
                         )}
                       </div>
@@ -2054,10 +2040,8 @@ export const SettingsView: React.FC = () => {
                         <AlertCircle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
                         <div>
                           <div className="text-sm font-bold text-amber-300 flex items-center gap-2">
-                            <span>Authentication Required (Yêu cầu đăng nhập tài khoản)</span>
-                            <span className="px-2 py-0.5 rounded text-[10px] bg-amber-500/20 text-amber-400 border border-amber-500/30 font-mono">
-                              Phiên đăng nhập hết hạn
-                            </span>
+                            <span>{t('settingsAuthReqTitle')}</span>
+                            <span className="px-2 py-0.5 rounded text-[10px] bg-amber-500/20 text-amber-400 border border-amber-500/30 font-mono">{t('settingsSessionExpired')}</span>
                           </div>
                           <p className="text-xs text-amber-200/90 mt-1 leading-relaxed">
                             {testResult.message}
@@ -2069,7 +2053,7 @@ export const SettingsView: React.FC = () => {
                       <div className="p-3.5 rounded-lg bg-slate-950 border border-amber-900/40 space-y-2 text-xs">
                         <div className="text-slate-300 font-semibold flex items-center gap-1.5">
                           <span className="w-4 h-4 rounded-full bg-amber-500/20 text-amber-400 text-[10px] flex items-center justify-center font-bold">1</span>
-                          <span>Mở Terminal trên máy của bạn và chạy lệnh đăng nhập:</span>
+                          <span>{t('settingsOpenTerminalLogin')}</span>
                         </div>
                         <div className="flex items-center justify-between bg-slate-900 px-3 py-2 rounded-lg border border-slate-800 font-mono text-xs">
                           <code className="text-purple-300 font-bold">{testResult.details?.loginCommand || `${cliBinary} login`}</code>
@@ -2083,12 +2067,12 @@ export const SettingsView: React.FC = () => {
                             className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs flex items-center gap-1.5 transition-all border border-slate-700"
                           >
                             {copiedCmd ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5 text-slate-300" />}
-                            <span>{copiedCmd ? 'Đã sao chép!' : 'Sao chép 1-chạm'}</span>
+                            <span>{copiedCmd ? t('settingsCopiedExcl') : t('settingsCopyOneTouch')}</span>
                           </button>
                         </div>
                         <div className="text-slate-400 text-[11px] flex items-center gap-1.5 pt-1">
                           <span className="w-4 h-4 rounded-full bg-slate-800 text-slate-400 text-[10px] flex items-center justify-center font-bold">2</span>
-                          <span>Sau khi gõ xong lệnh trên Terminal, quay lại đây bấm <strong>[ Kiểm tra kết nối ]</strong> để nhận huy hiệu 🟢 Connected ngay lập tức!</span>
+                          <span>{t('settingsAfterLoginPrompt')}</span>
                         </div>
                       </div>
                     </div>
@@ -2100,7 +2084,7 @@ export const SettingsView: React.FC = () => {
                       <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
                       <div className="text-xs space-y-1">
                         <div className="text-sm font-bold text-white flex items-center gap-2">
-                          <span>Kết nối thành công!</span>
+                          <span>{t('settingsConnectionSuccessTitle')}</span>
                           {testResult.details?.account && (
                             <span className="px-2 py-0.5 rounded text-[10px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-mono">
                               @{testResult.details.account}
@@ -2110,7 +2094,7 @@ export const SettingsView: React.FC = () => {
                         </div>
                         <div className="text-emerald-200/90">{testResult.message}</div>
                         <div className="text-[11px] text-slate-400 mt-1">
-                          Hệ thống đã sẵn sàng sử dụng kết nối này cho toàn bộ tính năng phân tích tài liệu và sinh test case.
+                          {t('settingsConnectionReadyDesc')}
                         </div>
                       </div>
                     </div>
@@ -2121,7 +2105,7 @@ export const SettingsView: React.FC = () => {
                     <div className="p-4 rounded-xl border bg-rose-950/20 border-rose-800/40 text-rose-300 flex items-start gap-3">
                       <XCircle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
                       <div className="text-xs space-y-0.5">
-                        <div className="font-bold text-sm text-rose-200">Lỗi kết nối</div>
+                        <div className="font-bold text-sm text-rose-200">{t('settingsConnectionErrorTitle')}</div>
                         <div>{testResult.message}</div>
                       </div>
                     </div>
@@ -2177,7 +2161,7 @@ export const SettingsView: React.FC = () => {
             <div>
               <h3 className="text-sm font-bold text-white tracking-tight">{t('settingsAuditTrail')}</h3>
               <p className="text-xs text-slate-400 mt-0.5">
-                Mỗi hành động sinh ra một block băm mật mã SHA-256 nối chuỗi, đảm bảo chống giả mạo theo Tiêu chuẩn Mục 9.
+                {t('settingsAuditShaNotice')}
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -2191,12 +2175,12 @@ export const SettingsView: React.FC = () => {
             <table className="w-full text-left text-xs border-collapse">
               <thead>
                 <tr className="border-b border-slate-800 text-slate-400 uppercase tracking-wider text-[11px] bg-slate-950/40">
-                  <th className="py-2.5 px-3">Mã Block</th>
-                  <th className="py-2.5 px-3">Thời gian</th>
-                  <th className="py-2.5 px-3">Người thực hiện</th>
-                  <th className="py-2.5 px-3">Vai trò</th>
-                  <th className="py-2.5 px-3">Hành động</th>
-                  <th className="py-2.5 px-3">Mã băm SHA-256 (Event Hash)</th>
+                  <th className="py-2.5 px-3">{t('settingsAuditColBlockId')}</th>
+                  <th className="py-2.5 px-3">{t('settingsAuditColTime')}</th>
+                  <th className="py-2.5 px-3">{t('settingsAuditColUser')}</th>
+                  <th className="py-2.5 px-3">{t('settingsAuditColRole')}</th>
+                  <th className="py-2.5 px-3">{t('settingsAuditColAction')}</th>
+                  <th className="py-2.5 px-3">{t('settingsAuditColHash')}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/60 font-mono text-slate-300">
@@ -2230,7 +2214,7 @@ export const SettingsView: React.FC = () => {
           <div className="pb-4 border-b border-slate-800">
             <h3 className="text-sm font-bold text-white tracking-tight">{t('settingsRbacMatrix')}</h3>
             <p className="text-xs text-slate-400 mt-0.5">
-              Phân quyền nghiêm ngặt 5 vai trò theo Mục 4 của Proposal. Vai trò hiện tại của bạn: <span className="text-indigo-400 font-bold">{currentRole}</span>.
+              {t('settingsRbacNotice', { role: currentRole })}
             </p>
           </div>
 
@@ -2274,13 +2258,13 @@ export const SettingsView: React.FC = () => {
           <div className="pb-4 border-b border-slate-800">
             <h3 className="text-sm font-bold text-white tracking-tight">{t('settingsWorkspaceDetails')}</h3>
             <p className="text-xs text-slate-400 mt-0.5">
-              Cấu hình dự án hoạt động theo Đặc tả Đề xuất Nền tảng QA & Tài liệu.
+              {t('settingsProjectConfigNotice')}
             </p>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
             <div className="p-4 rounded-xl bg-slate-950/60 border border-slate-800 space-y-2">
-              <div className="text-slate-400">Tên Dự án:</div>
+              <div className="text-slate-400">{t('settingsProjectNameLabel')}</div>
               <div className="font-bold text-white text-sm">{activeProject.name}</div>
               <div className="text-slate-400 text-[11px]">{activeProject.description}</div>
             </div>
@@ -2288,7 +2272,7 @@ export const SettingsView: React.FC = () => {
             <div className="p-4 rounded-xl bg-slate-950/60 border border-slate-800 space-y-2">
               <div className="text-slate-400">Database Storage:</div>
               <div className="font-bold text-emerald-400 text-sm">SQLite (WAL Mode)</div>
-              <div className="text-slate-400 text-[11px]">Đường dẫn: server/data/docqa.sqlite</div>
+              <div className="text-slate-400 text-[11px]">{t('settingsDbPathLabel')}</div>
             </div>
           </div>
         </Card>

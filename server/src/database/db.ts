@@ -386,6 +386,7 @@ Hệ thống **Evidence Lifecycle Management** chịu trách nhiệm thu thập,
     const initialEvd: EvidenceItem[] = [
       {
         id: 'EVD-001',
+        projectId: 'PRJ-01',
         title: 'Screenshot: 403 Forbidden Dialog on Non-Admin User',
         description: 'Capture showing unauthorized user attempting to approve REQ-001 without sufficient permissions.',
         type: 'Screenshot',
@@ -410,9 +411,9 @@ Hệ thống **Evidence Lifecycle Management** chịu trách nhiệm thu thập,
       }
     ];
 
-    const insertEvd = db.prepare('INSERT INTO evidence (id, type, environment, status, data, created_at) VALUES (?, ?, ?, ?, ?, ?)');
+    const insertEvd = db.prepare('INSERT INTO evidence (id, project_id, type, environment, status, data, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)');
     for (const evd of initialEvd) {
-      insertEvd.run(evd.id, evd.type, evd.environment, evd.status, JSON.stringify(evd), evd.createdAt);
+      insertEvd.run(evd.id, evd.projectId || 'PRJ-01', evd.type, evd.environment, evd.status, JSON.stringify(evd), evd.createdAt);
     }
 
     // Seed Test Cases
@@ -466,6 +467,7 @@ Hệ thống **Evidence Lifecycle Management** chịu trách nhiệm thu thập,
     const initialRuns: TestRunItem[] = [
       {
         id: 'RUN-2026-11-01',
+        projectId: 'PRJ-01',
         title: 'Regression Suite v1.2 - Release Candidate 1',
         environment: 'QA',
         buildVersion: 'build-1048',
@@ -487,15 +489,16 @@ Hệ thống **Evidence Lifecycle Management** chịu trách nhiệm thu thập,
       }
     ];
 
-    const insertRun = db.prepare('INSERT INTO test_runs (id, status, environment, data, created_at) VALUES (?, ?, ?, ?, ?)');
+    const insertRun = db.prepare('INSERT INTO test_runs (id, project_id, status, environment, data, created_at) VALUES (?, ?, ?, ?, ?, ?)');
     for (const run of initialRuns) {
-      insertRun.run(run.id, run.status, run.environment, JSON.stringify(run), run.createdAt);
+      insertRun.run(run.id, (run as any).projectId || 'PRJ-01', run.status, run.environment, JSON.stringify(run), run.createdAt);
     }
 
     // Seed Bugs
     const initialBugs: BugItem[] = [
       {
         id: 'BUG-001',
+        projectId: 'PRJ-01',
         title: 'Non-admin can see unmask tokens in browser localStorage',
         description: 'Session storage retains sensitive plain text token before approval.',
         severity: 'Major',
@@ -520,9 +523,9 @@ Hệ thống **Evidence Lifecycle Management** chịu trách nhiệm thu thập,
       }
     ];
 
-    const insertBug = db.prepare('INSERT INTO bugs (id, status, severity, priority, data, updated_at) VALUES (?, ?, ?, ?, ?, ?)');
+    const insertBug = db.prepare('INSERT INTO bugs (id, project_id, status, severity, priority, data, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)');
     for (const bug of initialBugs) {
-      insertBug.run(bug.id, bug.status, bug.severity, bug.priority, JSON.stringify(bug), bug.updatedAt);
+      insertBug.run(bug.id, (bug as any).projectId || 'PRJ-01', bug.status, bug.severity, bug.priority, JSON.stringify(bug), bug.updatedAt);
     }
 
     // Seed Chained Audit Events
@@ -1360,27 +1363,52 @@ export const dbRepository = {
   },
 
   users: {
-    getByUsername(username: string): { id: string; username: string; passwordHash: string; passwordSalt: string; name: string; role: string; mustChangePassword?: number; createdAt: string } | null {
+    getByUsername(username: string): { id: string; username: string; passwordHash: string; passwordSalt: string; name: string; role: string; mustChangePassword?: number; passwordChangedAt?: number; tokenVersion?: number; createdAt: string } | null {
       const row = db.prepare(`
         SELECT id, username, password_hash as passwordHash, password_salt as passwordSalt,
-               name, role, coalesce(must_change_password, 0) as mustChangePassword, created_at as createdAt
+               name, role, coalesce(must_change_password, 0) as mustChangePassword,
+               coalesce(password_changed_at, 0) as passwordChangedAt,
+               coalesce(token_version, 1) as tokenVersion,
+               created_at as createdAt
         FROM users WHERE username = ?
       `).get(username) as any;
       return row || null;
     },
-    getById(id: string): { id: string; username: string; name: string; role: string; mustChangePassword?: number; createdAt: string } | null {
+    getById(id: string): { id: string; username: string; name: string; role: string; mustChangePassword?: number; passwordChangedAt?: number; tokenVersion?: number; createdAt: string } | null {
       const row = db.prepare(`
-        SELECT id, username, name, role, coalesce(must_change_password, 0) as mustChangePassword, created_at as createdAt
+        SELECT id, username, name, role, coalesce(must_change_password, 0) as mustChangePassword,
+               coalesce(password_changed_at, 0) as passwordChangedAt,
+               coalesce(token_version, 1) as tokenVersion,
+               created_at as createdAt
         FROM users WHERE id = ?
       `).get(id) as any;
       return row || null;
     },
+    getAll(): Array<{ id: string; username: string; name: string; role: string; mustChangePassword?: number; createdAt: string }> {
+      return db.prepare(`
+        SELECT id, username, name, role, coalesce(must_change_password, 0) as mustChangePassword, created_at as createdAt
+        FROM users ORDER BY created_at ASC
+      `).all() as any;
+    },
+    create(user: { id: string; username: string; passwordHash: string; passwordSalt: string; name: string; role: string; mustChangePassword?: number }): void {
+      const now = new Date().toISOString();
+      db.prepare(`
+        INSERT INTO users (id, username, password_hash, password_salt, name, role, must_change_password, password_changed_at, token_version, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 0, 1, ?)
+      `).run(user.id, user.username, user.passwordHash, user.passwordSalt, user.name, user.role, user.mustChangePassword ?? 1, now);
+    },
     updatePassword(userId: string, newHash: string, newSalt: string): boolean {
+      const nowSec = Math.floor(Date.now() / 1000);
       const res = db.prepare(`
         UPDATE users
-        SET password_hash = ?, password_salt = ?, must_change_password = 0
+        SET password_hash = ?, password_salt = ?, must_change_password = 0,
+            password_changed_at = ?, token_version = coalesce(token_version, 1) + 1
         WHERE id = ?
-      `).run(newHash, newSalt, userId);
+      `).run(newHash, newSalt, nowSec, userId);
+      return res.changes > 0;
+    },
+    delete(id: string): boolean {
+      const res = db.prepare('DELETE FROM users WHERE id = ?').run(id);
       return res.changes > 0;
     }
   },
@@ -1403,6 +1431,19 @@ export const dbRepository = {
         JOIN users u ON u.id = pm.user_id
         WHERE pm.project_id = ?
       `).all(projectId) as any;
+    },
+    addMember(projectId: string, userId: string, role: string): void {
+      const now = new Date().toISOString();
+      const id = `pm_${projectId}_${userId}`;
+      db.prepare(`
+        INSERT INTO project_members (id, project_id, user_id, role, created_at)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(project_id, user_id) DO UPDATE SET role = excluded.role
+      `).run(id, projectId, userId, role, now);
+    },
+    removeMember(projectId: string, userId: string): boolean {
+      const res = db.prepare('DELETE FROM project_members WHERE project_id = ? AND user_id = ?').run(projectId, userId);
+      return res.changes > 0;
     }
   },
 
@@ -1416,16 +1457,19 @@ export const dbRepository = {
       return row ? JSON.parse(row.data) : null;
     },
     upsert(evd: EvidenceItem): void {
+      const projId = (evd as any).projectId || (evd as any).project_id || 'PRJ-01';
+      const evdWithProj = { ...evd, projectId: projId };
       const stmt = db.prepare(`
-        INSERT INTO evidence (id, type, environment, status, data, created_at)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO evidence (id, project_id, type, environment, status, data, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
+          project_id = excluded.project_id,
           type = excluded.type,
           environment = excluded.environment,
           status = excluded.status,
           data = excluded.data
       `);
-      stmt.run(evd.id, evd.type, evd.environment, evd.status, JSON.stringify(evd), evd.createdAt);
+      stmt.run(evd.id, projId, evd.type, evd.environment, evd.status, JSON.stringify(evdWithProj), evd.createdAt);
     },
     delete(id: string): boolean {
       const result = db.prepare('DELETE FROM evidence WHERE id = ?').run(id);
@@ -1443,10 +1487,13 @@ export const dbRepository = {
       return row ? JSON.parse(row.data) : null;
     },
     upsert(tc: TestCaseItem): void {
+      const projId = (tc as any).projectId || (tc as any).project_id || 'PRJ-01';
+      const tcWithProj = { ...tc, projectId: projId };
       const stmt = db.prepare(`
-        INSERT INTO test_cases (id, requirement_id, status, type, priority, data, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO test_cases (id, project_id, requirement_id, status, type, priority, data, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
+          project_id = excluded.project_id,
           requirement_id = excluded.requirement_id,
           status = excluded.status,
           type = excluded.type,
@@ -1454,7 +1501,7 @@ export const dbRepository = {
           data = excluded.data,
           updated_at = excluded.updated_at
       `);
-      stmt.run(tc.id, tc.requirementId, tc.status, tc.type, tc.priority, JSON.stringify(tc), tc.updatedAt);
+      stmt.run(tc.id, projId, tc.requirementId, tc.status, tc.type, tc.priority, JSON.stringify(tcWithProj), tc.updatedAt);
     },
     delete(id: string): boolean {
       const result = db.prepare('DELETE FROM test_cases WHERE id = ?').run(id);
@@ -1472,15 +1519,18 @@ export const dbRepository = {
       return row ? JSON.parse(row.data) : null;
     },
     upsert(tr: TestRunItem): void {
+      const projId = (tr as any).projectId || (tr as any).project_id || 'PRJ-01';
+      const trWithProj = { ...tr, projectId: projId };
       const stmt = db.prepare(`
-        INSERT INTO test_runs (id, status, environment, data, created_at)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO test_runs (id, project_id, status, environment, data, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
+          project_id = excluded.project_id,
           status = excluded.status,
           environment = excluded.environment,
           data = excluded.data
       `);
-      stmt.run(tr.id, tr.status, tr.environment, JSON.stringify(tr), tr.createdAt);
+      stmt.run(tr.id, projId, tr.status, tr.environment, JSON.stringify(trWithProj), tr.createdAt);
     },
     delete(id: string): boolean {
       const result = db.prepare('DELETE FROM test_runs WHERE id = ?').run(id);
@@ -1498,17 +1548,20 @@ export const dbRepository = {
       return row ? JSON.parse(row.data) : null;
     },
     upsert(bug: BugItem): void {
+      const projId = (bug as any).projectId || (bug as any).project_id || 'PRJ-01';
+      const bugWithProj = { ...bug, projectId: projId };
       const stmt = db.prepare(`
-        INSERT INTO bugs (id, status, severity, priority, data, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO bugs (id, project_id, status, severity, priority, data, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
+          project_id = excluded.project_id,
           status = excluded.status,
           severity = excluded.severity,
           priority = excluded.priority,
           data = excluded.data,
           updated_at = excluded.updated_at
       `);
-      stmt.run(bug.id, bug.status, bug.severity, bug.priority, JSON.stringify(bug), bug.updatedAt);
+      stmt.run(bug.id, projId, bug.status, bug.severity, bug.priority, JSON.stringify(bugWithProj), bug.updatedAt);
     },
     delete(id: string): boolean {
       const result = db.prepare('DELETE FROM bugs WHERE id = ?').run(id);

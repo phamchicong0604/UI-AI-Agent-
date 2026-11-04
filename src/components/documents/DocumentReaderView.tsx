@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { DocumentCategory, DocumentItem, StatusLifecycle } from '../../types';
+import { getDefaultDocumentMarkdown } from './documentTemplate';
 import { useApp } from '../../context/AppContext';
 import { useI18n } from '../../common/i18n/I18nContext';
 import {
@@ -50,17 +51,16 @@ interface DocumentReaderViewProps {
   onToggleSidebar?: () => void;
 }
 
-const CATEGORY_DISPLAY_NAMES: Record<string, { vi: string; en: string }> = {
-  'ALL': { vi: 'Tất cả tài liệu', en: 'All Documents' },
-  '01_Project_Overview': { vi: '01. Tổng quan dự án', en: '01. Project Overview' },
-  '02_Business_Requirements': { vi: '02. Yêu cầu nghiệp vụ (BRD)', en: '02. Business Requirements' },
-  '03_System_Requirements': { vi: '03. Đặc tả hệ thống (SRS)', en: '03. System Requirements' },
-  '04_UI_UX': { vi: '04. Thiết kế UI / UX', en: '04. UI & UX Design' },
-  '05_Technical_Documents': { vi: '05. Tài liệu kỹ thuật & API', en: '05. Technical & API Docs' },
-  '06_QA': { vi: '06. Kế hoạch & Chiến lược QA', en: '06. QA & Test Strategy' },
-  '07_EVD_Evidence': { vi: '07. Hướng dẫn Bằng chứng (EVD)', en: '07. Evidence Guides (EVD)' },
-  '08_Change_History': { vi: '08. Lịch sử thay đổi', en: '08. Change History' }
-};
+const CATEGORY_KEYS = [
+  '01_Project_Overview',
+  '02_Business_Requirements',
+  '03_System_Requirements',
+  '04_UI_UX',
+  '05_Technical_Documents',
+  '06_QA',
+  '07_EVD_Evidence',
+  '08_Change_History'
+];
 
 export const DocumentReaderView: React.FC<DocumentReaderViewProps> = ({
   document: doc,
@@ -87,6 +87,21 @@ export const DocumentReaderView: React.FC<DocumentReaderViewProps> = ({
 
   const categoryPickerRef = useRef<HTMLDivElement>(null);
   const docPickerRef = useRef<HTMLDivElement>(null);
+
+  const getCategoryDisplayName = (catKey: string) => {
+    switch (catKey) {
+      case 'ALL': return t('allDocuments');
+      case '01_Project_Overview': return t('cat01_overview');
+      case '02_Business_Requirements': return t('cat02_brd');
+      case '03_System_Requirements': return t('cat03_srs');
+      case '04_UI_UX': return t('cat04_uiux');
+      case '05_Technical_Documents': return t('cat05_tech');
+      case '06_QA': return t('cat06_qa');
+      case '07_EVD_Evidence': return t('cat07_evd');
+      case '08_Change_History': return t('cat08_change');
+      default: return catKey;
+    }
+  };
 
   // Close dropdowns on outside click
   useEffect(() => {
@@ -120,56 +135,14 @@ export const DocumentReaderView: React.FC<DocumentReaderViewProps> = ({
     if (doc.contentMarkdown && doc.contentMarkdown.trim().length > 0) {
       return doc.contentMarkdown;
     }
-    return `# ${doc.title}
-
-> **Dự án**: ${activeProject.name} (${activeProject.key})  
-> **Mã tài liệu**: \`${doc.id}\` | **Phiên bản**: \`${doc.currentVersion}\` | **Trạng thái**: ${doc.status}  
-> **Người biên soạn**: ${doc.author} | **Cập nhật lần cuối**: ${doc.updatedAt}
-
----
-
-## 1. Tóm tắt Mục tiêu & Bối cảnh (Executive Summary)
-${doc.description || 'Tài liệu này đóng vai trò là văn bản đặc tả chuẩn cho hệ thống, quy định các tiêu chuẩn kỹ thuật, quy tắc nghiệp vụ và tiêu chí chất lượng cho dự án.'}
-
-Hệ thống yêu cầu mọi thành viên tham gia (BA, DEV, QA, PM) tuân thủ nghiêm ngặt các quy định được phê duyệt trong văn bản này. Mọi thay đổi đối với tài liệu đều phải trải qua quy trình đánh giá tác động và đóng dấu xác thực toàn vẹn bằng hàm băm mật mã học **SHA-256**.
-
-## 2. Phạm vi & Đối tượng Áp dụng (Scope & Target Roles)
-Tài liệu được phân loại thuộc danh mục chuẩn: **${doc.category}**.
-
-| Vai trò | Trách nhiệm áp dụng | Yêu cầu truy vết |
-| :--- | :--- | :--- |
-| **Product Manager (PM)** | Giám sát phạm vi và các mốc bàn giao | Ký duyệt Baseline văn bản |
-| **Business Analyst (BA)** | Phân rã quy tắc nghiệp vụ và Acceptance Criteria | Ánh xạ trực tiếp vào module Requirements |
-| **Software Engineer (DEV)** | Triển khai mã nguồn theo đúng đặc tả kỹ thuật | Tuân thủ hợp đồng giao diện và API |
-| **Quality Assurance (QA)** | Thiết kế ca kiểm thử bao phủ toàn bộ điều kiện nghiệm thu | Bắt buộc đính kèm bằng chứng EVD khi có sai khác |
-
-## 3. Đặc tả Yêu cầu & Quy tắc Nghiệp vụ (Core Specifications)
-### 3.1. Quy tắc Toàn vẹn & Phê duyệt
-- **Quy tắc BR-AUTH-01**: Tài liệu chỉ trở thành căn cứ pháp lý chính thức khi chuyển sang trạng thái \`Approved\`.
-- **Quy tắc BR-AUTH-02**: Không được phép tạo mã tự động hoặc nghiệm thu sản phẩm dựa trên các bản thảo (\`Draft\` hoặc \`In Review\`).
-- **Quy tắc BR-SEC-01**: Tất cả các tệp đính kèm và nội dung văn bản đều được ký số băm SHA-256 bất biến.
-
-### 3.2. Tiêu chuẩn Bàn giao Kỹ thuật
-- Mã nguồn và tài liệu phải luôn được đồng bộ trong cùng một chu kỳ phát hành (Sprint / Milestone).
-- Báo cáo kiểm thử phải đạt tỷ lệ bao phủ ma trận truy vết tối thiểu **95%** trước khi đưa ra quyết định Release Candidate.
-
-## 4. Điều kiện Nghiệm thu (Acceptance Criteria)
-- [x] **AC-01**: Xác thực danh tính người dùng và kiểm tra quyền hạn trước khi cho phép xem hoặc sửa đổi.
-- [x] **AC-02**: Tự động tính toán mã băm SHA-256 ngay khi tài liệu được tải lên hoặc cập nhật phiên bản.
-- [ ] **AC-03**: Hệ thống ghi vết kiểm toán chuỗi khối (Chained Audit Log) cho mọi hành động thay đổi trạng thái.
-- [ ] **AC-04**: Hoàn tất ma trận liên kết giữa văn bản này và các ca kiểm thử tương ứng.
-
-## 5. Phụ lục & Liên kết Tham chiếu (References)
-- **Tài liệu liên quan**: Hệ thống quy tắc nghiệp vụ và hướng dẫn thu thập bằng chứng kiểm thử EVD.
-- **Mã định danh lưu trữ**: \`${doc.id}-V${doc.currentVersion.replace('v', '')}\`
-`;
-  }, [doc, activeProject]);
+    return getDefaultDocumentMarkdown(doc, activeProject, language);
+  }, [doc, activeProject, language]);
 
   // Extract Table of Contents (Headings) from markdown
   const tableOfContents = useMemo(() => {
     const lines = content.split('\n');
     const headings: { id: string; text: string; level: number }[] = [];
-    lines.forEach((line) => {
+    lines.forEach((line: string) => {
       const match = line.match(/^(#{1,3})\s+(.+)$/);
       if (match) {
         const level = match[1].length;
@@ -215,25 +188,25 @@ Tài liệu được phân loại thuộc danh mục chuẩn: **${doc.category}*
       case 'Approved':
         return (
           <Badge variant="success" icon={<CheckCircle2 className="w-3.5 h-3.5" />}>
-            {language === 'vi' ? 'Đã duyệt' : 'Approved'}
+            {t('docStatusApproved')}
           </Badge>
         );
       case 'In Review':
         return (
           <Badge variant="warning" icon={<Clock className="w-3.5 h-3.5" />}>
-            {language === 'vi' ? 'Chờ xem xét' : 'In Review'}
+            {t('docStatusInReview')}
           </Badge>
         );
       case 'Draft':
         return (
           <Badge variant="neutral">
-            {language === 'vi' ? 'Bản nháp' : 'Draft'}
+            {t('docStatusDraft')}
           </Badge>
         );
       case 'Deprecated':
         return (
           <Badge variant="danger" icon={<AlertTriangle className="w-3.5 h-3.5" />}>
-            {language === 'vi' ? 'Ngưng dùng' : 'Deprecated'}
+            {t('docStatusDeprecated')}
           </Badge>
         );
       default:
@@ -415,7 +388,7 @@ Tài liệu được phân loại thuộc danh mục chuẩn: **${doc.category}*
   };
 
   const getCategoryLabel = (cat: string) => {
-    return CATEGORY_DISPLAY_NAMES[cat]?.vi || cat;
+    return getCategoryDisplayName(cat);
   };
 
   return (
@@ -429,10 +402,10 @@ Tài liệu được phân loại thuộc danh mục chuẩn: **${doc.category}*
             <button
               onClick={onBackToList}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800/90 hover:bg-slate-750 text-slate-200 border border-slate-700 text-xs font-semibold shadow-sm hover:border-indigo-500/50 transition-all group shrink-0"
-              title="Quay lại chế độ danh sách tài liệu"
+              title={t('docReaderBackTitle')}
             >
               <ArrowLeft className="w-3.5 h-3.5 text-indigo-400 group-hover:-translate-x-0.5 transition-transform" />
-              <span>{language === 'vi' ? 'Quay lại' : 'Back'}</span>
+              <span>{t('docReaderBack')}</span>
             </button>
           )}
 
@@ -441,7 +414,7 @@ Tài liệu được phân loại thuộc danh mục chuẩn: **${doc.category}*
             <button
               onClick={onToggleSidebar}
               className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white border border-slate-750 text-xs transition-colors shrink-0"
-              title={isSidebarCollapsed ? 'Mở rộng cây thư mục' : 'Thu gọn cây thư mục (Zen Mode)'}
+              title={isSidebarCollapsed ? t('docReaderToggleSidebarCollapsed') : t('docReaderToggleSidebarExpanded')}
             >
               {isSidebarCollapsed ? <PanelLeft className="w-3.5 h-3.5 text-indigo-400" /> : <PanelLeftClose className="w-3.5 h-3.5" />}
             </button>
@@ -462,7 +435,7 @@ Tài liệu được phân loại thuộc danh mục chuẩn: **${doc.category}*
                 type="button"
                 onClick={() => setIsCategoryPickerOpen(!isCategoryPickerOpen)}
                 className="flex items-center gap-1 px-2 py-1 rounded-lg bg-indigo-950/40 hover:bg-indigo-900/50 text-indigo-300 border border-indigo-500/30 text-xs font-semibold transition-colors"
-                title="Nhấp để chuyển nhanh sang hạng mục khác"
+                title={t('docReaderSwitchCategoryTitle')}
               >
                 <span>{getCategoryLabel(doc.category)}</span>
                 <ChevronDown className={`w-3 h-3 text-indigo-400 transition-transform ${isCategoryPickerOpen ? 'rotate-180' : ''}`} />
@@ -471,10 +444,10 @@ Tài liệu được phân loại thuộc danh mục chuẩn: **${doc.category}*
               {isCategoryPickerOpen && (
                 <div className="absolute left-0 mt-1.5 w-64 rounded-xl bg-slate-850 border border-slate-700 shadow-2xl p-1.5 z-50 animate-in fade-in duration-100">
                   <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400 border-b border-slate-800 pb-1.5 mb-1">
-                    Chuyển nhanh Hạng mục
+                    {t('docReaderSwitchCategory')}
                   </div>
                   <div className="space-y-0.5 max-h-60 overflow-y-auto">
-                    {Object.keys(CATEGORY_DISPLAY_NAMES).filter(k => k !== 'ALL').map((catKey) => {
+                    {CATEGORY_KEYS.map((catKey) => {
                       const count = allProjectDocs.filter(d => d.category === catKey).length;
                       const isCurrent = doc.category === catKey;
                       return (
@@ -494,7 +467,7 @@ Tài liệu được phân loại thuộc danh mục chuẩn: **${doc.category}*
                               : 'text-slate-300 hover:bg-slate-800'
                           }`}
                         >
-                          <span className="truncate">{CATEGORY_DISPLAY_NAMES[catKey]?.vi}</span>
+                          <span className="truncate">{getCategoryDisplayName(catKey)}</span>
                           <span className="text-[10px] font-mono text-slate-400 bg-slate-900 px-1.5 py-0.5 rounded ml-1 shrink-0">
                             {count}
                           </span>
@@ -514,7 +487,7 @@ Tài liệu được phân loại thuộc danh mục chuẩn: **${doc.category}*
                 type="button"
                 onClick={() => setIsDocPickerOpen(!isDocPickerOpen)}
                 className="flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-750 text-white border border-slate-700 text-xs font-mono font-bold transition-colors"
-                title="Nhấp để đổi tài liệu khác trong hạng mục này"
+                title={t('docReaderSameCategoryTitle')}
               >
                 <span>{doc.id}</span>
                 <ChevronDown className={`w-3 h-3 text-slate-400 transition-transform ${isDocPickerOpen ? 'rotate-180' : ''}`} />
@@ -523,7 +496,7 @@ Tài liệu được phân loại thuộc danh mục chuẩn: **${doc.category}*
               {isDocPickerOpen && (
                 <div className="absolute left-0 mt-1.5 w-72 rounded-xl bg-slate-850 border border-slate-700 shadow-2xl p-1.5 z-50 animate-in fade-in duration-100">
                   <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400 border-b border-slate-800 pb-1.5 mb-1">
-                    Tài liệu cùng hạng mục ({sameCategoryDocs.length})
+                    {t('docReaderSameCategory')} ({sameCategoryDocs.length})
                   </div>
                   <div className="space-y-0.5 max-h-60 overflow-y-auto">
                     {sameCategoryDocs.map((d) => {
@@ -567,10 +540,10 @@ Tài liệu được phân loại thuộc danh mục chuẩn: **${doc.category}*
               onClick={() => prevDoc && onSelectDoc && onSelectDoc(prevDoc.id)}
               disabled={!prevDoc}
               className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium text-slate-300 hover:text-white hover:bg-slate-850 disabled:opacity-30 disabled:hover:bg-transparent transition-all"
-              title={prevDoc ? `Tài liệu trước: ${prevDoc.id} - ${prevDoc.title}` : 'Đang ở tài liệu đầu tiên'}
+              title={prevDoc ? t('docReaderPrevDocTitle', { id: prevDoc.id, title: prevDoc.title }) : t('docReaderFirstDocTitle')}
             >
               <ChevronLeft className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Bài trước</span>
+              <span className="hidden sm:inline">{t('docReaderPrevDoc')}</span>
             </button>
 
             <span className="text-[10px] text-slate-500 font-mono px-1 select-none">
@@ -582,9 +555,9 @@ Tài liệu được phân loại thuộc danh mục chuẩn: **${doc.category}*
               onClick={() => nextDoc && onSelectDoc && onSelectDoc(nextDoc.id)}
               disabled={!nextDoc}
               className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium text-slate-300 hover:text-white hover:bg-slate-850 disabled:opacity-30 disabled:hover:bg-transparent transition-all"
-              title={nextDoc ? `Tài liệu tiếp theo: ${nextDoc.id} - ${nextDoc.title}` : 'Đang ở tài liệu cuối cùng'}
+              title={nextDoc ? t('docReaderNextDocTitle', { id: nextDoc.id, title: nextDoc.title }) : t('docReaderLastDocTitle')}
             >
-              <span className="hidden sm:inline">Bài tiếp</span>
+              <span className="hidden sm:inline">{t('docReaderNextDoc')}</span>
               <ChevronRight className="w-3.5 h-3.5" />
             </button>
           </div>
@@ -597,7 +570,7 @@ Tài liệu được phân loại thuộc danh mục chuẩn: **${doc.category}*
               onClick={() => updateDocumentStatus(doc.id, 'Approved')}
               icon={<CheckCircle2 className="w-3.5 h-3.5" />}
             >
-              {language === 'vi' ? 'Duyệt' : 'Approve'}
+              {t('actionApprove')}
             </Button>
           )}
 
@@ -608,7 +581,7 @@ Tài liệu được phân loại thuộc danh mục chuẩn: **${doc.category}*
             onClick={copyMarkdownContent}
             icon={copiedContent ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
           >
-            {copiedContent ? 'Đã chép!' : 'Chép MD'}
+            {copiedContent ? t('docReaderCopiedMd') : t('docReaderCopyMd')}
           </Button>
 
           {/* Edit */}
@@ -619,7 +592,7 @@ Tài liệu được phân loại thuộc danh mục chuẩn: **${doc.category}*
               onClick={() => onEdit(doc)}
               icon={<Edit3 className="w-3.5 h-3.5 text-slate-300" />}
             >
-              Sửa
+              {t('docReaderEdit')}
             </Button>
           )}
 
@@ -629,7 +602,7 @@ Tài liệu được phân loại thuộc danh mục chuẩn: **${doc.category}*
               type="button"
               onClick={() => onDelete(doc.id)}
               className="p-2 rounded-xl bg-slate-850 hover:bg-rose-500/10 text-slate-400 hover:text-rose-400 border border-slate-800 transition-colors"
-              title="Xóa tài liệu"
+              title={t('docReaderDeleteTitle')}
             >
               <Trash2 className="w-4 h-4" />
             </button>
@@ -661,17 +634,17 @@ Tài liệu được phân loại thuộc danh mục chuẩn: **${doc.category}*
           <div className="flex flex-wrap items-center gap-4">
             <span className="flex items-center gap-1.5 text-slate-300">
               <User className="w-3.5 h-3.5 text-slate-400" />
-              <span>Tác giả: <strong className="text-white">{doc.author}</strong></span>
+              <span>{t('docReaderAuthor')} <strong className="text-white">{doc.author}</strong></span>
             </span>
             <span>•</span>
             <span className="flex items-center gap-1.5 text-slate-300">
               <Calendar className="w-3.5 h-3.5 text-slate-400" />
-              <span>Cập nhật: <strong className="text-white">{doc.updatedAt}</strong></span>
+              <span>{t('docReaderUpdated')} <strong className="text-white">{doc.updatedAt}</strong></span>
             </span>
             <span>•</span>
             <span className="flex items-center gap-1.5 text-indigo-300">
               <Link2 className="w-3.5 h-3.5" />
-              <span>{linkedRequirements.length} Yêu cầu liên kết</span>
+              <span>{t('docReaderLinkedReqsCount', { count: linkedRequirements.length })}</span>
             </span>
           </div>
 
@@ -680,7 +653,7 @@ Tài liệu được phân loại thuộc danh mục chuẩn: **${doc.category}*
             <div
               onClick={copyChecksum}
               className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-950 border border-slate-800 hover:border-indigo-500/40 text-slate-300 hover:text-white cursor-pointer transition-colors font-mono text-[11px]"
-              title="Nhấp để sao chép mã băm SHA-256 toàn vẹn"
+              title={t('docReaderCopyShaTitle')}
             >
               <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
               <span className="text-slate-400">SHA-256:</span>
@@ -695,7 +668,7 @@ Tài liệu được phân loại thuộc danh mục chuẩn: **${doc.category}*
         </div>
       </div>
 
-      {/* 3. TABS SWITCHER: NỘI DUNG / YÊU CẦU LIÊN KẾT / LỊCH SỬ PHIÊN BẢN */}
+      {/* 3. TABS SWITCHER */}
       <div className="flex items-center gap-1 border-b border-slate-800 text-xs font-semibold">
         <button
           onClick={() => setActiveReaderTab('content')}
@@ -706,7 +679,7 @@ Tài liệu được phân loại thuộc danh mục chuẩn: **${doc.category}*
           }`}
         >
           <FileText className="w-4 h-4" />
-          <span>{language === 'vi' ? 'Nội dung tài liệu' : 'Document Content'}</span>
+          <span>{t('docReaderTabContent')}</span>
         </button>
 
         <button
@@ -718,7 +691,7 @@ Tài liệu được phân loại thuộc danh mục chuẩn: **${doc.category}*
           }`}
         >
           <Link2 className="w-4 h-4" />
-          <span>{language === 'vi' ? 'Yêu cầu liên kết' : 'Linked Requirements'}</span>
+          <span>{t('docReaderTabReqs')}</span>
           <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-slate-800 text-slate-300 font-mono">
             {linkedRequirements.length}
           </span>
@@ -733,7 +706,7 @@ Tài liệu được phân loại thuộc danh mục chuẩn: **${doc.category}*
           }`}
         >
           <History className="w-4 h-4" />
-          <span>{language === 'vi' ? 'Lịch sử phiên bản' : 'Version History'}</span>
+          <span>{t('docReaderTabVersions')}</span>
           <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-slate-800 text-slate-300 font-mono">
             {doc.versions?.length || 1}
           </span>
@@ -758,7 +731,7 @@ Tài liệu được phân loại thuộc danh mục chuẩn: **${doc.category}*
                 >
                   <span className="text-[11px] text-slate-400 font-semibold flex items-center gap-1 group-hover:text-indigo-400">
                     <ArrowLeft className="w-3.5 h-3.5 group-hover:-translate-x-0.5 transition-transform" />
-                    <span>TÀI LIỆU TRƯỚC ĐÓ</span>
+                    <span>{t('docReaderPrevDocHeader')}</span>
                   </span>
                   <div className="font-bold text-xs sm:text-sm text-white mt-1.5 group-hover:text-indigo-300 line-clamp-1">
                     {prevDoc.title}
@@ -769,7 +742,7 @@ Tài liệu được phân loại thuộc danh mục chuẩn: **${doc.category}*
                 </button>
               ) : (
                 <div className="p-4 rounded-xl border border-dashed border-slate-800/60 text-slate-600 text-xs flex items-center">
-                  <span>Đây là tài liệu đầu tiên của dự án</span>
+                  <span>{t('docReaderFirstDoc')}</span>
                 </div>
               )}
 
@@ -780,7 +753,7 @@ Tài liệu được phân loại thuộc danh mục chuẩn: **${doc.category}*
                   className="p-4 rounded-xl bg-slate-950 hover:bg-slate-850 border border-slate-800 hover:border-indigo-500/40 text-right transition-all group"
                 >
                   <span className="text-[11px] text-slate-400 font-semibold flex items-center justify-end gap-1 group-hover:text-indigo-400">
-                    <span>TÀI LIỆU TIẾP THEO</span>
+                    <span>{t('docReaderNextDocHeader')}</span>
                     <ChevronRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
                   </span>
                   <div className="font-bold text-xs sm:text-sm text-white mt-1.5 group-hover:text-indigo-300 line-clamp-1">
@@ -792,7 +765,7 @@ Tài liệu được phân loại thuộc danh mục chuẩn: **${doc.category}*
                 </button>
               ) : (
                 <div className="p-4 rounded-xl border border-dashed border-slate-800/60 text-slate-600 text-xs flex items-center justify-end">
-                  <span>Bạn đã đọc đến tài liệu cuối cùng</span>
+                  <span>{t('docReaderLastDoc')}</span>
                 </div>
               )}
             </div>
@@ -803,11 +776,11 @@ Tài liệu được phân loại thuộc danh mục chuẩn: **${doc.category}*
             <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 space-y-3">
               <div className="flex items-center gap-2 text-xs font-bold text-slate-300 uppercase tracking-wider pb-2 border-b border-slate-800">
                 <Bookmark className="w-4 h-4 text-indigo-400" />
-                <span>Mục lục tài liệu</span>
+                <span>{t('docReaderToc')}</span>
               </div>
 
               {tableOfContents.length === 0 ? (
-                <p className="text-xs text-slate-500 italic">Không có tiêu đề phân đoạn.</p>
+                <p className="text-xs text-slate-500 italic">{t('docReaderTocEmpty')}</p>
               ) : (
                 <nav className="space-y-1 max-h-[60vh] overflow-y-auto pr-1">
                   {tableOfContents.map((h, idx) => (
@@ -832,12 +805,12 @@ Tài liệu được phân loại thuộc danh mục chuẩn: **${doc.category}*
 
             {/* Quick Actions Helper */}
             <div className="p-4 rounded-2xl bg-slate-900/60 border border-slate-800/80 space-y-2 text-xs text-slate-400">
-              <span className="font-semibold text-slate-300 block">Thao tác nhanh</span>
+              <span className="font-semibold text-slate-300 block">{t('docReaderQuickActions')}</span>
               <button
                 onClick={copyMarkdownContent}
                 className="w-full py-1.5 px-3 rounded-lg bg-slate-800 hover:bg-slate-750 text-slate-200 flex items-center justify-between transition-colors"
               >
-                <span>Sao chép toàn bộ Markdown</span>
+                <span>{t('docReaderCopyAllMd')}</span>
                 <Copy className="w-3.5 h-3.5 text-slate-400" />
               </button>
               {onBackToList && (
@@ -845,7 +818,7 @@ Tài liệu được phân loại thuộc danh mục chuẩn: **${doc.category}*
                   onClick={onBackToList}
                   className="w-full py-1.5 px-3 rounded-lg bg-slate-850 hover:bg-slate-800 text-indigo-300 hover:text-indigo-200 flex items-center justify-between transition-colors"
                 >
-                  <span>Chuyển sang Quản lý tệp</span>
+                  <span>{t('docReaderSwitchToFiles')}</span>
                   <ArrowLeft className="w-3.5 h-3.5" />
                 </button>
               )}
@@ -859,8 +832,8 @@ Tài liệu được phân loại thuộc danh mục chuẩn: **${doc.category}*
         <div className="p-6 rounded-2xl bg-slate-900 border border-slate-800 space-y-4">
           <div className="flex items-center justify-between pb-2 border-b border-slate-800">
             <div>
-              <h3 className="text-sm font-bold text-white">Yêu cầu nghiệp vụ được truy vết từ tài liệu này</h3>
-              <p className="text-xs text-slate-400 mt-0.5">Các yêu cầu (Requirement) được phân rã trực tiếp hoặc trích dẫn văn bản {doc.id}.</p>
+              <h3 className="text-sm font-bold text-white">{t('docReaderReqsTracedTitle')}</h3>
+              <p className="text-xs text-slate-400 mt-0.5">{t('docReaderReqsTracedDesc', { id: doc.id })}</p>
             </div>
             <Button
               variant="outline"
@@ -868,13 +841,13 @@ Tài liệu được phân loại thuộc danh mục chuẩn: **${doc.category}*
               onClick={() => setActiveTab('requirements')}
               icon={<ExternalLink className="w-3.5 h-3.5" />}
             >
-              Xem Ma trận Yêu cầu
+              {t('docReaderViewMatrix')}
             </Button>
           </div>
 
           {linkedRequirements.length === 0 ? (
             <div className="p-8 text-center text-slate-500 text-xs">
-              Chưa có yêu cầu nào được liên kết với văn bản này.
+              {t('docReaderNoLinkedReqs')}
             </div>
           ) : (
             <div className="space-y-3">
@@ -896,7 +869,7 @@ Tài liệu được phân loại thuộc danh mục chuẩn: **${doc.category}*
 
                   {req.acceptanceCriteria && req.acceptanceCriteria.length > 0 && (
                     <div className="pt-2 border-t border-slate-850 space-y-1">
-                      <span className="text-[11px] font-semibold text-slate-400">Điều kiện nghiệm thu (AC):</span>
+                      <span className="text-[11px] font-semibold text-slate-400">{t('docReaderAcLabel')}</span>
                       {req.acceptanceCriteria.map(ac => (
                         <div key={ac.id} className="flex items-center gap-2 text-xs text-slate-300">
                           {ac.completed ? (
@@ -920,8 +893,8 @@ Tài liệu được phân loại thuộc danh mục chuẩn: **${doc.category}*
       {activeTab === 'versions' && (
         <div className="p-6 rounded-2xl bg-slate-900 border border-slate-800 space-y-4">
           <div className="pb-2 border-b border-slate-800">
-            <h3 className="text-sm font-bold text-white">Lịch sử Phiên bản & Chữ ký Checksum</h3>
-            <p className="text-xs text-slate-400 mt-0.5">Mọi thay đổi nội dung được băm SHA-256 để đảm bảo tính bất biến và tuân thủ kiểm toán.</p>
+            <h3 className="text-sm font-bold text-white">{t('docReaderVersionsTitle')}</h3>
+            <p className="text-xs text-slate-400 mt-0.5">{t('docReaderVersionsDesc')}</p>
           </div>
 
           <div className="space-y-3">
@@ -943,7 +916,7 @@ Tài liệu được phân loại thuộc danh mục chuẩn: **${doc.category}*
                 </p>
 
                 <div className="pt-2 border-t border-slate-850 flex items-center justify-between text-xs text-slate-400 font-mono">
-                  <span>Dung lượng: {ver.fileSize}</span>
+                  <span>{t('docReaderFileSize')}: {ver.fileSize}</span>
                   <div className="flex items-center gap-1.5 text-emerald-400">
                     <ShieldCheck className="w-4 h-4" />
                     <span>{ver.checksum}</span>

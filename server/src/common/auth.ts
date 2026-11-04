@@ -10,6 +10,8 @@ export interface AuthUser {
   name: string;
   role: UserRole;
   projectId?: string;
+  iat?: number;
+  exp?: number;
 }
 
 declare global {
@@ -144,7 +146,9 @@ export function verifyUserSession(token: string): AuthUser | null {
       username: decoded.username,
       name: decoded.name || role,
       role,
-      projectId: decoded.projectId
+      projectId: decoded.projectId,
+      iat: decoded.iat,
+      exp: decoded.exp
     };
   } catch {
     return null;
@@ -176,14 +180,33 @@ export function authenticateUser(req: Request, res: Response, next: NextFunction
 
   req.user = verified;
 
-  // Enforce Condition 4: Users with must_change_password enabled cannot access any APIs except password change and logout
-  const isExemptAuthRoute = req.originalUrl.includes('/auth/change-password') ||
-                            req.originalUrl.includes('/auth/me') ||
-                            req.originalUrl.includes('/auth/logout');
+  // R6-08: Check that user still exists in SQLite database (reject tokens of deleted accounts)
+  const dbUser = dbRepository.users.getById(verified.id);
+  if (!dbUser) {
+    sendError(res, 'Unauthorized: User account no longer exists in database (R6-08).', 401);
+    return;
+  }
+
+  // R6-08: Revoke tokens issued before the most recent password change
+  if (verified.iat && dbUser.passwordChangedAt && verified.iat < dbUser.passwordChangedAt) {
+    sendError(res, 'Unauthorized: Token has been revoked due to password change. Please log in again (R6-08).', 401);
+    return;
+  }
+
+  // Enforce Condition 4 & R6-02: Users with must_change_password enabled cannot access any APIs except password change, me, and logout
+  // Strip any query string or trailing slashes to prevent query string bypass (R6-02)
+  const urlPath = req.originalUrl.split('?')[0].replace(/\/+$/, '');
+  const isExemptAuthRoute =
+    urlPath === '/api/v1/auth/change-password' ||
+    urlPath === '/auth/change-password' ||
+    urlPath === '/api/v1/auth/me' ||
+    urlPath === '/auth/me' ||
+    urlPath === '/api/v1/auth/logout' ||
+    urlPath === '/auth/logout';
+
   if (!isExemptAuthRoute) {
-    const dbUser = dbRepository.users.getById(verified.id);
-    if (dbUser && dbUser.mustChangePassword) {
-      sendError(res, 'Tài khoản bắt buộc phải đổi mật khẩu lần đầu trước khi truy cập tài nguyên hệ thống (Condition 4, R4-15).', 403, 'MUST_CHANGE_PASSWORD');
+    if (dbUser.mustChangePassword) {
+      sendError(res, 'Tài khoản bắt buộc phải đổi mật khẩu lần đầu trước khi truy cập tài nguyên hệ thống (Condition 4, R4-15, R6-02).', 403, 'MUST_CHANGE_PASSWORD');
       return;
     }
   }

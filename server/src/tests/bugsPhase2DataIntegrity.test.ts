@@ -17,6 +17,14 @@ describe('Bug Review Phase 2: Data Integrity (BUG-008, BUG-019 to BUG-023)', () 
 
   beforeAll(async () => {
     db.prepare("UPDATE users SET must_change_password = 0 WHERE id = 'usr_admin'").run();
+    db.prepare(`
+      INSERT OR REPLACE INTO users (id, username, password_hash, password_salt, name, role, must_change_password, created_at)
+      VALUES ('usr_qa', 'qa', 'hash', 'salt', 'QA', 'QA', 0, datetime('now'))
+    `).run();
+    db.prepare(`
+      INSERT OR REPLACE INTO project_members (id, project_id, user_id, role, created_at)
+      VALUES ('pm_prj01_qa', 'PRJ-01', 'usr_qa', 'QA', datetime('now'))
+    `).run();
     await new Promise<void>((resolve) => {
       server = app.listen(0, '127.0.0.1', () => {
         const addr = server.address() as net.AddressInfo;

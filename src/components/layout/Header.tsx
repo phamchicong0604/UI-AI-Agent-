@@ -215,7 +215,7 @@ export const Header: React.FC = () => {
                   language === 'vi' ? 'bg-indigo-600 text-white' : 'text-slate-300 hover:bg-slate-700'
                 }`}
               >
-                <span>🇻🇳 Tiếng Việt</span>
+                <span>🇻🇳 {t('vietnamese')}</span>
                 {language === 'vi' && <span className="text-[10px] font-mono">✓</span>}
               </button>
               <button
