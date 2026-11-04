@@ -3,6 +3,7 @@ node_modules/
 server/node_modules/
 .pnp
 .pnp.js
+.vite/
 
 # Production build outputs
 dist/
