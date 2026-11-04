@@ -261,6 +261,7 @@ export type PriorityLevel = 'Critical' | 'High' | 'Medium' | 'Low';
 
 export interface RequirementItem {
   id: string;
+  projectId?: string;
   title: string;
   description: string;
   type: RequirementType;

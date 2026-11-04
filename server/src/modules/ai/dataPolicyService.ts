@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { AiDataPolicy } from '../../common/types.js';
 import { db } from '../../database/db.js';
 
@@ -28,7 +29,7 @@ const REDACTION_PATTERNS: Array<{ name: string; pattern: RegExp; mask: string }>
   },
   {
     name: 'OPENAI_KEY',
-    pattern: /\bsk-[a-zA-Z0-9]{20,}\b/g,
+    pattern: /\bsk-(?:proj-)?[a-zA-Z0-9_\-]{20,}\b/g,
     mask: '[REDACTED_API_KEY]'
   },
   {
@@ -48,7 +49,7 @@ const REDACTION_PATTERNS: Array<{ name: string; pattern: RegExp; mask: string }>
   },
   {
     name: 'PEM_PRIVATE_KEY',
-    pattern: /-----BEGIN (?:RSA )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA )?PRIVATE KEY-----/g,
+    pattern: /-----BEGIN (?:[A-Z0-9_-]+ )?PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z0-9_-]+ )?PRIVATE KEY-----/g,
     mask: '[REDACTED_PRIVATE_KEY]'
   },
   {
@@ -195,8 +196,8 @@ export class DataPolicyService {
    */
   public wrapUntrustedDocument(content: string, delimiter: string = 'CONTENT'): string {
     const escaped = content
-      .replace(/=== (?:BEGIN|END)_UNTRUSTED_DOCUMENT(?:_[a-zA-Z0-9_-]+)? ===/gi, '[ESCAPED_DELIMITER]')
-      .replace(/```(?:system|instruction|prompt)/gi, '```text');
+      .replace(/={3,}\s*(?:BEGIN|END)_UNTRUSTED_DOCUMENT[^\n=]*={3,}/gi, '[ESCAPED_DELIMITER]')
+      .replace(/```\s*(?:system|instruction|prompt)/gi, '```text');
 
     return [
       `=== BEGIN_UNTRUSTED_DOCUMENT_${delimiter} ===`,

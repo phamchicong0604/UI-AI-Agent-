@@ -8,6 +8,7 @@ import { accountModelsService, resolveSource, ModelSyncError } from './account-m
 import { db, dbRepository } from '../../database/db.js';
 import { sendSuccess, sendError } from '../../common/response.js';
 import { ObservabilityService } from './observabilityService.js';
+import { authenticateUser, requireAuth } from '../../common/auth.js';
 
 export const aiRouter = Router();
 const aiService = new AiService();
@@ -325,34 +326,34 @@ aiRouter.get('/status', (req: Request, res: Response) => {
  * POST /api/v1/ai/generate-testcases
  * Synthesizes grounded test cases from an approved requirement
  */
-aiRouter.post('/generate-testcases', async (req: Request, res: Response) => {
+aiRouter.post('/generate-testcases', authenticateUser, requireAuth, async (req: Request, res: Response) => {
   try {
     const { requirement, sourceDoc, userPrompt } = req.body;
     if (!requirement || !requirement.id) {
       return sendError(res, 'Missing required field: requirement', 400);
     }
 
-    // Resolve true projectId from DB first to prevent client-side spoofing (BUG-001)
+    // Resolve true projectId strictly from DB entity to prevent spoofing (BUG-001, R2-03)
     let actualProjectId: string | undefined;
-    if (requirement.id) {
-      try {
-        const dbReq = dbRepository.requirements.getById(requirement.id);
-        if (dbReq && (dbReq as any).projectId) {
-          actualProjectId = (dbReq as any).projectId;
-        }
-      } catch {}
+    const dbReq = dbRepository.requirements.getById(requirement.id);
+    if (!dbReq) {
+      return sendError(res, `Requirement "${requirement.id}" không tồn tại trong cơ sở dữ liệu.`, 404);
     }
+    actualProjectId = (dbReq as any).projectId;
+
     if (!actualProjectId && (requirement.sourceReferences?.[0]?.documentId || sourceDoc?.id)) {
       const docId = requirement.sourceReferences?.[0]?.documentId || sourceDoc?.id;
-      try {
-        const dbDoc = dbRepository.documents.getById(docId);
-        if (dbDoc && dbDoc.projectId) {
-          actualProjectId = dbDoc.projectId;
-        }
-      } catch {}
+      const dbDoc = dbRepository.documents.getById(docId);
+      if (dbDoc && dbDoc.projectId) {
+        actualProjectId = dbDoc.projectId;
+      }
     }
-    // Fail-closed: DB entity takes absolute precedence over client header/body
-    const projectId = actualProjectId || requirement.projectId || sourceDoc?.projectId || (req.headers['x-project-id'] as string) || req.body.projectId;
+
+    // Fail-closed: Never fall back to unverified client headers or request body when requirement exists
+    const projectId = actualProjectId;
+    if (!projectId) {
+      return sendError(res, 'Không thể xác thực dự án nguồn cho requirement này.', 403);
+    }
 
     const result = await aiService.generateGroundedDrafts({
       requirement,

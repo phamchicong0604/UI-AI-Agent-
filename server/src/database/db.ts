@@ -666,18 +666,43 @@ ensureStoredFilesSynced();
 export const dbRepository = {
   projects: {
     getAll(): Project[] {
-      const rows = db.prepare('SELECT data FROM projects ORDER BY created_at ASC').all() as { data: string }[];
-      return rows.map(r => JSON.parse(r.data));
+      const rows = db.prepare('SELECT id, name, key, description, version, author, members_count, ai_policy, data FROM projects ORDER BY created_at ASC').all() as any[];
+      return rows.map(r => {
+        const parsed = r.data ? JSON.parse(r.data) : {};
+        return {
+          id: r.id,
+          name: r.name,
+          key: r.key,
+          description: r.description,
+          version: r.version,
+          author: r.author,
+          membersCount: r.members_count,
+          aiPolicy: r.ai_policy,
+          ...parsed
+        };
+      });
     },
     getById(id: string): Project | null {
-      const row = db.prepare('SELECT data FROM projects WHERE id = ?').get(id) as { data: string } | undefined;
-      return row ? JSON.parse(row.data) : null;
+      const row = db.prepare('SELECT id, name, key, description, version, author, members_count, ai_policy, data FROM projects WHERE id = ?').get(id) as any;
+      if (!row) return null;
+      const parsed = row.data ? JSON.parse(row.data) : {};
+      return {
+        id: row.id,
+        name: row.name,
+        key: row.key,
+        description: row.description,
+        version: row.version,
+        author: row.author,
+        membersCount: row.members_count,
+        aiPolicy: row.ai_policy,
+        ...parsed
+      };
     },
     upsert(p: Project & { aiPolicy?: string; ai_policy?: string }): Project {
-      const policy = p.aiPolicy || p.ai_policy || 'OFFLINE_ONLY';
+      const providedPolicy = p.aiPolicy || p.ai_policy || null;
       const stmt = db.prepare(`
         INSERT INTO projects (id, name, key, description, version, author, members_count, ai_policy, data, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, coalesce(?, 'OFFLINE_ONLY'), ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           name = excluded.name,
           key = excluded.key,
@@ -685,11 +710,11 @@ export const dbRepository = {
           version = excluded.version,
           author = excluded.author,
           members_count = excluded.members_count,
-          ai_policy = coalesce(excluded.ai_policy, projects.ai_policy, 'OFFLINE_ONLY'),
+          ai_policy = coalesce(?, projects.ai_policy, 'OFFLINE_ONLY'),
           data = excluded.data,
           updated_at = excluded.updated_at
       `);
-      stmt.run(p.id, p.name, p.key, p.description, p.version, p.author, p.membersCount, policy, JSON.stringify(p), p.createdAt, p.updatedAt || p.createdAt);
+      stmt.run(p.id, p.name, p.key, p.description, p.version, p.author, p.membersCount, providedPolicy, JSON.stringify(p), p.createdAt, p.updatedAt || p.createdAt, providedPolicy);
       return p;
     },
     delete(id: string): boolean {
@@ -1081,12 +1106,12 @@ export const dbRepository = {
         INSERT INTO knowledge_units (id, project_id, unit_type, content, subject, action, condition, evidence_level, status, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
-          content = excluded.content,
-          subject = excluded.subject,
-          action = excluded.action,
-          condition = excluded.condition,
-          evidence_level = excluded.evidence_level,
-          status = excluded.status,
+          content = CASE WHEN knowledge_units.status = 'Approved' THEN knowledge_units.content ELSE excluded.content END,
+          subject = CASE WHEN knowledge_units.status = 'Approved' THEN knowledge_units.subject ELSE excluded.subject END,
+          action = CASE WHEN knowledge_units.status = 'Approved' THEN knowledge_units.action ELSE excluded.action END,
+          condition = CASE WHEN knowledge_units.status = 'Approved' THEN knowledge_units.condition ELSE excluded.condition END,
+          evidence_level = CASE WHEN knowledge_units.status = 'Approved' THEN knowledge_units.evidence_level ELSE excluded.evidence_level END,
+          status = CASE WHEN knowledge_units.status = 'Approved' THEN knowledge_units.status ELSE excluded.status END,
           updated_at = excluded.updated_at
       `).run(unit.id, unit.projectId, unit.unitType, unit.content, unit.subject, unit.action, unit.condition || null, unit.evidenceLevel, unit.status, unit.createdAt, unit.updatedAt);
     },
@@ -1202,30 +1227,79 @@ export const dbRepository = {
   },
 
   requirements: {
-    getAll(): RequirementItem[] {
+    getAll(projectId?: string): RequirementItem[] {
+      if (projectId && projectId !== 'ALL') {
+        const rows = db.prepare('SELECT data FROM requirements WHERE project_id = ? ORDER BY updated_at DESC').all(projectId) as { data: string }[];
+        return rows.map(r => JSON.parse(r.data));
+      }
       const rows = db.prepare('SELECT data FROM requirements ORDER BY updated_at DESC').all() as { data: string }[];
       return rows.map(r => JSON.parse(r.data));
     },
-    getById(id: string): RequirementItem | null {
-      const row = db.prepare('SELECT data FROM requirements WHERE id = ?').get(id) as { data: string } | undefined;
-      return row ? JSON.parse(row.data) : null;
+    getById(id: string): (RequirementItem & { projectId?: string }) | null {
+      const row = db.prepare('SELECT project_id, data FROM requirements WHERE id = ?').get(id) as { project_id?: string; data: string } | undefined;
+      if (!row) return null;
+      const parsed = JSON.parse(row.data);
+      if (row.project_id && !parsed.projectId) {
+        parsed.projectId = row.project_id;
+      }
+      return parsed;
     },
-    upsert(req: RequirementItem): void {
+    upsert(req: RequirementItem & { projectId?: string }): void {
+      const projId = req.projectId || (req.sourceReferences?.[0]?.documentId 
+        ? (db.prepare('SELECT project_id FROM documents WHERE id = ?').get(req.sourceReferences[0].documentId) as any)?.project_id 
+        : null) || 'PRJ-01';
+      const reqWithProj = { ...req, projectId: projId };
       const stmt = db.prepare(`
-        INSERT INTO requirements (id, type, priority, status, data, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO requirements (id, project_id, type, priority, status, data, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
+          project_id = coalesce(excluded.project_id, requirements.project_id),
           type = excluded.type,
           priority = excluded.priority,
           status = excluded.status,
           data = excluded.data,
           updated_at = excluded.updated_at
       `);
-      stmt.run(req.id, req.type, req.priority, req.status, JSON.stringify(req), req.updatedAt);
+      stmt.run(req.id, projId, req.type, req.priority, req.status, JSON.stringify(reqWithProj), req.updatedAt);
     },
     delete(id: string): boolean {
       const result = db.prepare('DELETE FROM requirements WHERE id = ?').run(id);
       return result.changes > 0;
+    }
+  },
+
+  users: {
+    getByUsername(username: string): { id: string; username: string; passwordHash: string; passwordSalt: string; name: string; role: string; createdAt: string } | null {
+      const row = db.prepare(`
+        SELECT id, username, password_hash as passwordHash, password_salt as passwordSalt,
+               name, role, created_at as createdAt
+        FROM users WHERE username = ?
+      `).get(username) as any;
+      return row || null;
+    },
+    getById(id: string): { id: string; username: string; name: string; role: string; createdAt: string } | null {
+      const row = db.prepare(`
+        SELECT id, username, name, role, created_at as createdAt
+        FROM users WHERE id = ?
+      `).get(id) as any;
+      return row || null;
+    }
+  },
+
+  projectMembers: {
+    getRole(projectId: string, userId: string): string | null {
+      const row = db.prepare(`
+        SELECT role FROM project_members WHERE project_id = ? AND user_id = ?
+      `).get(projectId, userId) as { role: string } | undefined;
+      return row?.role || null;
+    },
+    listByProject(projectId: string): Array<{ userId: string; name: string; role: string }> {
+      return db.prepare(`
+        SELECT u.id as userId, u.name, pm.role
+        FROM project_members pm
+        JOIN users u ON u.id = pm.user_id
+        WHERE pm.project_id = ?
+      `).all(projectId) as any;
     }
   },
 

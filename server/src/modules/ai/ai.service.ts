@@ -2,7 +2,7 @@ import { computeSha256 } from '../../common/crypto.js';
 import { RequirementItem, TestCaseItem, DocumentItem } from '../../common/types.js';
 import { db, dbRepository } from '../../database/db.js';
 import { aiConnectionManager } from './ai.connection.manager.js';
-import { defaultDataPolicyService } from './dataPolicyService.js';
+import { defaultDataPolicyService, PolicyViolationError } from './dataPolicyService.js';
 import { 
   GROUNDED_TEST_CASE_GENERATOR_SYSTEM_PROMPT, 
   CHANGE_IMPACT_ANALYSIS_SYSTEM_PROMPT 
@@ -48,29 +48,34 @@ export class AiService {
   async generateGroundedDrafts(payload: GenerateTestCasesPayload): Promise<any> {
     const { requirement, sourceDoc, userPrompt } = payload;
 
-    // Resolve true projectId from DB first for fail-closed policy enforcement (BUG-001, BUG-002)
+    // Resolve true projectId strictly from DB entity for fail-closed policy enforcement (BUG-001, BUG-002, R2-03)
     let projectId: string | undefined;
     if (requirement?.id) {
-      try {
-        const reqRow = db.prepare('SELECT project_id FROM requirements WHERE id = ?').get(requirement.id) as { project_id: string } | undefined;
-        if (reqRow?.project_id) {
-          projectId = reqRow.project_id;
-        }
-      } catch {}
-    }
-    if (!projectId && (requirement?.sourceReferences?.[0]?.documentId || sourceDoc?.id)) {
-      const docId = requirement?.sourceReferences?.[0]?.documentId || sourceDoc?.id;
-      if (docId) {
-        try {
-          const docRow = db.prepare('SELECT project_id FROM documents WHERE id = ?').get(docId) as { project_id: string } | undefined;
-          if (docRow?.project_id) {
-            projectId = docRow.project_id;
-          }
-        } catch {}
+      const reqRow = db.prepare('SELECT project_id, data FROM requirements WHERE id = ?').get(requirement.id) as { project_id?: string; data: string } | undefined;
+      if (reqRow?.project_id) {
+        projectId = reqRow.project_id;
+      } else if (reqRow?.data) {
+        try { projectId = JSON.parse(reqRow.data).projectId; } catch {}
       }
     }
+
+    if (!projectId && sourceDoc?.id) {
+      const docRow = db.prepare('SELECT project_id FROM documents WHERE id = ?').get(sourceDoc.id) as { project_id: string } | undefined;
+      if (docRow?.project_id) {
+        projectId = docRow.project_id;
+      }
+    }
+
     if (!projectId) {
-      projectId = payload.projectId || (requirement as any)?.projectId || sourceDoc?.projectId;
+      throw new PolicyViolationError(
+        requirement?.id || 'UNKNOWN_REQ',
+        'OFFLINE_ONLY',
+        `Không tìm thấy requirement "${requirement?.id}" hoặc tài liệu nguồn trong cơ sở dữ liệu. Từ chối thực thi AI do không xác định được dự án nguồn (R2-03).`
+      );
+    }
+
+    if (!projectId) {
+      throw new PolicyViolationError('UNKNOWN', 'OFFLINE_ONLY', 'Không thể xác định dự án sở hữu tài liệu/yêu cầu. Áp dụng chính sách Fail-Closed.');
     }
 
     // Fail-closed data policy check (BUG-001): If project is OFFLINE_ONLY, strictly avoid external AI calls

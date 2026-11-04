@@ -63,11 +63,17 @@ export class DatabaseMigrator {
 
     for (const migration of sorted) {
       const existing = appliedMap.get(migration.version);
-      const checksum = `sha256:${computeSha256(`${migration.version}|${migration.name}|${migration.up.toString()}`)}`;
+      const normalizedCode = migration.up.toString()
+        .replace(/\/\*[\s\S]*?\*\/|\/\/.*/g, '')
+        .replace(/\s+/g, ' ')
+        .replace(/["']/g, '"')
+        .trim();
+      const rawChecksum = `sha256:${computeSha256(`${migration.version}|${migration.name}|${migration.up.toString()}`)}`;
+      const checksum = `sha256:${computeSha256(`${migration.version}|${migration.name}|${normalizedCode}`)}`;
 
       if (existing) {
-        // BUG-033: Compare migration checksum against recorded hash to detect modified applied migrations
-        if (existing.checksum && existing.checksum !== checksum) {
+        // BUG-033, R2-11: Compare migration checksum against recorded hash with AST/transpilation normalization
+        if (existing.checksum && existing.checksum !== checksum && existing.checksum !== rawChecksum) {
           console.warn(
             `[DatabaseMigrator] WARNING: Migration ${migration.version} (${migration.name}) checksum mismatch!\n` +
             `  Recorded: ${existing.checksum}\n` +
