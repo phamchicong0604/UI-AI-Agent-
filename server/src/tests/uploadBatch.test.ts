@@ -43,6 +43,7 @@ describe('Upload Batches & Duplicate Detection (E2-T2)', () => {
   beforeEach(() => {
     testProjectId = `PRJ-BATCH-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     // Ensure test project exists in db
+    db.prepare("UPDATE users SET must_change_password = 0 WHERE id = 'usr_admin'").run();
     db.prepare(`
       INSERT OR REPLACE INTO projects (id, name, key, description, version, author, members_count, data, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -58,6 +59,7 @@ describe('Upload Batches & Duplicate Detection (E2-T2)', () => {
       new Date().toISOString(),
       new Date().toISOString()
     );
+    db.prepare(`INSERT OR REPLACE INTO project_members (id, project_id, user_id, role, created_at) VALUES (?, ?, 'usr_admin', 'Project Admin', datetime('now'))`).run(`pm_${testProjectId}_admin`, testProjectId);
   });
 
   it('should create and retrieve upload_batches record from database repository', () => {
@@ -236,7 +238,9 @@ describe('Upload Batches & Duplicate Detection (E2-T2)', () => {
     const uploadJson = await uploadRes.json() as any;
     const batchId = uploadJson.data.batchId;
 
-    const queryRes = await fetch(`${baseUrl}/api/v1/documents/batches/${batchId}`);
+    const queryRes = await fetch(`${baseUrl}/api/v1/documents/batches/${batchId}`, {
+      headers: authHeaders
+    });
     expect(queryRes.status).toBe(200);
     const queryJson = await queryRes.json() as any;
     expect(queryJson.success).toBe(true);

@@ -12,10 +12,11 @@ describe('Bug Review Phase 2: Data Integrity (BUG-008, BUG-019 to BUG-023)', () 
   let server: http.Server;
   let baseUrl: string;
 
-  const adminToken = signUserSession({ id: 'U-ADMIN', name: 'Admin', role: 'Project Admin' });
-  const qaToken = signUserSession({ id: 'U-QA', name: 'QA', role: 'QA' });
+  const adminToken = signUserSession({ id: 'usr_admin', username: 'admin', name: 'Admin', role: 'Project Admin' });
+  const qaToken = signUserSession({ id: 'usr_qa', username: 'qa', name: 'QA', role: 'QA' });
 
   beforeAll(async () => {
+    db.prepare("UPDATE users SET must_change_password = 0 WHERE id = 'usr_admin'").run();
     await new Promise<void>((resolve) => {
       server = app.listen(0, '127.0.0.1', () => {
         const addr = server.address() as net.AddressInfo;
