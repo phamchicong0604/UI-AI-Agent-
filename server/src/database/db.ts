@@ -765,8 +765,21 @@ export const dbRepository = {
       return rows.map(r => JSON.parse(r.data));
     },
     getById(id: string): DocumentItem | null {
-      const row = db.prepare('SELECT data FROM documents WHERE id = ?').get(id) as { data: string } | undefined;
-      return row ? JSON.parse(row.data) : null;
+      const row = db.prepare('SELECT id, project_id, category, status, data, updated_at FROM documents WHERE id = ?').get(id) as any;
+      if (!row) return null;
+      try {
+        const parsed = JSON.parse(row.data || '{}');
+        return {
+          ...parsed,
+          id: row.id,
+          projectId: row.project_id || parsed.projectId || 'PRJ-01',
+          category: row.category || parsed.category,
+          status: row.status || parsed.status,
+          updatedAt: row.updated_at || parsed.updatedAt
+        };
+      } catch {
+        return null;
+      }
     },
     upsert(doc: DocumentItem): void {
       const pId = doc.projectId || 'PRJ-01';
@@ -1347,20 +1360,28 @@ export const dbRepository = {
   },
 
   users: {
-    getByUsername(username: string): { id: string; username: string; passwordHash: string; passwordSalt: string; name: string; role: string; createdAt: string } | null {
+    getByUsername(username: string): { id: string; username: string; passwordHash: string; passwordSalt: string; name: string; role: string; mustChangePassword?: number; createdAt: string } | null {
       const row = db.prepare(`
         SELECT id, username, password_hash as passwordHash, password_salt as passwordSalt,
-               name, role, created_at as createdAt
+               name, role, coalesce(must_change_password, 0) as mustChangePassword, created_at as createdAt
         FROM users WHERE username = ?
       `).get(username) as any;
       return row || null;
     },
-    getById(id: string): { id: string; username: string; name: string; role: string; createdAt: string } | null {
+    getById(id: string): { id: string; username: string; name: string; role: string; mustChangePassword?: number; createdAt: string } | null {
       const row = db.prepare(`
-        SELECT id, username, name, role, created_at as createdAt
+        SELECT id, username, name, role, coalesce(must_change_password, 0) as mustChangePassword, created_at as createdAt
         FROM users WHERE id = ?
       `).get(id) as any;
       return row || null;
+    },
+    updatePassword(userId: string, newHash: string, newSalt: string): boolean {
+      const res = db.prepare(`
+        UPDATE users
+        SET password_hash = ?, password_salt = ?, must_change_password = 0
+        WHERE id = ?
+      `).run(newHash, newSalt, userId);
+      return res.changes > 0;
     }
   },
 
