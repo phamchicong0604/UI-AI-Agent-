@@ -24,11 +24,11 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose }) => {
     setError(null);
 
     if (!username.trim()) {
-      setError('Vui lòng nhập tên đăng nhập');
+      setError(t('loginUsernameRequired'));
       return;
     }
     if (!password) {
-      setError('Vui lòng nhập mật khẩu');
+      setError(t('loginPasswordRequired'));
       return;
     }
 
@@ -38,14 +38,14 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose }) => {
       onClose();
       setPassword('');
     } catch (err: any) {
-      setError(err?.message || 'Đăng nhập không thành công. Vui lòng kiểm tra lại thông tin.');
+      setError(err?.message || t('loginFailed'));
     } finally {
       setIsSubmitting(false);
     }
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Đăng nhập tài khoản" maxWidth="md">
+    <Modal isOpen={isOpen} onClose={onClose} title={t('loginModalTitle')} maxWidth="md">
       <form onSubmit={handleSubmit} className="space-y-4">
         {error && (
           <div className="p-3 rounded-lg bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs flex items-start gap-2">
@@ -56,7 +56,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose }) => {
 
         <div>
           <label className="block text-xs font-medium text-slate-300 mb-1">
-            Tên đăng nhập
+            {t('loginUsername')}
           </label>
           <div className="relative">
             <User className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
@@ -64,7 +64,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose }) => {
               type="text"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              placeholder="Nhập tên đăng nhập..."
+              placeholder={t('loginUsernamePlaceholder')}
               className="w-full pl-9 pr-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-indigo-500 transition-colors"
               autoFocus
             />
@@ -73,7 +73,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose }) => {
 
         <div>
           <label className="block text-xs font-medium text-slate-300 mb-1">
-            Mật khẩu
+            {t('loginPassword')}
           </label>
           <div className="relative">
             <Lock className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
@@ -81,7 +81,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose }) => {
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="Nhập mật khẩu..."
+              placeholder={t('loginPasswordPlaceholder')}
               className="w-full pl-9 pr-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-indigo-500 transition-colors"
             />
           </div>
@@ -89,7 +89,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose }) => {
 
         <div>
           <label className="block text-xs font-medium text-slate-300 mb-1">
-            Dự án làm việc
+            {t('loginProjectWorkspace')}
           </label>
           <div className="relative">
             <Briefcase className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
@@ -112,7 +112,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose }) => {
             {t('cancel')}
           </Button>
           <Button type="submit" variant="primary" size="sm" disabled={isSubmitting} icon={<LogIn className="w-4 h-4" />}>
-            {isSubmitting ? 'Đang xác thực...' : 'Đăng nhập'}
+            {isSubmitting ? t('loginSubmitting') : t('loginSubmit')}
           </Button>
         </div>
       </form>

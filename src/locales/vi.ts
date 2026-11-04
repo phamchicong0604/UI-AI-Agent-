@@ -430,5 +430,75 @@ export const vi = {
   knowledgeModalRejectBtn: 'Từ chối',
   knowledgeModalConfirmReject: 'Xác nhận từ chối',
   reviewQueueUpdated: 'Cập nhật',
-  cancel: 'Hủy bỏ'
+  cancel: 'Hủy bỏ',
+
+  // Authentication & Login (BUG-034)
+  loginModalTitle: 'Đăng nhập tài khoản',
+  loginUsernameRequired: 'Vui lòng nhập tên đăng nhập',
+  loginPasswordRequired: 'Vui lòng nhập mật khẩu',
+  loginFailed: 'Đăng nhập không thành công. Vui lòng kiểm tra lại thông tin.',
+  loginUsername: 'Tên đăng nhập',
+  loginUsernamePlaceholder: 'Nhập tên đăng nhập...',
+  loginPassword: 'Mật khẩu',
+  loginPasswordPlaceholder: 'Nhập mật khẩu...',
+  loginProjectWorkspace: 'Dự án làm việc',
+  loginSubmit: 'Đăng nhập',
+  loginSubmitting: 'Đang xác thực...',
+
+  // Header & Navigation (BUG-034)
+  headerActiveModelTitle: 'Đang dùng model: {model} (Nhấp để mở /model switcher)',
+  headerSyncBackendTitle: 'Nhấp để đồng bộ lại với SQLite Backend API (port 5001)',
+  headerLogout: 'Đăng xuất',
+  headerLogin: 'Đăng nhập',
+
+  // Review Queue (BUG-034)
+  reviewQueueErrorDecision: 'Lỗi duyệt đơn vị tri thức',
+  reviewQueueErrorBulk: 'Lỗi khi duyệt hàng loạt',
+  reviewQueueClose: 'Đóng',
+  reviewQueueRefreshTooltip: 'Làm mới hàng đợi',
+  reviewQueueSearchPlaceholder: 'Tìm theo tiêu đề tài liệu...',
+  reviewQueueLoading: 'Đang tải hàng đợi review tri thức...',
+  reviewQueueAllReviewed: 'Tất cả tài liệu dự án {project} đã được duyệt hoàn tất hoặc không có yêu cầu cần phê duyệt.',
+
+  // Knowledge Review Modal (BUG-034)
+  knowledgeModalApproveError: 'Lỗi khi phê duyệt đơn vị tri thức',
+  knowledgeModalRejectReasonMin: 'Bắt buộc nhập lý do từ chối tối thiểu 5 ký tự để phục vụ Audit Trail (AC-E8-4)',
+  knowledgeModalRejectError: 'Lỗi khi từ chối đơn vị tri thức',
+  knowledgeModalEvidenceUnknown: 'Chưa xác định (Unknown)',
+  knowledgeModalNoRawContent: 'Không có nội dung văn bản gốc để hiển thị.',
+  knowledgeModalBulkTooltip: 'Chỉ tự động duyệt {explicit} unit Explicit. {nonExplicit} unit Inferred/Assumed phải duyệt thủ công (BR-AI-01).',
+  knowledgeModalBulkExplicitOnly: 'Duyệt toàn bộ {count} unit Explicit',
+  knowledgeModalRejectDialogTitle: 'Bắt buộc nhập lý do từ chối (Audit Trail)',
+  knowledgeModalRejectDialogDesc: 'Mọi quyết định từ chối Knowledge Unit đều được ghi nhận vào Audit Trail kèm chữ ký số và lý do (AC-E8-4).',
+  knowledgeModalCancel: 'Hủy',
+
+  // Conflict Resolution Modal (BUG-034)
+  conflictResolveError: 'Không thể giải quyết xung đột',
+  conflictProcessError: 'Lỗi xử lý',
+  conflictApprovedRuleFallback: 'Quy tắc đã duyệt',
+  conflictApprovedContentFallback: 'Nội dung quy chuẩn hiện tại trong kho tri thức.',
+  conflictApprovedSourceFallback: 'Tài liệu đã phê duyệt trước đây',
+  conflictIncomingRuleFallback: 'Đề xuất mới',
+  conflictIncomingContentFallback: 'Nội dung đề xuất mới đang chờ kiểm duyệt.',
+  conflictIncomingSourceFallback: 'Tài liệu đang xét duyệt',
+  conflictMergeNotesPlaceholder: 'Ghi chú phân tách điều kiện hợp nhất (ví dụ: áp dụng 15m cho QR Code, 30m cho thanh toán thẻ quốc tế)...',
+  conflictCancel: 'Hủy bỏ',
+  conflictConfirmResolution: 'Xác nhận Phân giải',
+  conflictResolving: 'Đang xử lý...',
+
+  // Change Password Modal (Condition 4)
+  changePasswordModalTitle: 'Đổi mật khẩu tài khoản',
+  changePasswordRequiredNotice: 'Tài khoản của bạn đang sử dụng mật khẩu mặc định hoặc bắt buộc phải đổi mật khẩu lần đầu để tiếp tục sử dụng hệ thống.',
+  changePasswordCurrent: 'Mật khẩu hiện tại',
+  changePasswordCurrentPlaceholder: 'Nhập mật khẩu hiện tại...',
+  changePasswordNew: 'Mật khẩu mới (tối thiểu 8 ký tự)',
+  changePasswordNewPlaceholder: 'Nhập mật khẩu mới...',
+  changePasswordConfirm: 'Xác nhận mật khẩu mới',
+  changePasswordConfirmPlaceholder: 'Nhập lại mật khẩu mới...',
+  changePasswordSubmit: 'Đổi mật khẩu',
+  changePasswordSubmitting: 'Đang cập nhật...',
+  changePasswordMismatch: 'Mật khẩu mới và xác nhận mật khẩu không khớp.',
+  changePasswordTooShort: 'Mật khẩu mới phải có tối thiểu 8 ký tự.',
+  changePasswordSame: 'Mật khẩu mới không được trùng với mật khẩu hiện tại.',
+  changePasswordSuccess: 'Đổi mật khẩu thành công!'
 };

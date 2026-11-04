@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import {
   Project,
   UserRole,
@@ -40,6 +40,7 @@ import {
   authApi
 } from '../common/services/api';
 import { LoginModal } from '../components/auth/LoginModal';
+import { ChangePasswordModal } from '../components/auth/ChangePasswordModal';
 
 export type NavigationTab = 
   | 'dashboard'
@@ -58,9 +59,12 @@ interface AppContextType {
   currentRole: UserRole;
   setCurrentRole: (role: UserRole) => void;
   currentUser: string;
-  authUser: { id: string; username: string; name: string; role: string; projectId?: string } | null;
+  authUser: { id: string; username: string; name: string; role: string; projectId?: string; mustChangePassword?: boolean | number } | null;
+  setAuthUser: React.Dispatch<React.SetStateAction<{ id: string; username: string; name: string; role: string; projectId?: string; mustChangePassword?: boolean | number } | null>>;
   isLoginModalOpen: boolean;
   setIsLoginModalOpen: (open: boolean) => void;
+  isChangePasswordModalOpen: boolean;
+  setIsChangePasswordModalOpen: (open: boolean) => void;
   login: (username: string, password: string, projectId?: string) => Promise<void>;
   logout: () => void;
   switchRole: (role: UserRole) => Promise<void>;
@@ -170,10 +174,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return () => window.removeEventListener('hashchange', onHashChange);
   }, []);
 
-  const [authUser, setAuthUser] = useState<{ id: string; username: string; name: string; role: string; projectId?: string } | null>(null);
+  const [authUser, setAuthUser] = useState<{ id: string; username: string; name: string; role: string; projectId?: string; mustChangePassword?: boolean | number } | null>(null);
   const [currentRole, setCurrentRole] = useState<UserRole>('QA');
   const [currentUser, setCurrentUser] = useState<string>('Khách');
   const [isLoginModalOpen, setIsLoginModalOpen] = useState<boolean>(false);
+  const [isChangePasswordModalOpen, setIsChangePasswordModalOpen] = useState<boolean>(false);
+  const [isOriginalAdmin, setIsOriginalAdmin] = useState<boolean>(() => {
+    return loadFromStorage<boolean>('docqa_is_admin', false);
+  });
+
+  // Prompt password change if required (Condition 4)
+  useEffect(() => {
+    if (authUser && Boolean(authUser.mustChangePassword)) {
+      setIsChangePasswordModalOpen(true);
+    }
+  }, [authUser]);
 
   // Check existing session on mount
   useEffect(() => {
@@ -183,9 +198,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setAuthUser(user);
         setCurrentRole(user.role as UserRole);
         setCurrentUser(user.name || user.username);
+        if (user.role === 'Project Admin') {
+          setIsOriginalAdmin(true);
+          saveToStorage('docqa_is_admin', true);
+        }
       }
     }).catch(() => {});
     return () => { isMounted = false; };
+  }, []);
+
+  // Listen for unauthorized events to trigger immediate logout and login prompt (R4-13)
+  useEffect(() => {
+    const onUnauthorized = () => {
+      logout();
+      setIsLoginModalOpen(true);
+    };
+    window.addEventListener('docqa:unauthorized', onUnauthorized);
+    return () => window.removeEventListener('docqa:unauthorized', onUnauthorized);
   }, []);
 
   const login = async (username: string, password: string, projectId?: string) => {
@@ -193,6 +222,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setAuthUser(res.user);
     setCurrentRole(res.user.role as UserRole);
     setCurrentUser(res.user.name || res.user.username);
+    const isAdm = res.user.role === 'Project Admin';
+    setIsOriginalAdmin(isAdm);
+    saveToStorage('docqa_is_admin', isAdm);
     if (res.user.projectId) {
       const found = projects.find(p => p.id === res.user.projectId);
       if (found) setActiveProject(found);
@@ -200,18 +232,44 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     await syncWithBackend();
   };
 
+  // Race-condition prevention refs (R3-11, R2-09, R5-04)
+  const syncRequestIdRef = useRef<number>(0);
+  const syncAbortControllerRef = useRef<AbortController | null>(null);
+
   const logout = () => {
+    if (syncAbortControllerRef.current) {
+      syncAbortControllerRef.current.abort();
+      syncAbortControllerRef.current = null;
+    }
+    syncRequestIdRef.current++;
     authApi.logout();
     setAuthUser(null);
     setCurrentRole('QA');
     setCurrentUser('Khách');
+    setIsOriginalAdmin(false);
+    saveToStorage('docqa_is_admin', false);
+    // Clear in-memory collections so data from previous user is purged (R4-13)
+    setDocuments([]);
+    setRequirements([]);
+    setEvidences([]);
+    setTestCases([]);
+    setTestRuns([]);
+    setBugs([]);
+    setAuditEvents([]);
+    setQuestions([]);
   };
 
   const switchRole = async (role: UserRole) => {
     try {
+      syncRequestIdRef.current++;
+      if (syncAbortControllerRef.current) {
+        syncAbortControllerRef.current.abort();
+        syncAbortControllerRef.current = null;
+      }
       const res = await authApi.switchAdminRole(role, activeProject.id);
       setAuthUser(res.user);
       setCurrentRole(res.user.role as UserRole);
+      await syncWithBackend();
     } catch (err: any) {
       console.warn('Admin switch role failed:', err);
     }
@@ -231,6 +289,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const found = projects.find(p => p.id === savedActiveId);
     return found || projects[0] || initialProjects[0];
   });
+
+  const selectActiveProject = useCallback((projOrFn: Project | ((prev: Project) => Project)) => {
+    syncRequestIdRef.current++;
+    if (syncAbortControllerRef.current) {
+      syncAbortControllerRef.current.abort();
+      syncAbortControllerRef.current = null;
+    }
+    setActiveProject(projOrFn);
+  }, []);
 
   useEffect(() => {
     saveToStorage('docqa_projects', projects);
@@ -308,25 +375,35 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   useEffect(() => { saveToStorage('docqa_audits', auditEvents); }, [auditEvents]);
 
   /**
-   * Primary Backend Sync Engine: Fetches full dataset from SQLite backend
+   * Primary Backend Sync Engine: Fetches full dataset from SQLite backend with monotonic request gating (R3-11, R5-04)
    */
   const syncWithBackend = useCallback(async () => {
+    if (syncAbortControllerRef.current) {
+      syncAbortControllerRef.current.abort();
+    }
+    const currentRequestId = ++syncRequestIdRef.current;
+    const controller = new AbortController();
+    syncAbortControllerRef.current = controller;
+
     setIsSyncing(true);
     try {
       const isHealthy = await checkBackendHealth();
+      if (syncRequestIdRef.current !== currentRequestId || controller.signal.aborted) return;
       setBackendConnected(isHealthy);
 
       if (isHealthy) {
         const [projectsRes, docsRes, reqsRes, evdRes, tcRes, runsRes, bugsRes, auditRes] = await Promise.all([
-          projectsApi.getAll().catch(() => null),
-          documentsApi.getAll().catch(() => null),
-          requirementsApi.getAll().catch(() => null),
-          evidenceApi.getAll().catch(() => null),
-          testCasesApi.getAll().catch(() => null),
-          testRunsApi.getAll().catch(() => null),
-          bugsApi.getAll().catch(() => null),
-          auditApi.getEvents().catch(() => null)
+          projectsApi.getAll({ signal: controller.signal }).catch(() => null),
+          documentsApi.getAll(undefined, { signal: controller.signal }).catch(() => null),
+          requirementsApi.getAll({ signal: controller.signal }).catch(() => null),
+          evidenceApi.getAll({ signal: controller.signal }).catch(() => null),
+          testCasesApi.getAll({ signal: controller.signal }).catch(() => null),
+          testRunsApi.getAll({ signal: controller.signal }).catch(() => null),
+          bugsApi.getAll({ signal: controller.signal }).catch(() => null),
+          auditApi.getEvents({ signal: controller.signal }).catch(() => null)
         ]);
+
+        if (syncRequestIdRef.current !== currentRequestId || controller.signal.aborted) return;
 
         if (projectsRes && projectsRes.length > 0) {
           setProjects(projectsRes);
@@ -345,12 +422,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         await reloadAiConfig().catch(() => {});
       }
     } catch (err) {
-      console.warn('[DocQA] Backend sync notice: running with active local cache', err);
-      setBackendConnected(false);
+      if (syncRequestIdRef.current === currentRequestId && !controller.signal.aborted) {
+        console.warn('[DocQA] Backend sync notice: running with active local cache', err);
+        setBackendConnected(false);
+      }
     } finally {
-      setIsSyncing(false);
+      if (syncRequestIdRef.current === currentRequestId) {
+        setIsSyncing(false);
+      }
     }
-  }, []);
+  }, [reloadAiConfig]);
 
   const reloadDocuments = useCallback(async (projId?: string) => {
     const targetProject = projId || activeProject?.id;
@@ -799,13 +880,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setCurrentRole,
         currentUser,
         authUser,
+        setAuthUser,
         isLoginModalOpen,
         setIsLoginModalOpen,
+        isChangePasswordModalOpen,
+        setIsChangePasswordModalOpen,
         login,
         logout,
         switchRole,
         activeProject,
-        setActiveProject,
+        setActiveProject: selectActiveProject,
         projects,
         setProjects,
         createProject,
@@ -864,6 +948,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     >
       {children}
       <LoginModal isOpen={isLoginModalOpen} onClose={() => setIsLoginModalOpen(false)} />
+      <ChangePasswordModal
+        isOpen={isChangePasswordModalOpen}
+        onClose={() => setIsChangePasswordModalOpen(false)}
+        isRequired={Boolean(authUser?.mustChangePassword)}
+      />
     </AppContext.Provider>
   );
 };

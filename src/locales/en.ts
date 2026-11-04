@@ -430,5 +430,75 @@ export const en = {
   knowledgeModalRejectBtn: 'Reject',
   knowledgeModalConfirmReject: 'Confirm Rejection',
   reviewQueueUpdated: 'Updated',
-  cancel: 'Cancel'
+  cancel: 'Cancel',
+
+  // Authentication & Login (BUG-034)
+  loginModalTitle: 'Log in to account',
+  loginUsernameRequired: 'Please enter your username',
+  loginPasswordRequired: 'Please enter your password',
+  loginFailed: 'Authentication failed. Please check your credentials.',
+  loginUsername: 'Username',
+  loginUsernamePlaceholder: 'Enter username...',
+  loginPassword: 'Password',
+  loginPasswordPlaceholder: 'Enter password...',
+  loginProjectWorkspace: 'Active Project Workspace',
+  loginSubmit: 'Log In',
+  loginSubmitting: 'Authenticating...',
+
+  // Header & Navigation (BUG-034)
+  headerActiveModelTitle: 'Active model: {model} (Click to open /model switcher)',
+  headerSyncBackendTitle: 'Click to re-sync with SQLite Backend API (port 5001)',
+  headerLogout: 'Log out',
+  headerLogin: 'Log in',
+
+  // Review Queue (BUG-034)
+  reviewQueueErrorDecision: 'Error recording knowledge unit decision',
+  reviewQueueErrorBulk: 'Error during bulk approval',
+  reviewQueueClose: 'Close',
+  reviewQueueRefreshTooltip: 'Refresh review queue',
+  reviewQueueSearchPlaceholder: 'Search by document title...',
+  reviewQueueLoading: 'Loading knowledge review queue...',
+  reviewQueueAllReviewed: 'All documents for project {project} are reviewed or no approvals are pending.',
+
+  // Knowledge Review Modal (BUG-034)
+  knowledgeModalApproveError: 'Error approving knowledge unit',
+  knowledgeModalRejectReasonMin: 'Mandatory rejection reason of at least 5 characters required for Audit Trail (AC-E8-4)',
+  knowledgeModalRejectError: 'Error rejecting knowledge unit',
+  knowledgeModalEvidenceUnknown: 'Unknown',
+  knowledgeModalNoRawContent: 'No original raw content available to display.',
+  knowledgeModalBulkTooltip: 'Only auto-approves {explicit} Explicit units. {nonExplicit} Inferred/Assumed units require manual review (BR-AI-01).',
+  knowledgeModalBulkExplicitOnly: 'Approve all {count} Explicit units',
+  knowledgeModalRejectDialogTitle: 'Mandatory Rejection Reason (Audit Trail)',
+  knowledgeModalRejectDialogDesc: 'All rejected Knowledge Units are recorded in the Audit Trail with digital signatures and justification (AC-E8-4).',
+  knowledgeModalCancel: 'Cancel',
+
+  // Conflict Resolution Modal (BUG-034)
+  conflictResolveError: 'Unable to resolve conflict',
+  conflictProcessError: 'Processing error',
+  conflictApprovedRuleFallback: 'Approved rule',
+  conflictApprovedContentFallback: 'Current baseline rule content in knowledge store.',
+  conflictApprovedSourceFallback: 'Previously approved document',
+  conflictIncomingRuleFallback: 'New proposal',
+  conflictIncomingContentFallback: 'New proposal content pending verification.',
+  conflictIncomingSourceFallback: 'Document under review',
+  conflictMergeNotesPlaceholder: 'Clarification notes for conditional specification merge...',
+  conflictCancel: 'Cancel',
+  conflictConfirmResolution: 'Confirm Resolution',
+  conflictResolving: 'Resolving...',
+
+  // Change Password Modal (Condition 4)
+  changePasswordModalTitle: 'Change Account Password',
+  changePasswordRequiredNotice: 'Your account is using a default password or requires a first-time password change before continuing.',
+  changePasswordCurrent: 'Current Password',
+  changePasswordCurrentPlaceholder: 'Enter current password...',
+  changePasswordNew: 'New Password (min 8 characters)',
+  changePasswordNewPlaceholder: 'Enter new password...',
+  changePasswordConfirm: 'Confirm New Password',
+  changePasswordConfirmPlaceholder: 'Re-enter new password...',
+  changePasswordSubmit: 'Update Password',
+  changePasswordSubmitting: 'Updating...',
+  changePasswordMismatch: 'New password and confirmation do not match.',
+  changePasswordTooShort: 'New password must be at least 8 characters.',
+  changePasswordSame: 'New password cannot be identical to current password.',
+  changePasswordSuccess: 'Password changed successfully!'
 };

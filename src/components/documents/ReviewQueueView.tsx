@@ -131,7 +131,7 @@ export const ReviewQueueView: React.FC<ReviewQueueViewProps> = ({
       });
       if (!res.ok) {
         const errorData = await res.json().catch(() => ({}));
-        throw new Error(errorData.error || errorData.message || `Lỗi duyệt đơn vị tri thức (HTTP ${res.status})`);
+        throw new Error(errorData.error || errorData.message || `${t('reviewQueueErrorDecision')} (HTTP ${res.status})`);
       }
       // Update local state in reviewingItem using functional updater to avoid stale state in bulk loops (BUG-025)
       setReviewingItem(prev => {
@@ -146,7 +146,7 @@ export const ReviewQueueView: React.FC<ReviewQueueViewProps> = ({
       await fetchQueue();
     } catch (err: any) {
       console.error('Error recording unit decision:', err);
-      setActionError(err.message || 'Lỗi xử lý duyệt đơn vị tri thức');
+      setActionError(err.message || t('reviewQueueErrorDecision'));
       throw err;
     }
   };
@@ -160,7 +160,7 @@ export const ReviewQueueView: React.FC<ReviewQueueViewProps> = ({
         await handleUnitDecision(u.id, 'Approve');
       }
     } catch (err: any) {
-      setActionError(`Lỗi khi duyệt hàng loạt: ${err.message}`);
+      setActionError(`${t('reviewQueueErrorBulk')}: ${err.message}`);
     }
     await fetchQueue();
   };
@@ -194,7 +194,7 @@ export const ReviewQueueView: React.FC<ReviewQueueViewProps> = ({
             onClick={() => setActionError(null)}
             className="text-rose-400 hover:text-rose-200 text-xs px-2 py-0.5"
           >
-            Đóng
+            {t('reviewQueueClose')}
           </button>
         </div>
       )}
@@ -271,7 +271,7 @@ export const ReviewQueueView: React.FC<ReviewQueueViewProps> = ({
           <button
             onClick={() => fetchQueue()}
             className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition-colors"
-            title="Làm mới hàng đợi"
+            title={t('reviewQueueRefreshTooltip')}
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
           </button>
@@ -282,7 +282,7 @@ export const ReviewQueueView: React.FC<ReviewQueueViewProps> = ({
           <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
           <input
             type="text"
-            placeholder="Tìm theo tiêu đề tài liệu..."
+            placeholder={t('reviewQueueSearchPlaceholder')}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full pl-9 pr-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
@@ -295,14 +295,14 @@ export const ReviewQueueView: React.FC<ReviewQueueViewProps> = ({
         {loading ? (
           <div className="p-12 text-center text-slate-500 text-xs flex items-center justify-center gap-2">
             <RefreshCw className="w-4 h-4 animate-spin text-indigo-400" />
-            <span>Đang tải hàng đợi review tri thức...</span>
+            <span>{t('reviewQueueLoading')}</span>
           </div>
         ) : filteredItems.length === 0 ? (
           <div className="p-12 text-center rounded-2xl bg-slate-900 border border-slate-800">
             <CheckCircle2 className="w-10 h-10 text-emerald-400 mx-auto mb-3" />
             <h4 className="text-sm font-bold text-white">{t('reviewQueueEmpty')}</h4>
             <p className="text-xs text-slate-400 mt-1">
-              Tất cả tài liệu dự án {projectName} đã được duyệt hoàn tất hoặc không có yêu cầu cần phê duyệt.
+              {t('reviewQueueAllReviewed').replace('{project}', projectName)}
             </p>
           </div>
         ) : (

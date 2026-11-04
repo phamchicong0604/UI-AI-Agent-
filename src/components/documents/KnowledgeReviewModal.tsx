@@ -103,7 +103,7 @@ export const KnowledgeReviewModal: React.FC<KnowledgeReviewModalProps> = ({
     try {
       await onUnitDecision(unitId, 'Approve');
     } catch (err: any) {
-      setModalError(err.message || 'Lỗi khi phê duyệt đơn vị tri thức');
+      setModalError(err.message || t('knowledgeModalApproveError'));
     } finally {
       setIsProcessing(false);
     }
@@ -111,7 +111,7 @@ export const KnowledgeReviewModal: React.FC<KnowledgeReviewModalProps> = ({
 
   const handleConfirmReject = async () => {
     if (!rejectReason.trim() || rejectReason.trim().length < 5) {
-      setRejectError('Bắt buộc nhập lý do từ chối tối thiểu 5 ký tự để phục vụ Audit Trail (AC-E8-4)');
+      setRejectError(t('knowledgeModalRejectReasonMin'));
       return;
     }
     if (!rejectModalUnitId) return;
@@ -123,7 +123,7 @@ export const KnowledgeReviewModal: React.FC<KnowledgeReviewModalProps> = ({
       setRejectReason('');
       setRejectError('');
     } catch (err: any) {
-      setRejectError(err.message || 'Lỗi khi từ chối đơn vị tri thức');
+      setRejectError(err.message || t('knowledgeModalRejectError'));
     } finally {
       setIsProcessing(false);
     }
@@ -158,7 +158,7 @@ export const KnowledgeReviewModal: React.FC<KnowledgeReviewModalProps> = ({
       default:
         return (
           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-800 text-slate-400 border border-slate-700">
-            <Info className="w-3 h-3" /> Chưa xác định (Unknown)
+            <Info className="w-3 h-3" /> {t('knowledgeModalEvidenceUnknown')}
           </span>
         );
     }
@@ -169,7 +169,7 @@ export const KnowledgeReviewModal: React.FC<KnowledgeReviewModalProps> = ({
     if (!documentContent) {
       return (
         <div className="text-slate-500 italic p-6 text-center text-xs">
-          Không có nội dung văn bản gốc để hiển thị.
+          {t('knowledgeModalNoRawContent')}
         </div>
       );
     }
@@ -277,8 +277,10 @@ export const KnowledgeReviewModal: React.FC<KnowledgeReviewModalProps> = ({
               icon={<Check className="w-3.5 h-3.5 text-emerald-400" />}
               title={
                 nonExplicitCount > 0
-                  ? `Chỉ tự động duyệt ${explicitCount} unit Explicit. ${nonExplicitCount} unit Inferred/Assumed phải duyệt thủ công (BR-AI-01).`
-                  : `Duyệt toàn bộ ${explicitCount} unit Explicit`
+                  ? t('knowledgeModalBulkTooltip')
+                      .replace('{explicit}', String(explicitCount))
+                      .replace('{nonExplicit}', String(nonExplicitCount))
+                  : t('knowledgeModalBulkExplicitOnly').replace('{count}', String(explicitCount))
               }
             >
               Approve {explicitCount} Explicit
@@ -469,10 +471,10 @@ export const KnowledgeReviewModal: React.FC<KnowledgeReviewModalProps> = ({
           <div className="w-full max-w-md p-6 rounded-2xl bg-slate-900 border border-rose-500/40 shadow-2xl">
             <div className="flex items-center gap-2.5 text-rose-400 mb-3 font-bold text-sm">
               <XCircle className="w-5 h-5" />
-              <span>Bắt buộc nhập lý do từ chối (Audit Trail)</span>
+              <span>{t('knowledgeModalRejectDialogTitle')}</span>
             </div>
             <p className="text-xs text-slate-400 mb-3">
-              Mọi quyết định từ chối Knowledge Unit đều được ghi nhận vào Audit Trail kèm chữ ký số và lý do (AC-E8-4).
+              {t('knowledgeModalRejectDialogDesc')}
             </p>
             <textarea
               value={rejectReason}
@@ -493,7 +495,7 @@ export const KnowledgeReviewModal: React.FC<KnowledgeReviewModalProps> = ({
                   setRejectError('');
                 }}
               >
-                Hủy
+                {t('knowledgeModalCancel')}
               </Button>
               <Button
                 variant="danger"

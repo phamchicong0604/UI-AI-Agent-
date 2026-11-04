@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useApp } from '../../context/AppContext';
 import { useI18n } from '../../common/i18n/I18nContext';
 import {
@@ -8,25 +8,29 @@ import {
 } from 'lucide-react';
 import { Button, Badge, Card } from '../../common/components';
 import { downloadCsv } from '../../common/utils/export';
+import { RequirementItem, DocumentItem, TestCaseItem, TestRunItem, BugItem, EvidenceItem } from '../../types';
 
-export const TraceabilityView: React.FC = () => {
-  const {
-    documents,
-    requirements,
-    testCases,
-    testRuns,
-    bugs,
-    evidences,
-    setSelectedTestCaseId,
-    setActiveTab
-  } = useApp();
+export interface TraceabilityRow {
+  requirement: RequirementItem;
+  document: DocumentItem | undefined;
+  testCases: TestCaseItem[];
+  executions: any[];
+  evidences: EvidenceItem[];
+  bugs: BugItem[];
+  hasGap: boolean;
+  hasFailures: boolean;
+  hasBugs: boolean;
+}
 
-  const { t } = useI18n();
-
-  const [filterMode, setFilterMode] = useState<'ALL' | 'GAPS_ONLY' | 'FAILURES_ONLY' | 'WITH_BUGS'>('ALL');
-
-  // Compute coverage data
-  const matrixRows = requirements.map(req => {
+export function buildTraceabilityRows(
+  requirements: RequirementItem[],
+  documents: DocumentItem[],
+  testCases: TestCaseItem[],
+  testRuns: TestRunItem[],
+  evidences: EvidenceItem[],
+  bugs: BugItem[]
+): TraceabilityRow[] {
+  return requirements.map(req => {
     const linkedDoc = documents.find(d => d.id === req.sourceReferences[0]?.documentId);
     const linkedTests = testCases.filter(t => t.requirementId === req.id);
     
@@ -66,6 +70,29 @@ export const TraceabilityView: React.FC = () => {
       hasBugs
     };
   });
+}
+
+export const TraceabilityView: React.FC = () => {
+  const {
+    documents,
+    requirements,
+    testCases,
+    testRuns,
+    bugs,
+    evidences,
+    setSelectedTestCaseId,
+    setActiveTab
+  } = useApp();
+
+  const { t } = useI18n();
+
+  const [filterMode, setFilterMode] = useState<'ALL' | 'GAPS_ONLY' | 'FAILURES_ONLY' | 'WITH_BUGS'>('ALL');
+
+  // Compute coverage data via canonical exported engine
+  const matrixRows = useMemo(() => 
+    buildTraceabilityRows(requirements, documents, testCases, testRuns, evidences, bugs),
+    [requirements, documents, testCases, testRuns, evidences, bugs]
+  );
 
   const filteredRows = matrixRows.filter(row => {
     if (filterMode === 'GAPS_ONLY') return row.hasGap;
