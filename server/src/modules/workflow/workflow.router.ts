@@ -2,23 +2,36 @@ import { Router, Request, Response } from 'express';
 import { sendSuccess, sendError } from '../../common/response.js';
 import { dbRepository } from '../../database/db.js';
 import { defaultWorkflowEngine } from './workflowEngine.js';
-import { authenticateUser, requireRole } from '../../common/auth.js';
+import { defaultJobQueue } from './jobQueue.js';
+import { authenticateUser, requireRole, requireAuth } from '../../common/auth.js';
 
 export const workflowRouter = Router();
 
 /**
  * GET /api/v1/jobs/:id or /api/v1/workflow/jobs/:id
- * Retrieve background job status and results (NEW-13)
+ * Retrieve background job status and results with authentication (NEW-13)
  */
-workflowRouter.get(['/jobs/:id', '/workflow/jobs/:id'], (req: Request, res: Response) => {
-  const job = dbRepository.jobs.getById(req.params.id);
-  if (!job) return sendError(res, 'Job not found', 404);
-  sendSuccess(res, {
-    ...job,
-    payload: job.payload ? JSON.parse(job.payload) : null,
-    result: job.result ? JSON.parse(job.result) : null
-  });
-});
+workflowRouter.get(
+  ['/jobs/:id', '/workflow/jobs/:id'],
+  authenticateUser,
+  requireAuth,
+  (req: Request, res: Response) => {
+    const job = dbRepository.jobs.getById(req.params.id);
+    if (!job) return sendError(res, 'Job not found', 404);
+
+    const parsedPayload = job.payload ? JSON.parse(job.payload) : null;
+    if (parsedPayload && parsedPayload.documentText) {
+      delete parsedPayload.documentText;
+    }
+    const parsedResult = job.result ? JSON.parse(job.result) : null;
+
+    sendSuccess(res, {
+      ...job,
+      payload: parsedPayload,
+      result: parsedResult
+    });
+  }
+);
 
 /**
  * POST /api/v1/jobs/:id/cancel or /api/v1/workflow/jobs/:id/cancel
@@ -30,7 +43,7 @@ workflowRouter.post(
   requireRole(['QA', 'Reviewer / Approver', 'Project Admin', 'PM / Project Lead']),
   (req: Request, res: Response) => {
     const reason = (req.body.reason as string) || `Cancelled by ${req.user?.name || req.user?.role || 'user'}`;
-    const success = dbRepository.jobs.cancel(req.params.id, reason);
+    const success = defaultJobQueue.cancelJob(req.params.id, reason);
     if (!success) {
       return sendError(res, 'Job could not be cancelled (either not found or already completed/failed)', 400);
     }
@@ -104,14 +117,20 @@ workflowRouter.post(
  * PATCH /api/v1/workflow/documents/:id/category
  * Reclassify document category with stage isolation (preserves Stage 2 Understanding)
  */
-workflowRouter.patch(['/workflow/documents/:id/category', '/documents/:id/category'], async (req: Request, res: Response) => {
-  const { category, actor } = req.body;
-  if (!category) return sendError(res, 'category là bắt buộc', 400);
+workflowRouter.patch(
+  ['/workflow/documents/:id/category', '/documents/:id/category'],
+  authenticateUser,
+  requireRole(['Project Admin', 'Reviewer / Approver', 'PM / Project Lead', 'BA']),
+  async (req: Request, res: Response) => {
+    const { category, actor } = req.body;
+    if (!category) return sendError(res, 'category là bắt buộc', 400);
 
-  try {
-    await defaultWorkflowEngine.updateDocumentCategory(req.params.id, category, actor || 'Reviewer');
-    sendSuccess(res, { id: req.params.id, category }, 'Cập nhật phân loại tài liệu thành công (bảo toàn tri thức Understanding)');
-  } catch (err: any) {
-    sendError(res, err.message, 400);
+    const userActor = req.user?.name || actor || 'Reviewer';
+    try {
+      await defaultWorkflowEngine.updateDocumentCategory(req.params.id, category, userActor);
+      sendSuccess(res, { id: req.params.id, category }, 'Cập nhật phân loại tài liệu thành công (bảo toàn tri thức Understanding)');
+    } catch (err: any) {
+      sendError(res, err.message, 400);
+    }
   }
-});
+);

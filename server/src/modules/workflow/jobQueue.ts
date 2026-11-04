@@ -12,6 +12,7 @@ export interface EnqueueOptions {
 export class SqliteJobQueue {
   private workerId: string;
   private handlers = new Map<string, JobHandler>();
+  private activeAbortControllers = new Map<string, AbortController>();
   private timer: NodeJS.Timeout | null = null;
   private isRunning = false;
   private isProcessing = false;
@@ -75,11 +76,24 @@ export class SqliteJobQueue {
     this.timer = setInterval(async () => {
       if (!this.isRunning || this.isProcessing) return;
       try {
+        // Periodically recover stale abandoned locks from crashed workers (BUG-013)
+        dbRepository.jobs.resetStaleLocks(60);
         await this.processNext();
       } catch (err: any) {
         console.error('[JobQueue] Error during poll cycle:', err.message);
       }
     }, pollIntervalMs);
+  }
+
+  /**
+   * Cancel an in-flight or queued job immediately (BUG-012)
+   */
+  public cancelJob(jobId: string, reason?: string): boolean {
+    const controller = this.activeAbortControllers.get(jobId);
+    if (controller) {
+      controller.abort(new Error(reason || 'Job cancelled by user request'));
+    }
+    return dbRepository.jobs.cancel(jobId, reason);
   }
 
   /**
@@ -134,6 +148,7 @@ export class SqliteJobQueue {
     }
 
     const abortController = new AbortController();
+    this.activeAbortControllers.set(job.id, abortController);
     let timeoutHandle: NodeJS.Timeout | null = null;
     let heartbeatHandle: NodeJS.Timeout | null = null;
 
@@ -181,6 +196,8 @@ export class SqliteJobQueue {
       const errorMessage = err?.message || String(err);
       // Fail with exponential backoff: attempts 1 -> 5s, 2 -> 10s, 3 -> 20s
       dbRepository.jobs.failWithRetry(job.id, errorMessage, undefined, this.workerId);
+    } finally {
+      this.activeAbortControllers.delete(job.id);
     }
   }
 }

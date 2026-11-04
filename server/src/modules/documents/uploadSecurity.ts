@@ -197,7 +197,7 @@ export function validateZipArchive(buffer: Buffer): SecurityCheckResult {
       };
     }
 
-    // 3. Compression ratio check (Zip Bomb Protection)
+    // 3. Compression ratio check (Zip Bomb Protection - BUG-009)
     const uncompressedSize = entry.header.size;
     const compressedSize = entry.header.compressedSize;
 
@@ -211,13 +211,22 @@ export function validateZipArchive(buffer: Buffer): SecurityCheckResult {
 
     if (compressedSize > 0) {
       const ratio = uncompressedSize / compressedSize;
-      if (ratio > UPLOAD_LIMITS.MAX_ZIP_COMPRESSION_RATIO && uncompressedSize > 1024 * 1024) {
+      if (ratio > UPLOAD_LIMITS.MAX_ZIP_COMPRESSION_RATIO && uncompressedSize > 64 * 1024) {
         return {
           isValid: false,
           error: `Phát hiện rủi ro tấn công Zip Bomb trong tệp "${entryName}" (tỷ lệ nén bất thường: ${ratio.toFixed(0)}:1).`,
           statusCode: 400
         };
       }
+    }
+
+    // Guard against spoofed header where compressedSize > 0 but uncompressed size declared as 0 or negative
+    if (uncompressedSize < 0 || compressedSize < 0) {
+      return {
+        isValid: false,
+        error: `Tệp con "${entryName}" chứa thông số header kích thước không hợp lệ.`,
+        statusCode: 400
+      };
     }
 
     totalUncompressed += uncompressedSize;

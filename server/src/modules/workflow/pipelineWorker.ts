@@ -13,7 +13,7 @@ export interface PipelineRunJobPayload {
 }
 
 export function registerPipelineHandlers(): void {
-  defaultJobQueue.registerHandler<PipelineRunJobPayload>('PIPELINE_RUN', async (payload, _job, signal) => {
+  defaultJobQueue.registerHandler<PipelineRunJobPayload>('PIPELINE_RUN', async (payload, job, signal) => {
     const { documentId, documentVersionId, projectId, documentTitle } = payload;
     console.log(`[PipelineWorker] Processing PIPELINE_RUN for document ${documentId} (version: ${documentVersionId})`);
 
@@ -36,124 +36,159 @@ export function registerPipelineHandlers(): void {
     // Load documentText from DB version row to avoid duplicating full text in jobs table (NEW-12)
     const documentText = payload.documentText || versionRow?.extracted_content || '';
 
-    // 1. Transition UPLOADED -> FILE_PROCESSING (NEW-07: Do not swallow transition failures)
-    let status = getLatestStatus();
-    if (status === 'UPLOADED') {
-      await defaultWorkflowEngine.transition({
-        documentId,
-        versionNo,
-        fromState: 'UPLOADED',
-        toState: 'FILE_PROCESSING',
-        actor: 'System Worker',
-        role: 'System Worker',
-        reason: 'Bắt đầu xử lý giải mã tệp tài liệu'
-      });
+    const isTerminated = () => {
+      const s = getLatestStatus();
+      return s === 'SUPERSEDED' || s === 'CANCELLED';
+    };
+
+    if (isTerminated()) {
+      console.log(`[PipelineWorker] Version ${documentVersionId} is already ${getLatestStatus()}. Aborting pipeline execution.`);
+      return { documentId, finalState: getLatestStatus(), skipped: true };
     }
 
-    if (signal?.aborted) throw new Error('Pipeline job cancelled during FILE_PROCESSING');
-
-    // 2. Transition FILE_PROCESSING -> AI_ANALYSIS
-    status = getLatestStatus();
-    if (status === 'FILE_PROCESSING') {
-      await defaultWorkflowEngine.transition({
-        documentId,
-        versionNo,
-        fromState: 'FILE_PROCESSING',
-        toState: 'AI_ANALYSIS',
-        actor: 'System Worker',
-        role: 'System Worker',
-        reason: 'Khởi động phân tích Stage 2 AI (Understanding, Extraction, Classification)'
-      });
-    }
-
-    if (signal?.aborted) throw new Error('Pipeline job cancelled during AI_ANALYSIS');
-
-    // 3. Execute Stage 2 combined runner
-    const stage2Result = await defaultStage2Runner.execute({
-      projectId,
-      documentVersionId,
-      documentTitle,
-      documentText
-    });
-
-    if (signal?.aborted) throw new Error('Pipeline job cancelled after Stage 2 analysis');
-
-    // 4. Save extracted knowledge units and anchor sources with deterministic idempotency keys (NEW-04)
-    const extractedUnits = stage2Result.output.extraction?.extracted_units || [];
-    db.transaction(() => {
-      for (const unit of extractedUnits) {
-        const unitSignature = `${documentVersionId}:${unit.subject}:${unit.action}:${unit.condition || ''}:${unit.unit_type}`;
-        const unitHash = crypto.createHash('sha256').update(unitSignature).digest('hex').slice(0, 12);
-        const unitId = `KU-${documentVersionId}-${unitHash}`;
-        const now = new Date().toISOString().replace('T', ' ').slice(0, 16);
-
-        dbRepository.knowledgeUnits.create({
-          id: unitId,
-          projectId,
-          unitType: unit.unit_type,
-          content: unit.source_anchor?.exact_quote || unit.action,
-          subject: unit.subject,
-          action: unit.action,
-          condition: unit.condition || null,
-          evidenceLevel: unit.evidence_level,
-          status: 'Draft',
-          createdAt: now,
-          updatedAt: now
+    try {
+      // 1. Transition UPLOADED -> FILE_PROCESSING (NEW-07: Do not swallow transition failures)
+      let status = getLatestStatus();
+      if (status === 'UPLOADED') {
+        await defaultWorkflowEngine.transition({
+          documentId,
+          versionNo,
+          fromState: 'UPLOADED',
+          toState: 'FILE_PROCESSING',
+          actor: 'System Worker',
+          role: 'System Worker',
+          reason: 'Bắt đầu xử lý giải mã tệp tài liệu'
         });
+      }
 
-        if (unit.source_anchor) {
-          const srcId = `SRC-${unitId}`;
-          dbRepository.knowledgeSources.create({
-            id: srcId,
-            unitId,
-            documentVersionId,
-            headingPath: JSON.stringify(unit.source_anchor.heading_path || ['Chung']),
-            charOffsetStart: unit.source_anchor.char_offset_start || 0,
-            charOffsetEnd: unit.source_anchor.char_offset_end || 0,
-            pageNumber: 1,
-            exactQuote: unit.source_anchor.exact_quote || '',
-            createdAt: now
+      if (signal?.aborted) throw new Error('Pipeline job cancelled during FILE_PROCESSING');
+      if (isTerminated()) return { documentId, finalState: getLatestStatus(), skipped: true };
+
+      // 2. Transition FILE_PROCESSING -> AI_ANALYSIS
+      status = getLatestStatus();
+      if (status === 'FILE_PROCESSING') {
+        await defaultWorkflowEngine.transition({
+          documentId,
+          versionNo,
+          fromState: 'FILE_PROCESSING',
+          toState: 'AI_ANALYSIS',
+          actor: 'System Worker',
+          role: 'System Worker',
+          reason: 'Khởi động phân tích Stage 2 AI (Understanding, Extraction, Classification)'
+        });
+      }
+
+      if (signal?.aborted) throw new Error('Pipeline job cancelled during AI_ANALYSIS');
+      if (isTerminated()) return { documentId, finalState: getLatestStatus(), skipped: true };
+
+      // 3. Execute Stage 2 combined runner
+      const stage2Result = await defaultStage2Runner.execute({
+        projectId,
+        documentVersionId,
+        documentTitle,
+        documentText,
+        signal
+      });
+
+      if (signal?.aborted) throw new Error('Pipeline job cancelled after Stage 2 analysis');
+      if (isTerminated()) return { documentId, finalState: getLatestStatus(), skipped: true };
+
+      // 4. Save extracted knowledge units and anchor sources with deterministic idempotency keys (NEW-04)
+      const extractedUnits = stage2Result.output.extraction?.extracted_units || [];
+      db.transaction(() => {
+        for (const unit of extractedUnits) {
+          const unitSignature = `${documentVersionId}:${unit.subject}:${unit.action}:${unit.condition || ''}:${unit.unit_type}`;
+          const unitHash = crypto.createHash('sha256').update(unitSignature).digest('hex').slice(0, 12);
+          const unitId = `KU-${documentVersionId}-${unitHash}`;
+          const now = new Date().toISOString().replace('T', ' ').slice(0, 16);
+
+          dbRepository.knowledgeUnits.create({
+            id: unitId,
+            projectId,
+            unitType: unit.unit_type,
+            content: unit.source_anchor?.exact_quote || unit.action,
+            subject: unit.subject,
+            action: unit.action,
+            condition: unit.condition || null,
+            evidenceLevel: unit.evidence_level,
+            status: 'Draft',
+            createdAt: now,
+            updatedAt: now
           });
+
+          if (unit.source_anchor) {
+            const srcId = `SRC-${unitId}`;
+            dbRepository.knowledgeSources.create({
+              id: srcId,
+              unitId,
+              documentVersionId,
+              headingPath: JSON.stringify(unit.source_anchor.heading_path || ['Chung']),
+              charOffsetStart: unit.source_anchor.char_offset_start || 0,
+              charOffsetEnd: unit.source_anchor.char_offset_end || 0,
+              pageNumber: 1,
+              exactQuote: unit.source_anchor.exact_quote || '',
+              createdAt: now
+            });
+          }
+        }
+      })();
+
+      if (isTerminated()) return { documentId, finalState: getLatestStatus(), skipped: true };
+
+      // 5. Transition AI_ANALYSIS -> VALIDATION
+      status = getLatestStatus();
+      if (status === 'AI_ANALYSIS') {
+        await defaultWorkflowEngine.transition({
+          documentId,
+          versionNo,
+          fromState: 'AI_ANALYSIS',
+          toState: 'VALIDATION',
+          actor: 'System Worker',
+          role: 'System Worker',
+          reason: 'Hoàn tất trích xuất, chuyển sang thẩm định ngữ nghĩa'
+        });
+      }
+
+      if (signal?.aborted) throw new Error('Pipeline job cancelled during VALIDATION');
+      if (isTerminated()) return { documentId, finalState: getLatestStatus(), skipped: true };
+
+      // 6. Transition VALIDATION -> REVIEW_REQUIRED
+      status = getLatestStatus();
+      if (status === 'VALIDATION') {
+        await defaultWorkflowEngine.transition({
+          documentId,
+          versionNo,
+          fromState: 'VALIDATION',
+          toState: 'REVIEW_REQUIRED',
+          actor: 'System Worker',
+          role: 'System Worker',
+          reason: 'Sẵn sàng đưa vào hàng đợi phê duyệt Human Review'
+        });
+      }
+
+      return {
+        documentId,
+        extractedUnitsCount: extractedUnits.length,
+        category: stage2Result.output.classification?.recommended_category,
+        finalState: 'REVIEW_REQUIRED'
+      };
+    } catch (err: any) {
+      if (job.attempts + 1 >= job.maxAttempts) {
+        const curStatus = getLatestStatus();
+        if (['FILE_PROCESSING', 'AI_ANALYSIS', 'VALIDATION'].includes(curStatus)) {
+          await defaultWorkflowEngine.transition({
+            documentId,
+            versionNo,
+            fromState: curStatus as any,
+            toState: 'FAILED',
+            actor: 'System Worker',
+            role: 'System Worker',
+            reason: `Pipeline thất bại sau ${job.maxAttempts} lần thử: ${err.message}`
+          }).catch(() => {});
         }
       }
-    })();
-
-    // 5. Transition AI_ANALYSIS -> VALIDATION
-    status = getLatestStatus();
-    if (status === 'AI_ANALYSIS') {
-      await defaultWorkflowEngine.transition({
-        documentId,
-        versionNo,
-        fromState: 'AI_ANALYSIS',
-        toState: 'VALIDATION',
-        actor: 'System Worker',
-        role: 'System Worker',
-        reason: 'Hoàn tất trích xuất, chuyển sang thẩm định ngữ nghĩa'
-      });
+      throw err;
     }
-
-    if (signal?.aborted) throw new Error('Pipeline job cancelled during VALIDATION');
-
-    // 6. Transition VALIDATION -> REVIEW_REQUIRED
-    status = getLatestStatus();
-    if (status === 'VALIDATION') {
-      await defaultWorkflowEngine.transition({
-        documentId,
-        versionNo,
-        fromState: 'VALIDATION',
-        toState: 'REVIEW_REQUIRED',
-        actor: 'System Worker',
-        role: 'System Worker',
-        reason: 'Sẵn sàng đưa vào hàng đợi phê duyệt Human Review'
-      });
-    }
-
-    return {
-      documentId,
-      extractedUnitsCount: extractedUnits.length,
-      category: stage2Result.output.classification?.recommended_category,
-      finalState: 'REVIEW_REQUIRED'
-    };
   });
 }
 

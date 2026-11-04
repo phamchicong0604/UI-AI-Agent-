@@ -15,10 +15,10 @@ import {
   StatusLifecycle
 } from '../../common/types.js';
 import { db, dbRepository } from '../../database/db.js';
-import { validateFileContent, validateZipArchive } from './uploadSecurity.js';
+import { validateFileContent, validateZipArchive, UPLOAD_LIMITS } from './uploadSecurity.js';
 import { documentParserManager } from './parsers/index.js';
 import { SemanticRiskScorer } from '../knowledge/semanticValidator.js';
-import { authenticateUser, requireRole } from '../../common/auth.js';
+import { authenticateUser, requireRole, requireAuth } from '../../common/auth.js';
 import { defaultJobQueue } from '../workflow/jobQueue.js';
 import { defaultWorkflowEngine } from '../workflow/workflowEngine.js';
 
@@ -214,9 +214,22 @@ documentsRouter.get('/review-queue', (req: Request, res: Response) => {
     const projId = doc.projectId || 'PRJ-01';
     const dbVersions = dbRepository.documentVersions.getByDocumentId(doc.id);
     const latestDbVer = dbVersions.length > 0 ? dbVersions[0] : null;
-    const units = latestDbVer 
+    const rawUnits = latestDbVer 
       ? dbRepository.knowledgeUnits.getByDocumentVersion(latestDbVer.id) 
       : (dbRepository.knowledgeUnits.getByProject(projId) as any[]);
+
+    // Enrich units with anchor details and top source for UI reader highlighting (BUG-028)
+    const units = rawUnits.map(u => {
+      const src = (u as any).sources?.[0] || dbRepository.knowledgeSources.getByUnitId(u.id)?.[0];
+      return {
+        ...u,
+        headingPath: u.headingPath || src?.headingPath,
+        charOffsetStart: u.charOffsetStart !== undefined && u.charOffsetStart !== null ? u.charOffsetStart : src?.charOffsetStart,
+        charOffsetEnd: u.charOffsetEnd !== undefined && u.charOffsetEnd !== null ? u.charOffsetEnd : src?.charOffsetEnd,
+        exactQuote: u.exactQuote || src?.exactQuote,
+        sources: (u as any).sources || (src ? [src] : [])
+      };
+    });
 
     const explicitCount = units.filter(u => u.evidenceLevel === 'Explicit').length;
     const inferredCount = units.filter(u => u.evidenceLevel === 'Inferred' || u.evidenceLevel === 'Assumed').length;
@@ -269,9 +282,28 @@ documentsRouter.get('/:id', (req: Request, res: Response) => {
   sendSuccess(res, doc);
 });
 
+export function getSafeMimeType(fileName: string): string {
+  const ext = path.extname(fileName).toLowerCase();
+  const SAFE_MIME_MAP: Record<string, string> = {
+    '.md': 'text/markdown; charset=utf-8',
+    '.markdown': 'text/markdown; charset=utf-8',
+    '.txt': 'text/plain; charset=utf-8',
+    '.json': 'application/json; charset=utf-8',
+    '.pdf': 'application/pdf',
+    '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    '.doc': 'application/msword',
+    '.zip': 'application/zip',
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg'
+  };
+
+  return SAFE_MIME_MAP[ext] || 'application/octet-stream';
+}
+
 /**
  * GET /api/v1/documents/:id/file
- * Download/retrieve byte-for-byte original stored file (E1-T3)
+ * Download/retrieve byte-for-byte original stored file with verified Content-Type (BUG-031)
  */
 documentsRouter.get('/:id/file', async (req: Request, res: Response) => {
   const doc = dbRepository.documents.getById(req.params.id);
@@ -285,8 +317,10 @@ documentsRouter.get('/:id/file', async (req: Request, res: Response) => {
     if (stored) {
       try {
         const buffer = await defaultFileStore.get(stored.storageKey);
-        res.setHeader('Content-Type', stored.mimeType || 'text/markdown; charset=utf-8');
-        res.setHeader('Content-Disposition', `attachment; filename="${stored.originalName}"`);
+        const safeMime = getSafeMimeType(stored.originalName);
+        res.setHeader('Content-Type', safeMime);
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+        res.setHeader('Content-Disposition', `attachment; filename="${path.basename(stored.originalName)}"`);
         res.setHeader('X-Checksum-SHA256', stored.sha256);
         return res.send(buffer);
       } catch {}
@@ -296,6 +330,7 @@ documentsRouter.get('/:id/file', async (req: Request, res: Response) => {
   // Fallback if raw stored file missing
   if (doc.contentMarkdown) {
     res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Content-Disposition', `attachment; filename="${doc.id}.md"`);
     return res.send(doc.contentMarkdown);
   }
@@ -307,7 +342,7 @@ documentsRouter.get('/:id/file', async (req: Request, res: Response) => {
  * POST /api/v1/documents
  * Manual creation of a single document (BUG-030: Byte-for-byte SHA-256 and stored file integration)
  */
-documentsRouter.post('/', async (req: Request, res: Response) => {
+documentsRouter.post('/', authenticateUser, requireAuth, async (req: Request, res: Response) => {
   const { title, category, currentVersion, description, tags, author, content, contentMarkdown, projectId } = req.body;
   if (!title || !category) {
     return sendError(res, 'Title and category are required', 400);
@@ -320,7 +355,8 @@ documentsRouter.post('/', async (req: Request, res: Response) => {
     return sendError(res, `Project "${projId}" does not exist`, 400);
   }
 
-  const id = generateDocId();
+  const isExistingDoc = Boolean(req.body.id && dbRepository.documents.getById(req.body.id));
+  const id = isExistingDoc ? req.body.id : generateDocId();
   const timestamp = new Date().toISOString().replace('T', ' ').slice(0, 16);
   const isoNow = new Date().toISOString();
   const version = currentVersion || 'v1.0';
@@ -417,21 +453,21 @@ documentsRouter.post('/', async (req: Request, res: Response) => {
  * POST /api/v1/documents/upload
  * Bulk / single document upload supporting .md, .zip, .txt, .docx, .pdf, .json (E2-T1, E2-T2, E2-T3)
  */
-documentsRouter.post('/upload', upload.array('files'), async (req: Request, res: Response) => {
+documentsRouter.post('/upload', authenticateUser, requireAuth, upload.array('files'), async (req: Request, res: Response) => {
   try {
     const files = req.files as Express.Multer.File[] | undefined;
     if (!files || files.length === 0) {
       return sendError(res, 'No files were uploaded', 400);
     }
 
-    const projectId = (req.body.projectId as string) || 'PRJ-01';
+    const projectId = (req.body.projectId as string) || (req.user as any)?.projectId || 'PRJ-01';
     // Validate project existence immediately (BUG-021)
     const projectRow = db.prepare('SELECT id FROM projects WHERE id = ?').get(projectId) as { id: string } | undefined;
     if (!projectRow) {
       return sendError(res, `Dự án "${projectId}" không tồn tại. Vui lòng chọn một dự án hợp lệ trước khi tải lên.`, 400);
     }
     const categoryOverride = (req.body.category as string) || 'AUTO';
-    const author = (req.body.author as string) || 'System User';
+    const author = req.user?.name || (req.body.author as string) || 'System User';
     const timestamp = new Date().toISOString().replace('T', ' ').slice(0, 16);
 
     const batchId = `BATCH-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -537,7 +573,7 @@ documentsRouter.post('/upload', upload.array('files'), async (req: Request, res:
             id: fileId,
             storageKey,
             originalName: name,
-            mimeType: mimeType || (name.toLowerCase().endsWith('.md') ? 'text/markdown' : 'text/plain'),
+            mimeType: getSafeMimeType(name),
             sizeBytes: buffer.length,
             sha256: fileSha256,
             createdAt: timestamp
@@ -567,9 +603,6 @@ documentsRouter.post('/upload', upload.array('files'), async (req: Request, res:
         });
 
         itemTx.immediate();
-
-        // Supersede previous versions if updating an existing document (BUG-018)
-        await defaultWorkflowEngine.supersedePreviousVersions(doc.id, 'v1.0', author).catch(() => {});
       } catch (dbErr: any) {
         await defaultFileStore.delete(storageKey).catch(() => {});
         return { success: false, error: `Lỗi lưu trữ tài liệu: ${dbErr.message}`, statusCode: 500 };
@@ -630,6 +663,16 @@ documentsRouter.post('/upload', upload.array('files'), async (req: Request, res:
 
           try {
             const entryBuffer = entry.getData();
+            if (entryBuffer.length > UPLOAD_LIMITS.MAX_ZIP_TOTAL_UNCOMPRESSED) {
+              failedFiles++;
+              batchDetails.push({
+                filename: entryName,
+                status: 'FAILED',
+                error: `Tệp con "${entryName}" vượt quá dung lượng giải nén an toàn (${(UPLOAD_LIMITS.MAX_ZIP_TOTAL_UNCOMPRESSED / (1024 * 1024)).toFixed(0)}MB).`,
+                sizeBytes: entryBuffer.length
+              });
+              continue;
+            }
             const result = await processItemBuffer(entryName, entryBuffer, '', true);
 
             if (!result.success) {
@@ -851,7 +894,7 @@ const VALID_LIFECYCLE_STATUSES: StatusLifecycle[] = ['Draft', 'In Review', 'Appr
  * Transition document lifecycle status (Draft -> In Review -> Approved, etc.)
  * Strictly validates status and checks approver permissions (BUG-006)
  */
-documentsRouter.patch('/:id/status', authenticateUser, (req: Request, res: Response) => {
+documentsRouter.patch('/:id/status', authenticateUser, requireAuth, (req: Request, res: Response) => {
   const { status } = req.body;
   if (!status || !VALID_LIFECYCLE_STATUSES.includes(status)) {
     return sendError(
@@ -864,14 +907,11 @@ documentsRouter.patch('/:id/status', authenticateUser, (req: Request, res: Respo
   const doc = dbRepository.documents.getById(req.params.id);
   if (!doc) return sendError(res, 'Document not found', 404);
 
-  // Enforce rule BR-AUTH-01: Approver/Admin role required for terminal/governed transitions (BUG-006)
-  if (['Approved', 'Rejected', 'Deprecated'].includes(status)) {
-    const userRole = req.user?.role;
-    if (!userRole) {
-      return sendError(res, `Authentication required: User role must be specified to transition document to ${status}`, 401);
-    }
-    if (!['Project Admin', 'Reviewer / Approver', 'PM / Project Lead'].includes(userRole)) {
-      return sendError(res, `Permission denied: Approver or Admin role required to transition document to ${status}`, 403);
+  // Enforce rule BR-AUTH-01: Approver/Admin role required for governed transitions (BUG-006, R2-10)
+  const userRole = req.user?.role;
+  if (['Approved', 'Rejected', 'Deprecated'].includes(status) || doc.status === 'Approved') {
+    if (!userRole || !['Project Admin', 'Reviewer / Approver', 'PM / Project Lead'].includes(userRole)) {
+      return sendError(res, `Permission denied: Approver or Admin role required to transition document to/from Approved status`, 403);
     }
   }
 
@@ -895,4 +935,120 @@ documentsRouter.patch('/:id/status', authenticateUser, (req: Request, res: Respo
   doc.updatedAt = new Date().toISOString().replace('T', ' ').slice(0, 16);
   dbRepository.documents.upsert(doc);
   sendSuccess(res, doc, `Document transitioned to ${status}`);
+});
+
+/**
+ * POST /api/v1/documents/:id/versions
+ * Upload a new version for an existing document, superseding previous versions (BUG-018, R2-12)
+ */
+documentsRouter.post('/:id/versions', authenticateUser, requireAuth, upload.single('file'), async (req: Request, res: Response) => {
+  const doc = dbRepository.documents.getById(req.params.id);
+  if (!doc) return sendError(res, 'Document not found', 404);
+
+  const file = req.file;
+  const contentBody = req.body.content || req.body.contentMarkdown;
+  if (!file && !contentBody) {
+    return sendError(res, 'Either a file or contentMarkdown is required', 400);
+  }
+
+  const author = req.user?.name || req.body.author || 'System User';
+  const timestamp = new Date().toISOString().replace('T', ' ').slice(0, 16);
+  const isoNow = new Date().toISOString();
+
+  let buffer: Buffer;
+  let fileName: string;
+  let mimeType: string;
+
+  if (file) {
+    buffer = file.buffer;
+    fileName = file.originalname;
+    mimeType = file.mimetype;
+  } else {
+    buffer = Buffer.from(contentBody, 'utf-8');
+    fileName = `${doc.id}.md`;
+    mimeType = 'text/markdown';
+  }
+
+  // Security check
+  const sec = validateFileContent(fileName, buffer);
+  if (!sec.isValid) {
+    return sendError(res, sec.error || 'Invalid file content', sec.statusCode || 400);
+  }
+
+  const parseResult = await documentParserManager.parse(buffer, fileName, mimeType);
+  const rawText = parseResult.markdownText || parseResult.rawText || '';
+
+  const currentVersions = dbRepository.documentVersions.getByDocumentId(doc.id);
+  const nextVersionNo = req.body.versionNo || `v1.${currentVersions.length}`;
+  const versionId = `${doc.id}-${nextVersionNo}`;
+
+  const fileSha256 = `sha256:${computeSha256(buffer)}`;
+  const fileId = `file-${randomUUID()}`;
+  const storageKey = `projects/${doc.projectId}/${doc.id}/${Date.now()}-${fileName}`;
+
+  try {
+    await defaultFileStore.put(fileName, buffer, storageKey);
+
+    const tx = db.transaction(() => {
+      dbRepository.storedFiles.upsert({
+        id: fileId,
+        storageKey,
+        originalName: fileName,
+        mimeType: getSafeMimeType(fileName),
+        sizeBytes: buffer.length,
+        sha256: fileSha256,
+        createdAt: isoNow
+      });
+
+      dbRepository.documentVersions.upsert({
+        id: versionId,
+        documentId: doc.id,
+        versionNo: nextVersionNo,
+        fileId,
+        extractedContent: rawText,
+        status: 'UPLOADED',
+        changeSummary: req.body.changeSummary || `Uploaded version ${nextVersionNo}`,
+        createdBy: author,
+        createdAt: isoNow
+      });
+
+      doc.currentVersion = nextVersionNo;
+      doc.updatedAt = timestamp;
+      doc.versions = [
+        {
+          version: nextVersionNo,
+          updatedAt: timestamp,
+          author,
+          status: 'Draft',
+          changeSummary: req.body.changeSummary || `Uploaded version ${nextVersionNo}`,
+          fileSize: formatBytes(buffer.length),
+          checksum: fileSha256
+        },
+        ...doc.versions
+      ];
+      dbRepository.documents.upsert(doc);
+
+      defaultJobQueue.enqueue('PIPELINE_RUN', {
+        documentId: doc.id,
+        documentVersionId: versionId,
+        projectId: doc.projectId,
+        documentTitle: doc.title
+      });
+    });
+
+    tx.immediate();
+
+    // Supersede previous versions via workflow engine (BUG-018, R2-12)
+    const supersededCount = await defaultWorkflowEngine.supersedePreviousVersions(doc.id, nextVersionNo, author);
+
+    sendSuccess(res, {
+      documentId: doc.id,
+      versionNo: nextVersionNo,
+      supersededCount,
+      versionId
+    }, `Đã tạo phiên bản mới ${nextVersionNo} và thay thế các phiên bản trước đó thành công`, 201);
+  } catch (err: any) {
+    await defaultFileStore.delete(storageKey).catch(() => {});
+    return sendError(res, `Lỗi tạo phiên bản mới: ${err.message}`, 500);
+  }
 });

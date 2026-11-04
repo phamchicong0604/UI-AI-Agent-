@@ -47,12 +47,12 @@ export class WorkflowEngine {
    * Enforce role-based permission for a specific state change
    */
   public checkRolePermission(toState: WorkflowState, role: string): boolean {
-    if (['Project Admin', 'Admin'].includes(role)) return true;
-
-    // Internal system stages cannot be triggered by human reviewer/PM roles (NEW-09)
+    // Internal system stages cannot be manually manipulated, even by Project Admin; must be driven by automated pipeline (NEW-09)
     if (toState === 'FILE_PROCESSING' || toState === 'AI_ANALYSIS' || toState === 'VALIDATION') {
-      return ['System Worker', 'Project Admin'].includes(role);
+      return role === 'System Worker';
     }
+
+    if (['Project Admin', 'Admin'].includes(role)) return true;
 
     if (toState === 'ORGANIZED') {
       return ['Reviewer / Approver', 'PM / Project Lead', 'System Worker'].includes(role);

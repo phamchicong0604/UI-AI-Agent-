@@ -47,7 +47,6 @@ app.use('/api/v1/traceability', traceabilityRouter);
 app.use('/api/v1/audit', auditRouter);
 app.use('/api/v1/settings', settingsRouter);
 app.use('/api/v1/agent', agentRouter);
-app.use('/api/v1/workflow', workflowRouter);
 app.use('/api/v1', workflowRouter);
 app.use('/api/v1', knowledgeRouter);
 
