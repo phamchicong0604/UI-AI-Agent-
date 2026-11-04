@@ -116,21 +116,23 @@ export class SemanticValidator {
     const STOP_WORDS = new Set([
       'hệ', 'thống', 'của', 'và', 'các', 'cho', 'trong', 'với', 'khi', 'được', 'là',
       'tại', 'về', 'này', 'đó', 'thì', 'theo', 'như', 'những', 'một', 'hai', 'ba',
+      'thời', 'gian',
       'the', 'a', 'an', 'of', 'in', 'on', 'to', 'for', 'with', 'by', 'at', 'and', 'or', 'is', 'are'
     ]);
 
     const extractSignificantTokens = (text: string): string[] => {
       return text
+        .normalize('NFC')
         .toLowerCase()
         .replace(/[^\p{L}\p{N}\s]/gu, ' ')
         .split(/\s+/)
         .filter(t => t.length >= 3 && !STOP_WORDS.has(t));
     };
 
-    // Subject matching tokens
-    const searchSubject = candidate.subject.trim();
-    const candidateSubjectNorm = candidate.subject.toLowerCase().trim();
-    const candidateContentNorm = candidate.content.toLowerCase().trim();
+    // Subject matching tokens with NFC normalization (R3-14)
+    const searchSubject = candidate.subject.normalize('NFC').trim();
+    const candidateSubjectNorm = candidate.subject.normalize('NFC').toLowerCase().trim();
+    const candidateContentNorm = candidate.content.normalize('NFC').toLowerCase().trim();
     const candidateSigTokens = extractSignificantTokens(candidateSubjectNorm);
 
     // Also leverage FTS5 with AND of significant tokens if >= 2 available (BUG-015, BUG-024)
@@ -149,8 +151,8 @@ export class SemanticValidator {
     }
 
     for (const approved of approvedUnits) {
-      const approvedSubjectNorm = approved.subject.toLowerCase().trim();
-      const approvedContentNorm = approved.content.toLowerCase().trim();
+      const approvedSubjectNorm = approved.subject.normalize('NFC').toLowerCase().trim();
+      const approvedContentNorm = approved.content.normalize('NFC').toLowerCase().trim();
       const approvedSigTokens = extractSignificantTokens(approvedSubjectNorm);
 
       let isSubjectMatch = false;
@@ -185,8 +187,9 @@ export class SemanticValidator {
         continue;
       }
 
-      // Check Numerical / Value Contradiction with STRICT UNIT MATCHING (BUG-015 Regression Fix)
+      // Check Numerical / Value Contradiction with STRICT UNIT MATCHING (BUG-015, R3-14)
       // Never compare bare unitless numbers like "bước 1" vs "bước 2". Only compare matching physical/logical units!
+      // Supports Vietnamese decimal comma (e.g., "1,5 giờ" -> 1.5) and avoids false alarms on multi-choice lists (R3-14)
       interface UnitValue {
         raw: string;
         value: number;
@@ -194,12 +197,13 @@ export class SemanticValidator {
       }
 
       const extractNumbersWithUnits = (text: string): UnitValue[] => {
-        // Unicode-aware regex without ASCII \b pitfalls, correctly matching Vietnamese units like 'giờ' and '%' (BUG-015, R2-08)
-        const regex = /(?:^|[^\p{L}\p{N}])(\d+(?:\.\d+)?)\s*(phút|giây|giờ|ngày|tháng|năm|lần|ms|s|m|h|mb|gb|kb|tb|ccu|user|users|người|%|vnd|usd|px)(?=[^\p{L}\p{N}]|$)/gui;
+        // Unicode-aware regex supporting decimal commas (1,5 giờ) and dots (1.5h) (R3-14)
+        const regex = /(?:^|[^\p{L}\p{N}])(\d+(?:[.,]\d+)?)\s*(phút|giây|giờ|ngày|tháng|năm|lần|ms|s|m|h|mb|gb|kb|tb|ccu|user|users|người|%|vnd|usd|px)(?=[^\p{L}\p{N}]|$)/gui;
         const results: UnitValue[] = [];
         let match: RegExpExecArray | null;
         while ((match = regex.exec(text)) !== null) {
-          const val = parseFloat(match[1]);
+          const normalizedNumStr = match[1].replace(',', '.');
+          const val = parseFloat(normalizedNumStr);
           let u = match[2].toLowerCase();
           if (u === 's') u = 'giây';
           else if (u === 'm') u = 'phút';
@@ -217,22 +221,26 @@ export class SemanticValidator {
       if (candidateUnits.length > 0 && approvedUnitsList.length > 0) {
         for (const cu of candidateUnits) {
           const matchingApproved = approvedUnitsList.filter(au => au.unit === cu.unit);
-          for (const au of matchingApproved) {
-            if (au.value !== cu.value) {
-              hasNumberConflict = true;
-              conflicts.push({
-                id: randomUUID(),
-                projectId: candidate.project_id,
-                unitAId: candidate.id,
-                unitBId: approved.id,
-                conflictType: 'Contradiction',
-                severity: 'Critical',
-                description: `Contradiction detected on subject "${candidate.subject}": new value [${cu.raw}] conflicts with approved specification [${au.raw}].`
-              });
-              break;
-            }
+          if (matchingApproved.length === 0) continue;
+
+          // If the candidate value matches any of the approved values with this unit, it's valid (e.g. from an approved list/options)
+          if (matchingApproved.some(au => Math.abs(au.value - cu.value) < 1e-6)) {
+            continue;
           }
-          if (hasNumberConflict) break;
+
+          // Conflict detected: none of the approved specs match the candidate's value
+          const firstApproved = matchingApproved[0];
+          hasNumberConflict = true;
+          conflicts.push({
+            id: randomUUID(),
+            projectId: candidate.project_id,
+            unitAId: candidate.id,
+            unitBId: approved.id,
+            conflictType: 'Contradiction',
+            severity: 'Critical',
+            description: `Contradiction detected on subject "${candidate.subject}": new value [${cu.raw}] conflicts with approved specification [${firstApproved.raw}].`
+          });
+          break;
         }
       }
 

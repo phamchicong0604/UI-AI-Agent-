@@ -9,6 +9,7 @@ import { migration007KnowledgeUnitsAndConflicts } from './007_knowledge_units_an
 import { migration008FtsApprovedKnowledge } from './008_fts_approved_knowledge.js';
 import { migration009EnforceOfflinePolicyDefault } from './009_enforce_offline_policy_default.js';
 import { migration010UsersProjectMembersAndReqProjectId } from './010_users_project_members_and_req_project_id.js';
+import { migration011CleanProjectsAndEnforceOfflinePolicy } from './011_clean_projects_and_enforce_offline_policy.js';
 
 export const allMigrations: Migration[] = [
   migration001InitialSchema,
@@ -20,5 +21,6 @@ export const allMigrations: Migration[] = [
   migration007KnowledgeUnitsAndConflicts,
   migration008FtsApprovedKnowledge,
   migration009EnforceOfflinePolicyDefault,
-  migration010UsersProjectMembersAndReqProjectId
+  migration010UsersProjectMembersAndReqProjectId,
+  migration011CleanProjectsAndEnforceOfflinePolicy
 ];

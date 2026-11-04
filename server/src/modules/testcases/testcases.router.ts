@@ -2,13 +2,22 @@ import { Router, Request, Response } from 'express';
 import { sendSuccess, sendError } from '../../common/response.js';
 import { TestCaseItem } from '../../common/types.js';
 import { dbRepository } from '../../database/db.js';
-import { authenticateUser, requireAuth } from '../../common/auth.js';
+import { authenticateUser, requireAuth, checkProjectAccess } from '../../common/auth.js';
 
 export const testcasesRouter = Router();
 
-testcasesRouter.get('/', (req: Request, res: Response) => {
-  const { status, type, priority, requirementId } = req.query;
+testcasesRouter.get('/', authenticateUser, (req: Request, res: Response) => {
+  const { status, type, priority, requirementId, projectId } = req.query;
+  const targetProjectId = (projectId as string) || (req.user as any)?.projectId;
+
+  if (req.user && targetProjectId && !checkProjectAccess(req.user, targetProjectId)) {
+    return sendError(res, `Bạn không có quyền truy cập test case của dự án "${targetProjectId}".`, 403);
+  }
+
   let result = dbRepository.testCases.getAll();
+  if (targetProjectId) {
+    result = result.filter(t => (t as any).projectId === targetProjectId || (t as any).project_id === targetProjectId);
+  }
 
   if (status && status !== 'ALL') result = result.filter(t => t.status === status);
   if (type && type !== 'ALL') result = result.filter(t => t.type === type);
@@ -22,9 +31,13 @@ testcasesRouter.get('/', (req: Request, res: Response) => {
  * GET /api/v1/testcases/:id/workspace
  * Dedicated endpoint returning the 3-column workspace data package (Proposal Section 7.1)
  */
-testcasesRouter.get('/:id/workspace', (req: Request, res: Response) => {
+testcasesRouter.get('/:id/workspace', authenticateUser, (req: Request, res: Response) => {
   const tc = dbRepository.testCases.getById(req.params.id);
   if (!tc) return sendError(res, 'Test case not found', 404);
+
+  if (req.user && (tc as any).projectId && !checkProjectAccess(req.user, (tc as any).projectId)) {
+    return sendError(res, `Bạn không có quyền truy cập test case thuộc dự án "${(tc as any).projectId}".`, 403);
+  }
 
   sendSuccess(res, {
     column1_Requirement: {
@@ -52,13 +65,19 @@ testcasesRouter.get('/:id/workspace', (req: Request, res: Response) => {
   });
 });
 
-testcasesRouter.post('/', (req: Request, res: Response) => {
-  const { requirementId, requirementTitle, title, scenario, preconditions, testData, type, priority, steps, sourceReferences, isAiDrafted } = req.body;
+testcasesRouter.post('/', authenticateUser, requireAuth, (req: Request, res: Response) => {
+  const { requirementId, requirementTitle, title, scenario, preconditions, testData, type, priority, steps, sourceReferences, isAiDrafted, projectId } = req.body;
   if (!title || !requirementId) return sendError(res, 'Title and requirementId are required', 400);
 
+  const projId = projectId || (req.user as any)?.projectId || 'PRJ-01';
+  if (req.user && !checkProjectAccess(req.user, projId)) {
+    return sendError(res, `Bạn không có quyền tạo test case trong dự án "${projId}".`, 403);
+  }
+
   const existing = dbRepository.testCases.getAll();
-  const newTc: TestCaseItem = {
+  const newTc: TestCaseItem & { projectId?: string } = {
     id: `TC-CUSTOM-00${existing.length + 1}`,
+    projectId: projId,
     requirementId,
     requirementTitle: requirementTitle || requirementId,
     title,
@@ -78,7 +97,7 @@ testcasesRouter.post('/', (req: Request, res: Response) => {
     updatedAt: new Date().toISOString().replace('T', ' ').slice(0, 16)
   };
 
-  dbRepository.testCases.upsert(newTc);
+  dbRepository.testCases.upsert(newTc as any);
   sendSuccess(res, newTc, 'Test case created and persisted to SQLite', 201);
 });
 
@@ -86,6 +105,10 @@ testcasesRouter.patch('/:id/status', authenticateUser, requireAuth, (req: Reques
   const { status } = req.body;
   const tc = dbRepository.testCases.getById(req.params.id);
   if (!tc) return sendError(res, 'Test case not found', 404);
+
+  if (req.user && (tc as any).projectId && !checkProjectAccess(req.user, (tc as any).projectId)) {
+    return sendError(res, `Bạn không có quyền cập nhật test case thuộc dự án "${(tc as any).projectId}".`, 403);
+  }
 
   // BR-AUTH-01: Only Approver/Admin roles can approve test cases (NEW-11)
   if (status === 'Approved') {
@@ -105,6 +128,10 @@ testcasesRouter.post('/:id/comments', authenticateUser, requireAuth, (req: Reque
   const { content, decision } = req.body;
   const tc = dbRepository.testCases.getById(req.params.id);
   if (!tc) return sendError(res, 'Test case not found', 404);
+
+  if (req.user && (tc as any).projectId && !checkProjectAccess(req.user, (tc as any).projectId)) {
+    return sendError(res, `Bạn không có quyền thêm nhận xét vào test case thuộc dự án "${(tc as any).projectId}".`, 403);
+  }
 
   const author = req.user?.name || req.body.author || 'Reviewer';
   const role = req.user?.role || req.body.role || 'QA';

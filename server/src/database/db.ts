@@ -663,6 +663,19 @@ ensureStoredFilesSynced();
  * REPOSITORY HELPERS FOR ALL ENTITIES
  * ----------------------------------------------------------- */
 
+export function compareVersionNumbers(v1: string, v2: string): number {
+  const parseParts = (v: string) => (v || '').replace(/^[^\d]*/, '').split(/[\.-]/).map(p => parseInt(p, 10) || 0);
+  const p1 = parseParts(v1);
+  const p2 = parseParts(v2);
+  const maxLen = Math.max(p1.length, p2.length);
+  for (let i = 0; i < maxLen; i++) {
+    const num1 = p1[i] ?? 0;
+    const num2 = p2[i] ?? 0;
+    if (num1 !== num2) return num1 - num2;
+  }
+  return (v1 || '').localeCompare(v2 || '');
+}
+
 export const dbRepository = {
   projects: {
     getAll(): Project[] {
@@ -699,10 +712,17 @@ export const dbRepository = {
       };
     },
     upsert(p: Project & { aiPolicy?: string; ai_policy?: string }): Project {
-      const providedPolicy = p.aiPolicy || p.ai_policy || null;
+      const existing = db.prepare('SELECT id, key, ai_policy, created_at FROM projects WHERE id = ?').get(p.id) as any;
+      const effectivePolicy = p.aiPolicy || p.ai_policy || existing?.ai_policy || 'OFFLINE_ONLY';
+      const effectiveKey = p.key || existing?.key || (p.id.replace(/[^a-zA-Z0-9]/g, '').slice(0, 8).toUpperCase() || 'PRJ');
+      const now = new Date().toISOString();
+      const effectiveCreatedAt = p.createdAt || existing?.created_at || now;
+      const effectiveUpdatedAt = p.updatedAt || now;
+      const pWithPolicy = { ...p, key: effectiveKey, aiPolicy: effectivePolicy, createdAt: effectiveCreatedAt, updatedAt: effectiveUpdatedAt };
+
       const stmt = db.prepare(`
         INSERT INTO projects (id, name, key, description, version, author, members_count, ai_policy, data, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, coalesce(?, 'OFFLINE_ONLY'), ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           name = excluded.name,
           key = excluded.key,
@@ -710,12 +730,24 @@ export const dbRepository = {
           version = excluded.version,
           author = excluded.author,
           members_count = excluded.members_count,
-          ai_policy = coalesce(?, projects.ai_policy, 'OFFLINE_ONLY'),
+          ai_policy = excluded.ai_policy,
           data = excluded.data,
           updated_at = excluded.updated_at
       `);
-      stmt.run(p.id, p.name, p.key, p.description, p.version, p.author, p.membersCount, providedPolicy, JSON.stringify(p), p.createdAt, p.updatedAt || p.createdAt, providedPolicy);
-      return p;
+      stmt.run(
+        p.id,
+        p.name,
+        effectiveKey,
+        p.description || null,
+        p.version || null,
+        p.author || null,
+        p.membersCount || null,
+        effectivePolicy,
+        JSON.stringify(pWithPolicy),
+        effectiveCreatedAt,
+        effectiveUpdatedAt
+      );
+      return pWithPolicy as Project;
     },
     delete(id: string): boolean {
       const result = db.prepare('DELETE FROM projects WHERE id = ?').run(id);
@@ -784,8 +816,8 @@ export const dbRepository = {
 
   documentVersions: {
     getByDocumentId(docId: string): DocumentVersionRecord[] {
-      const rows = db.prepare('SELECT id, document_id as documentId, version_no as versionNo, file_id as fileId, extracted_content as extractedContent, status, change_summary as changeSummary, created_by as createdBy, created_at as createdAt FROM document_versions WHERE document_id = ? ORDER BY version_no ASC').all(docId) as DocumentVersionRecord[];
-      return rows;
+      const rows = db.prepare('SELECT id, document_id as documentId, version_no as versionNo, file_id as fileId, extracted_content as extractedContent, status, change_summary as changeSummary, created_by as createdBy, created_at as createdAt FROM document_versions WHERE document_id = ?').all(docId) as DocumentVersionRecord[];
+      return rows.sort((a, b) => compareVersionNumbers(a.versionNo, b.versionNo));
     },
     getById(id: string): DocumentVersionRecord | null {
       const row = db.prepare('SELECT id, document_id as documentId, version_no as versionNo, file_id as fileId, extracted_content as extractedContent, status, change_summary as changeSummary, created_by as createdBy, created_at as createdAt FROM document_versions WHERE id = ?').get(id) as DocumentVersionRecord | undefined;
@@ -1200,10 +1232,47 @@ export const dbRepository = {
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(c.id, c.projectId, c.unitAId, c.unitBId, c.conflictType, c.severity, c.description, c.resolution, c.resolvedBy || null, c.resolvedAt || null, c.createdAt);
     },
+    getById(id: string): ConflictRecord | null {
+      const row = db.prepare(`
+        SELECT id, project_id as projectId, unit_a_id as unitAId, unit_b_id as unitBId,
+               conflict_type as conflictType, severity, description, resolution,
+               resolution_notes as resolutionNotes,
+               resolved_by as resolvedBy, resolved_at as resolvedAt, created_at as createdAt
+        FROM conflicts WHERE id = ?
+      `).get(id) as ConflictRecord | undefined;
+      return row || null;
+    },
+    getByProject(projectId: string, severity?: string): ConflictRecord[] {
+      let query = `
+        SELECT id, project_id as projectId, unit_a_id as unitAId, unit_b_id as unitBId,
+               conflict_type as conflictType, severity, description, resolution,
+               resolution_notes as resolutionNotes,
+               resolved_by as resolvedBy, resolved_at as resolvedAt, created_at as createdAt
+        FROM conflicts
+        WHERE project_id = ?
+      `;
+      const params: any[] = [projectId];
+      if (severity) {
+        query += ' AND severity = ?';
+        params.push(severity);
+      }
+      return db.prepare(query).all(...params) as ConflictRecord[];
+    },
+    getUnresolved(): ConflictRecord[] {
+      return db.prepare(`
+        SELECT id, project_id as projectId, unit_a_id as unitAId, unit_b_id as unitBId,
+               conflict_type as conflictType, severity, description, resolution,
+               resolution_notes as resolutionNotes,
+               resolved_by as resolvedBy, resolved_at as resolvedAt, created_at as createdAt
+        FROM conflicts
+        WHERE resolution = 'UNRESOLVED'
+      `).all() as ConflictRecord[];
+    },
     getUnresolvedByProject(projectId: string, severity?: string): ConflictRecord[] {
       let query = `
         SELECT id, project_id as projectId, unit_a_id as unitAId, unit_b_id as unitBId,
                conflict_type as conflictType, severity, description, resolution,
+               resolution_notes as resolutionNotes,
                resolved_by as resolvedBy, resolved_at as resolvedAt, created_at as createdAt
         FROM conflicts
         WHERE project_id = ? AND resolution = 'UNRESOLVED'
@@ -1245,10 +1314,19 @@ export const dbRepository = {
       return parsed;
     },
     upsert(req: RequirementItem & { projectId?: string }): void {
-      const projId = req.projectId || (req.sourceReferences?.[0]?.documentId 
-        ? (db.prepare('SELECT project_id FROM documents WHERE id = ?').get(req.sourceReferences[0].documentId) as any)?.project_id 
-        : null) || 'PRJ-01';
-      const reqWithProj = { ...req, projectId: projId };
+      // Resolve project strictly from requirement or parent document, fail-closed without blind PRJ-01 fallback (R3-07)
+      let projId = req.projectId;
+      if (!projId && req.sourceReferences?.[0]?.documentId) {
+        const docRow = db.prepare('SELECT project_id FROM documents WHERE id = ?').get(req.sourceReferences[0].documentId) as any;
+        if (docRow?.project_id) {
+          projId = docRow.project_id;
+        }
+      }
+      if (!projId) {
+        const existing = db.prepare('SELECT project_id FROM requirements WHERE id = ?').get(req.id) as any;
+        projId = existing?.project_id || null;
+      }
+      const reqWithProj = { ...req, projectId: projId || undefined };
       const stmt = db.prepare(`
         INSERT INTO requirements (id, project_id, type, priority, status, data, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -1287,6 +1365,10 @@ export const dbRepository = {
   },
 
   projectMembers: {
+    getProjectsForUser(userId: string): string[] {
+      const rows = db.prepare('SELECT project_id FROM project_members WHERE user_id = ?').all(userId) as { project_id: string }[];
+      return rows.map(r => r.project_id);
+    },
     getRole(projectId: string, userId: string): string | null {
       const row = db.prepare(`
         SELECT role FROM project_members WHERE project_id = ? AND user_id = ?

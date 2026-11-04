@@ -6,6 +6,7 @@ import { DatabaseMigrator } from '../../database/migrator.js';
 import { allMigrations } from '../../database/migrations/index.js';
 import { ClassificationScorer } from '../../modules/documents/classificationScorer.js';
 import { SemanticValidator, CandidateKnowledgeUnit } from '../../modules/knowledge/semanticValidator.js';
+import { defaultStage2Runner } from '../../modules/ai/stage2Runner.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -17,12 +18,14 @@ export interface EvalMetrics {
   extractionPrecision: number;    // 0 - 100%
   extractionRecall: number;       // 0 - 100%
   conflictDetectionRecall: number;// 0 - 100%
+  conflictDetectionPrecision: number; // 0 - 100%
+  conflictFalsePositives: number;
   averageLatencyMs: number;
   totalTokensEstimated: number;
 }
 
 export class EvalRunner {
-  public static run(): { metrics: EvalMetrics; detailedResults: any[] } {
+  public static async run(): Promise<{ metrics: EvalMetrics; detailedResults: any[] }> {
     const datasetPath = path.join(__dirname, 'dataset.v1.json');
     const rawData = fs.readFileSync(datasetPath, 'utf-8');
     const dataset: any[] = JSON.parse(rawData);
@@ -209,48 +212,64 @@ export class EvalRunner {
       ? Number(((conflictTruePositives / conflictDivider) * 100).toFixed(2))
       : 100.0;
 
+    const conflictPrecisionDivider = conflictTruePositives + conflictFalsePositives;
+    const conflictDetectionPrecision = conflictPrecisionDivider > 0
+      ? Number(((conflictTruePositives / conflictPrecisionDivider) * 100).toFixed(2))
+      : 100.0;
+
     // 3. Grounded Extraction Verification against Ground Truth (BUG-007)
     let totalGroundTruthUnits = 0;
-    let groundedVerbatimUnits = 0;
-    let candidateMatches = 0;
-    let totalCandidateUnits = 0;
+    let recalledGtUnits = 0;
+    let totalExtractedUnits = 0;
+    let verbatimGroundedUnits = 0;
 
     for (const tc of dataset) {
       const gtUnits = tc.groundTruth.extractedUnits || [];
       totalGroundTruthUnits += gtUnits.length;
 
-      const sentences = tc.content
-        .split(/(?<=[.!?\n])\s+/)
-        .map((s: string) => s.trim())
-        .filter((s: string) => s.length >= 10);
+      // Execute actual Stage 2 Grounded Extractor with skipPersistence to prevent DB pollution
+      const stage2Result = await defaultStage2Runner.execute({
+        documentVersionId: tc.id,
+        documentTitle: tc.title,
+        documentText: tc.content,
+        projectId,
+        skipPersistence: true
+      });
 
-      for (const gt of gtUnits) {
-        if (!gt.exactQuote) continue;
-        // Verify verbatim grounding in content
-        if (tc.content.includes(gt.exactQuote)) {
-          groundedVerbatimUnits++;
+      const extracted = stage2Result.output.extraction.extracted_units;
+      totalExtractedUnits += extracted.length;
+
+      // Verify verbatim grounding: char offsets must exactly match quote in content
+      for (const unit of extracted) {
+        const quote = unit.source_anchor.exact_quote;
+        const textSlice = tc.content.slice(
+          unit.source_anchor.char_offset_start,
+          unit.source_anchor.char_offset_end
+        );
+        if (textSlice === quote && tc.content.includes(quote)) {
+          verbatimGroundedUnits++;
         }
       }
 
-      for (const sent of sentences) {
-        const matchesGt = gtUnits.some((gt: any) => 
-          gt.exactQuote && (sent.includes(gt.exactQuote) || gt.exactQuote.includes(sent))
+      // Verify recall against ground truth quotes
+      for (const gt of gtUnits) {
+        if (!gt.exactQuote) continue;
+        const matched = extracted.some(u => 
+          u.source_anchor.exact_quote.includes(gt.exactQuote) || 
+          gt.exactQuote.includes(u.source_anchor.exact_quote)
         );
-        if (matchesGt) {
-          candidateMatches++;
-          totalCandidateUnits++;
-        } else if (/(?:shall|must|bắt buộc|hạn mức|thời gian timeout)/i.test(sent)) {
-          totalCandidateUnits++;
+        if (matched) {
+          recalledGtUnits++;
         }
       }
     }
 
     const extractionRecall = totalGroundTruthUnits > 0
-      ? Number(((groundedVerbatimUnits / totalGroundTruthUnits) * 100).toFixed(2))
+      ? Number(((recalledGtUnits / totalGroundTruthUnits) * 100).toFixed(2))
       : 100.0;
 
-    const extractionPrecision = totalCandidateUnits > 0
-      ? Number(((candidateMatches / totalCandidateUnits) * 100).toFixed(2))
+    const extractionPrecision = totalExtractedUnits > 0
+      ? Number(((verbatimGroundedUnits / totalExtractedUnits) * 100).toFixed(2))
       : 100.0;
 
     db.close();
@@ -274,6 +293,8 @@ export class EvalRunner {
       extractionPrecision,
       extractionRecall,
       conflictDetectionRecall,
+      conflictDetectionPrecision,
+      conflictFalsePositives,
       averageLatencyMs,
       totalTokensEstimated: totalTokens
     };

@@ -8,7 +8,7 @@ import { accountModelsService, resolveSource, ModelSyncError } from './account-m
 import { db, dbRepository } from '../../database/db.js';
 import { sendSuccess, sendError } from '../../common/response.js';
 import { ObservabilityService } from './observabilityService.js';
-import { authenticateUser, requireAuth } from '../../common/auth.js';
+import { authenticateUser, requireAuth, requireRole } from '../../common/auth.js';
 
 export const aiRouter = Router();
 const aiService = new AiService();
@@ -17,7 +17,7 @@ const aiService = new AiService();
  * GET /api/v1/ai/connection
  * Retrieves centralized AI connection status and masked configuration
  */
-aiRouter.get('/connection', (req: Request, res: Response) => {
+aiRouter.get('/connection', authenticateUser, requireAuth, (req: Request, res: Response) => {
   try {
     const config = aiConnectionManager.getActiveConnection();
     sendSuccess(res, config);
@@ -28,9 +28,9 @@ aiRouter.get('/connection', (req: Request, res: Response) => {
 
 /**
  * POST /api/v1/ai/connection
- * Saves unified AI connection settings (API Key or CLI Subscription)
+ * Saves unified AI connection settings (API Key or CLI Subscription) - Restricted to Project Admin (R3-04)
  */
-aiRouter.post('/connection', (req: Request, res: Response) => {
+aiRouter.post('/connection', authenticateUser, requireRole(['Project Admin']), (req: Request, res: Response) => {
   try {
     const { provider, authMethod, apiKey, baseUrl, model, effortLevel, maxOutputTokens, cliBinary } = req.body;
     const updated = aiConnectionManager.saveConnection({
@@ -53,7 +53,7 @@ aiRouter.post('/connection', (req: Request, res: Response) => {
  * GET /api/v1/ai/observability
  * AI Usage & Observability Report (Epic E10-T1, E10-T2)
  */
-aiRouter.get('/observability', (req: Request, res: Response) => {
+aiRouter.get('/observability', authenticateUser, requireAuth, (req: Request, res: Response) => {
   try {
     const report = ObservabilityService.getObservabilityReport(db);
     sendSuccess(res, report);
@@ -66,7 +66,7 @@ aiRouter.get('/observability', (req: Request, res: Response) => {
  * POST /api/v1/ai/connection/select-model
  * Saves a chosen model separately into SQLite and loads its per-model effort configuration.
  */
-aiRouter.post('/connection/select-model', (req: Request, res: Response) => {
+aiRouter.post('/connection/select-model', authenticateUser, requireRole(['Project Admin', 'PM / Project Lead']), (req: Request, res: Response) => {
   try {
     const { provider, modelId, effortLevel } = req.body;
     if (!modelId) {
@@ -83,7 +83,7 @@ aiRouter.post('/connection/select-model', (req: Request, res: Response) => {
  * POST /api/v1/ai/connection/test
  * Tests active or pending AI connection (supports both API Key and CLI Subscription)
  */
-aiRouter.post('/connection/test', async (req: Request, res: Response) => {
+aiRouter.post('/connection/test', authenticateUser, requireRole(['Project Admin', 'PM / Project Lead']), async (req: Request, res: Response) => {
   try {
     const { provider, authMethod, apiKey, baseUrl, model, effortLevel, maxOutputTokens, cliBinary } = req.body;
     const result = await aiConnectionManager.testConnection({
@@ -107,7 +107,7 @@ aiRouter.post('/connection/test', async (req: Request, res: Response) => {
  * GET /api/v1/ai/connection/cli-detect
  * Probes the local system for supported CLI tools (claude, gh, agy, gemini)
  */
-aiRouter.get('/connection/cli-detect', async (req: Request, res: Response) => {
+aiRouter.get('/connection/cli-detect', authenticateUser, requireAuth, async (req: Request, res: Response) => {
   try {
     const detected = await aiConnectionManager.detectInstalledClis();
     sendSuccess(res, detected, 'CLI tools detected successfully');
@@ -120,7 +120,7 @@ aiRouter.get('/connection/cli-detect', async (req: Request, res: Response) => {
  * POST /api/v1/ai/connection/disconnect
  * Disconnects the active AI provider
  */
-aiRouter.post('/connection/disconnect', (req: Request, res: Response) => {
+aiRouter.post('/connection/disconnect', authenticateUser, requireRole(['Project Admin']), (req: Request, res: Response) => {
   try {
     aiConnectionManager.disconnect();
     sendSuccess(res, { connectionStatus: 'disconnected' }, 'AI connection disconnected');
@@ -133,7 +133,7 @@ aiRouter.post('/connection/disconnect', (req: Request, res: Response) => {
  * GET /api/v1/ai/models
  * Returns the model registry options for all supported AI providers
  */
-aiRouter.get('/models', async (req: Request, res: Response) => {
+aiRouter.get('/models', authenticateUser, requireAuth, async (req: Request, res: Response) => {
   const providerQuery = req.query.provider as string | undefined;
   if (providerQuery) {
     try {
@@ -150,7 +150,7 @@ aiRouter.get('/models', async (req: Request, res: Response) => {
  * POST /api/v1/ai/models/fetch
  * Queries live models directly from provider API or local server using current credentials
  */
-aiRouter.post('/models/fetch', async (req: Request, res: Response) => {
+aiRouter.post('/models/fetch', authenticateUser, requireRole(['Project Admin', 'PM / Project Lead']), async (req: Request, res: Response) => {
   try {
     const { provider, authMethod, apiKey, baseUrl, cliBinary } = req.body;
     const result = await modelFetcher.fetchLiveModels({
@@ -170,7 +170,7 @@ aiRouter.post('/models/fetch', async (req: Request, res: Response) => {
  * GET /api/v1/ai/models/account?provider=&authMethod=&cliBinary=
  * Reads the model list previously synced for this account from SQLite (no provider call).
  */
-aiRouter.get('/models/account', (req: Request, res: Response) => {
+aiRouter.get('/models/account', authenticateUser, requireAuth, (req: Request, res: Response) => {
   try {
     const active = aiConnectionManager.getActiveConnection();
     const ref = {
@@ -193,7 +193,7 @@ aiRouter.get('/models/account', (req: Request, res: Response) => {
  * POST /api/v1/ai/models/account/sync
  * Queries the connected account (CLI subscription or API key) for its models and saves them to SQLite.
  */
-aiRouter.post('/models/account/sync', async (req: Request, res: Response) => {
+aiRouter.post('/models/account/sync', authenticateUser, requireRole(['Project Admin']), async (req: Request, res: Response) => {
   const active = aiConnectionManager.getActiveConnection();
   const ref = {
     provider: req.body.provider || active?.provider || 'google',
@@ -230,7 +230,7 @@ aiRouter.post('/models/account/sync', async (req: Request, res: Response) => {
  * GET /api/v1/ai/models/efforts?provider=
  * Retrieves all saved per-model effort configurations for a provider from SQLite.
  */
-aiRouter.get('/models/efforts', (req: Request, res: Response) => {
+aiRouter.get('/models/efforts', authenticateUser, requireAuth, (req: Request, res: Response) => {
   try {
     const active = aiConnectionManager.getActiveConnection();
     const provider = (req.query.provider as any) || active?.provider || 'google';
@@ -245,7 +245,7 @@ aiRouter.get('/models/efforts', (req: Request, res: Response) => {
  * POST /api/v1/ai/models/effort
  * Saves effort level specifically for a selected model into SQLite.
  */
-aiRouter.post('/models/effort', (req: Request, res: Response) => {
+aiRouter.post('/models/effort', authenticateUser, requireRole(['Project Admin', 'PM / Project Lead']), (req: Request, res: Response) => {
   try {
     const { provider, modelId, effortLevel, maxOutputTokens, resolvedVariant } = req.body;
     if (!modelId || !effortLevel) {
@@ -270,7 +270,7 @@ aiRouter.post('/models/effort', (req: Request, res: Response) => {
  * GET /api/v1/ai/connection/quota
  * Retrieves quota, rate limit, and subscription usage for the active connection
  */
-aiRouter.get('/connection/quota', async (req: Request, res: Response) => {
+aiRouter.get('/connection/quota', authenticateUser, requireAuth, async (req: Request, res: Response) => {
   try {
     const quota = await quotaService.getQuotaInfo();
     sendSuccess(res, quota, 'Quota information retrieved successfully');
@@ -283,7 +283,7 @@ aiRouter.get('/connection/quota', async (req: Request, res: Response) => {
  * POST /api/v1/ai/connection/check-quota
  * Probes quota and limits on the fly for given provider, auth method, model, or credentials
  */
-aiRouter.post('/connection/check-quota', async (req: Request, res: Response) => {
+aiRouter.post('/connection/check-quota', authenticateUser, requireAuth, async (req: Request, res: Response) => {
   try {
     const { provider, authMethod, model, apiKey, baseUrl, cliBinary } = req.body;
     const quota = await quotaService.getQuotaInfo({
@@ -372,7 +372,7 @@ aiRouter.post('/generate-testcases', authenticateUser, requireAuth, async (req: 
  * POST /api/v1/ai/impact-analysis
  * Analyzes blast radius of changes to documents and requirements
  */
-aiRouter.post('/impact-analysis', async (req: Request, res: Response) => {
+aiRouter.post('/impact-analysis', authenticateUser, requireAuth, async (req: Request, res: Response) => {
   try {
     const { documentId, requirements, testCases } = req.body;
     if (!documentId) {

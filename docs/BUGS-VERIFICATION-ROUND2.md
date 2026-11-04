@@ -42,7 +42,7 @@ Trong 10 bug gốc đã FIXED, có 3 bug sửa đúng logic nhưng vẫn bị v�
    - Thêm cột `project_id` cho bảng requirements bằng migration mới, rồi lấy project từ DB.
    - Không lấy project từ body, header hoặc `sourceReferences` do client gửi.
    - Đổi giá trị mặc định của cột `ai_policy`. Migration 009 chỉ update giá trị null, trong khi cột có ràng buộc NOT NULL, nên migration này không có tác dụng.
-3. **R2-17: thêm xác thực cho route upload.** Bổ sung luôn cho các route AI và route PATCH status tài liệu.
+3. **R2-07: thêm xác thực cho route upload.** Bổ sung luôn cho các route AI và route PATCH status tài liệu.
 4. **Các bug NOT FIXED:** BUG-018, BUG-019 và BUG-028.
 5. **R2-04: chặn retry làm mất trạng thái duyệt.** Hiện retry đưa unit đã duyệt về Draft.
 6. **Còn lại:** các bug PARTIAL, sau đó là các bug Low.

@@ -18,7 +18,7 @@ import { db, dbRepository } from '../../database/db.js';
 import { validateFileContent, validateZipArchive, UPLOAD_LIMITS } from './uploadSecurity.js';
 import { documentParserManager } from './parsers/index.js';
 import { SemanticRiskScorer } from '../knowledge/semanticValidator.js';
-import { authenticateUser, requireRole, requireAuth } from '../../common/auth.js';
+import { authenticateUser, requireRole, requireAuth, checkProjectAccess } from '../../common/auth.js';
 import { defaultJobQueue } from '../workflow/jobQueue.js';
 import { defaultWorkflowEngine } from '../workflow/workflowEngine.js';
 
@@ -151,11 +151,17 @@ function findDuplicateDoc(sha256: string, projectId: string): { id: string; titl
 
 /**
  * GET /api/v1/documents
- * List all documents, optionally filtered by projectId, category, status
+ * List all documents, optionally filtered by projectId, category, status, enforcing project access
  */
-documentsRouter.get('/', (req: Request, res: Response) => {
-  const { category, status, projectId } = req.query;
-  let result = dbRepository.documents.getAll(projectId ? String(projectId) : undefined);
+documentsRouter.get('/', authenticateUser, (req: Request, res: Response) => {
+  const { category, status } = req.query;
+  const reqProjId = (req.query.projectId as string) || (req.user as any)?.projectId;
+
+  if (req.user && reqProjId && !checkProjectAccess(req.user, reqProjId)) {
+    return sendError(res, `Bạn không có quyền truy cập tài liệu của dự án "${reqProjId}".`, 403);
+  }
+
+  let result = dbRepository.documents.getAll(reqProjId || undefined);
 
   if (category && category !== 'ALL') {
     result = result.filter(d => d.category === category);
@@ -171,9 +177,12 @@ documentsRouter.get('/', (req: Request, res: Response) => {
  * GET /api/v1/documents/batches/:id
  * Retrieve upload batch processing status and per-file details (E2-T2)
  */
-documentsRouter.get('/batches/:id', (req: Request, res: Response) => {
+documentsRouter.get('/batches/:id', authenticateUser, (req: Request, res: Response) => {
   const batch = dbRepository.uploadBatches.getById(req.params.id);
   if (!batch) return sendError(res, 'Upload batch not found', 404);
+  if (req.user && !checkProjectAccess(req.user, batch.projectId)) {
+    return sendError(res, `Bạn không có quyền truy cập gói tải lên của dự án "${batch.projectId}".`, 403);
+  }
   sendSuccess(res, {
     ...batch,
     batchDetails: batch.batchDetails ? JSON.parse(batch.batchDetails) : []
@@ -184,7 +193,10 @@ documentsRouter.get('/batches/:id', (req: Request, res: Response) => {
  * GET /api/v1/documents/batches/project/:projectId
  * Retrieve upload batches for a specific project
  */
-documentsRouter.get('/batches/project/:projectId', (req: Request, res: Response) => {
+documentsRouter.get('/batches/project/:projectId', authenticateUser, (req: Request, res: Response) => {
+  if (req.user && !checkProjectAccess(req.user, req.params.projectId)) {
+    return sendError(res, `Bạn không có quyền truy cập gói tải lên của dự án "${req.params.projectId}".`, 403);
+  }
   const batches = dbRepository.uploadBatches.getByProjectId(req.params.projectId);
   const formatted = batches.map(b => ({
     ...b,
@@ -197,8 +209,11 @@ documentsRouter.get('/batches/project/:projectId', (req: Request, res: Response)
  * GET /api/v1/documents/review-queue
  * Prioritized Human Review Queue sorted descending by Risk Score (E8-T1, E8-T2)
  */
-documentsRouter.get('/review-queue', (req: Request, res: Response) => {
-  const projectId = req.query.projectId as string | undefined;
+documentsRouter.get('/review-queue', authenticateUser, (req: Request, res: Response) => {
+  const projectId = (req.query.projectId as string) || (req.user as any)?.projectId;
+  if (req.user && projectId && !checkProjectAccess(req.user, projectId)) {
+    return sendError(res, `Bạn không có quyền truy cập hàng đợi thẩm định của dự án "${projectId}".`, 403);
+  }
   const riskFilter = req.query.riskLevel as string | undefined;
   const categoryFilter = req.query.category as string | undefined;
 
@@ -274,11 +289,18 @@ documentsRouter.get('/review-queue', (req: Request, res: Response) => {
 
 /**
  * GET /api/v1/documents/:id
- * Retrieve a single document by ID
+ * Retrieve a single document by ID, verifying user access
  */
-documentsRouter.get('/:id', (req: Request, res: Response) => {
+documentsRouter.get('/:id', authenticateUser, (req: Request, res: Response) => {
   const doc = dbRepository.documents.getById(req.params.id);
   if (!doc) return sendError(res, 'Document not found', 404);
+
+  if (req.user && !checkProjectAccess(req.user, doc.projectId)) {
+    return sendError(res, `Bạn không có quyền chuyển đổi trạng thái tài liệu thuộc dự án "${doc.projectId}".`, 403);
+  }
+  if (req.user && !checkProjectAccess(req.user, doc.projectId)) {
+    return sendError(res, `Bạn không có quyền truy cập tài liệu thuộc dự án "${doc.projectId}".`, 403);
+  }
   sendSuccess(res, doc);
 });
 
@@ -303,17 +325,26 @@ export function getSafeMimeType(fileName: string): string {
 
 /**
  * GET /api/v1/documents/:id/file
- * Download/retrieve byte-for-byte original stored file with verified Content-Type (BUG-031)
+ * Download/retrieve byte-for-byte original stored file with verified Content-Type (BUG-031, R3-06, BUG-019)
  */
-documentsRouter.get('/:id/file', async (req: Request, res: Response) => {
+documentsRouter.get('/:id/file', authenticateUser, async (req: Request, res: Response) => {
   const doc = dbRepository.documents.getById(req.params.id);
   if (!doc) return sendError(res, 'Document not found', 404);
 
+  if (req.user && !checkProjectAccess(req.user, doc.projectId)) {
+    return sendError(res, `Bạn không có quyền chuyển đổi trạng thái tài liệu thuộc dự án "${doc.projectId}".`, 403);
+  }
+
+  if (req.user && !checkProjectAccess(req.user, doc.projectId)) {
+    return sendError(res, `Bạn không có quyền tải tệp tin từ dự án "${doc.projectId}".`, 403);
+  }
+
   const versions = dbRepository.documentVersions.getByDocumentId(doc.id);
-  const latestVersion = versions[versions.length - 1];
+  const targetVersionNo = (req.query.version as string) || (req.query.versionNo as string) || doc.currentVersion;
+  const targetVersion = (targetVersionNo ? versions.find(v => v.versionNo === targetVersionNo) : null) || versions[0];
   
-  if (latestVersion && latestVersion.fileId) {
-    const stored = dbRepository.storedFiles.getById(latestVersion.fileId);
+  if (targetVersion && targetVersion.fileId) {
+    const stored = dbRepository.storedFiles.getById(targetVersion.fileId);
     if (stored) {
       try {
         const buffer = await defaultFileStore.get(stored.storageKey);
@@ -327,12 +358,13 @@ documentsRouter.get('/:id/file', async (req: Request, res: Response) => {
     }
   }
 
-  // Fallback if raw stored file missing
-  if (doc.contentMarkdown) {
+  // Fallback if raw stored file missing (BUG-019: prefer target version's extracted content over doc.contentMarkdown)
+  const versionText = targetVersion?.extractedContent || doc.contentMarkdown;
+  if (versionText) {
     res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Content-Disposition', `attachment; filename="${doc.id}.md"`);
-    return res.send(doc.contentMarkdown);
+    return res.send(versionText);
   }
 
   return sendError(res, 'Stored file not available for this document', 404);
@@ -348,7 +380,11 @@ documentsRouter.post('/', authenticateUser, requireAuth, async (req: Request, re
     return sendError(res, 'Title and category are required', 400);
   }
 
-  const projId = projectId || 'PRJ-01';
+  const projId = projectId || (req.user as any)?.projectId || 'PRJ-01';
+  if (req.user && !checkProjectAccess(req.user, projId)) {
+    return sendError(res, `Bạn không có quyền tạo tài liệu trong dự án "${projId}".`, 403);
+  }
+
   // Validate project existence
   const proj = dbRepository.projects.getById(projId);
   if (!proj) {
@@ -439,8 +475,10 @@ documentsRouter.post('/', authenticateUser, requireAuth, async (req: Request, re
 
     tx.immediate();
 
-    // Supersede previous versions through state machine (BUG-018)
-    await defaultWorkflowEngine.supersedePreviousVersions(id, version, author || 'System User').catch(() => {});
+    // Supersede previous versions through state machine for existing documents (BUG-018, R2-12)
+    if (isExistingDoc) {
+      await defaultWorkflowEngine.supersedePreviousVersions(id, version, author || 'System User').catch(() => {});
+    }
 
     sendSuccess(res, newDoc, 'Document created and persisted to SQLite with SHA-256 signature', 201);
   } catch (dbErr: any) {
@@ -461,6 +499,9 @@ documentsRouter.post('/upload', authenticateUser, requireAuth, upload.array('fil
     }
 
     const projectId = (req.body.projectId as string) || (req.user as any)?.projectId || 'PRJ-01';
+    if (req.user && !checkProjectAccess(req.user, projectId)) {
+      return sendError(res, `Bạn không có quyền tải tài liệu lên dự án "${projectId}".`, 403);
+    }
     // Validate project existence immediately (BUG-021)
     const projectRow = db.prepare('SELECT id FROM projects WHERE id = ?').get(projectId) as { id: string } | undefined;
     if (!projectRow) {
@@ -827,6 +868,10 @@ documentsRouter.delete(
     const doc = dbRepository.documents.getById(docId);
     if (!doc) return sendError(res, 'Document not found', 404);
 
+    if (req.user && !checkProjectAccess(req.user, doc.projectId)) {
+      return sendError(res, `Bạn không có quyền xóa tài liệu thuộc dự án "${doc.projectId}".`, 403);
+    }
+
     // Track stored file keys to clean up from disk
     const versionRows = db.prepare(`
       SELECT dv.id as version_id, dv.file_id, sf.storage_key
@@ -907,6 +952,10 @@ documentsRouter.patch('/:id/status', authenticateUser, requireAuth, (req: Reques
   const doc = dbRepository.documents.getById(req.params.id);
   if (!doc) return sendError(res, 'Document not found', 404);
 
+  if (req.user && !checkProjectAccess(req.user, doc.projectId)) {
+    return sendError(res, `Bạn không có quyền chuyển đổi trạng thái tài liệu thuộc dự án "${doc.projectId}".`, 403);
+  }
+
   // Enforce rule BR-AUTH-01: Approver/Admin role required for governed transitions (BUG-006, R2-10)
   const userRole = req.user?.role;
   if (['Approved', 'Rejected', 'Deprecated'].includes(status) || doc.status === 'Approved') {
@@ -945,10 +994,19 @@ documentsRouter.post('/:id/versions', authenticateUser, requireAuth, upload.sing
   const doc = dbRepository.documents.getById(req.params.id);
   if (!doc) return sendError(res, 'Document not found', 404);
 
+  if (req.user && !checkProjectAccess(req.user, doc.projectId)) {
+    return sendError(res, `Bạn không có quyền tải phiên bản mới cho tài liệu thuộc dự án "${doc.projectId}".`, 403);
+  }
+
   const file = req.file;
   const contentBody = req.body.content || req.body.contentMarkdown;
   if (!file && !contentBody) {
     return sendError(res, 'Either a file or contentMarkdown is required', 400);
+  }
+
+  const currentVersions = dbRepository.documentVersions.getByDocumentId(doc.id);
+  if (req.body.versionNo && currentVersions.some(v => v.versionNo === req.body.versionNo)) {
+    return sendError(res, `Phiên bản "${req.body.versionNo}" đã tồn tại cho tài liệu này. Không được ghi đè phiên bản cũ.`, 409);
   }
 
   const author = req.user?.name || req.body.author || 'System User';
@@ -978,7 +1036,6 @@ documentsRouter.post('/:id/versions', authenticateUser, requireAuth, upload.sing
   const parseResult = await documentParserManager.parse(buffer, fileName, mimeType);
   const rawText = parseResult.markdownText || parseResult.rawText || '';
 
-  const currentVersions = dbRepository.documentVersions.getByDocumentId(doc.id);
   const nextVersionNo = req.body.versionNo || `v1.${currentVersions.length}`;
   const versionId = `${doc.id}-${nextVersionNo}`;
 

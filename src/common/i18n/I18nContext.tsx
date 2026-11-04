@@ -60,6 +60,7 @@ const defaultI18n: I18nContextType = {
 export const useI18n = () => {
   const context = useContext(I18nContext);
   if (!context) {
+    console.warn('[DocQA I18n] Warning: useI18n was called outside an I18nProvider. Returning fallback Vietnamese dictionary.');
     return defaultI18n;
   }
   return context;

@@ -142,6 +142,7 @@ export interface ConflictRecord {
   resolution: ConflictResolution;
   resolvedBy: string | null;
   resolvedAt: string | null;
+  resolutionNotes?: string | null;
   createdAt: string;
 }
 
@@ -404,7 +405,7 @@ export interface AuditEvent {
   user: string;
   role: UserRole;
   action: string;
-  entityType: 'Document' | 'Requirement' | 'TestCase' | 'Evidence' | 'TestRun' | 'Bug';
+  entityType: 'Document' | 'Requirement' | 'TestCase' | 'Evidence' | 'TestRun' | 'Bug' | 'Conflict';
   entityId: string;
   details: string;
   timestamp: string;

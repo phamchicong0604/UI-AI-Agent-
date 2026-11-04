@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
-import { sendSuccess } from '../../common/response.js';
+import { sendSuccess, sendError } from '../../common/response.js';
 import { dbRepository } from '../../database/db.js';
+import { authenticateUser, checkProjectAccess } from '../../common/auth.js';
 
 export const traceabilityRouter = Router();
 
@@ -8,12 +9,25 @@ export const traceabilityRouter = Router();
  * GET /api/v1/traceability/matrix
  * Delivers dynamic end-to-end bidirectional traceability query across all tiers
  */
-traceabilityRouter.get('/matrix', (req: Request, res: Response) => {
-  const documents = dbRepository.documents.getAll();
-  const requirements = dbRepository.requirements.getAll();
-  const testCases = dbRepository.testCases.getAll();
-  const testRuns = dbRepository.testRuns.getAll();
-  const bugs = dbRepository.bugs.getAll();
+traceabilityRouter.get('/matrix', authenticateUser, (req: Request, res: Response) => {
+  const { projectId } = req.query;
+  const targetProjectId = (projectId as string) || (req.user as any)?.projectId;
+
+  if (req.user && targetProjectId && !checkProjectAccess(req.user, targetProjectId)) {
+    return sendError(res, `Bạn không có quyền truy cập ma trận liên kết của dự án "${targetProjectId}".`, 403);
+  }
+
+  let documents = dbRepository.documents.getAll(targetProjectId);
+  let requirements = dbRepository.requirements.getAll(targetProjectId);
+  let testCases = dbRepository.testCases.getAll();
+  let testRuns = dbRepository.testRuns.getAll();
+  let bugs = dbRepository.bugs.getAll();
+
+  if (targetProjectId) {
+    testCases = testCases.filter(t => (t as any).projectId === targetProjectId || (t as any).project_id === targetProjectId);
+    testRuns = testRuns.filter(r => (r as any).projectId === targetProjectId || (r as any).project_id === targetProjectId);
+    bugs = bugs.filter(b => (b as any).projectId === targetProjectId || (b as any).project_id === targetProjectId);
+  }
 
   // Compute coverage gaps (AC-08)
   const rows = requirements.map(reqItem => {

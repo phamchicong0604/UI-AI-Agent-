@@ -2,16 +2,24 @@ import { Router, Request, Response } from 'express';
 import { sendSuccess, sendError } from '../../common/response.js';
 import { Project } from '../../common/types.js';
 import { dbRepository } from '../../database/db.js';
+import { authenticateUser, requireAuth, requireRole, checkProjectAccess } from '../../common/auth.js';
 
 export const projectsRouter = Router();
 
 /**
  * GET /api/v1/projects
- * Retrieves all registered projects from SQLite
+ * Retrieves all registered projects from SQLite, filtered by user membership if authenticated
  */
-projectsRouter.get('/', (req: Request, res: Response) => {
+projectsRouter.get('/', authenticateUser, (req: Request, res: Response) => {
   try {
-    const list = dbRepository.projects.getAll();
+    let list = dbRepository.projects.getAll();
+    if (req.user && req.user.role !== 'Project Admin') {
+      const allowed = new Set(dbRepository.projectMembers.getProjectsForUser(req.user.id));
+      if (req.user.projectId) {
+        allowed.add(req.user.projectId);
+      }
+      list = list.filter(p => allowed.has(p.id));
+    }
     sendSuccess(res, list, 'Projects retrieved successfully');
   } catch (err: any) {
     sendError(res, `Failed to get projects: ${err.message}`, 500);
@@ -20,10 +28,13 @@ projectsRouter.get('/', (req: Request, res: Response) => {
 
 /**
  * GET /api/v1/projects/:id
- * Retrieves a single project by ID
+ * Retrieves a single project by ID, verifying user access
  */
-projectsRouter.get('/:id', (req: Request, res: Response) => {
+projectsRouter.get('/:id', authenticateUser, (req: Request, res: Response) => {
   try {
+    if (req.user && !checkProjectAccess(req.user, req.params.id)) {
+      return sendError(res, `Bạn không có quyền truy cập dự án "${req.params.id}".`, 403);
+    }
     const proj = dbRepository.projects.getById(req.params.id);
     if (!proj) return sendError(res, 'Project not found', 404);
     sendSuccess(res, proj);
@@ -34,9 +45,9 @@ projectsRouter.get('/:id', (req: Request, res: Response) => {
 
 /**
  * POST /api/v1/projects
- * Creates and registers a new project workspace
+ * Creates and registers a new project workspace (Restricted to Project Admin / PM)
  */
-projectsRouter.post('/', (req: Request, res: Response) => {
+projectsRouter.post('/', authenticateUser, requireAuth, requireRole(['Project Admin', 'PM / Project Lead']), (req: Request, res: Response) => {
   try {
     const { name, key, description, version, author, membersCount } = req.body;
     if (!name || !key) {
@@ -61,7 +72,7 @@ projectsRouter.post('/', (req: Request, res: Response) => {
       key: cleanKey,
       description: (description || '').trim(),
       version: (version || 'v1.0.0').trim(),
-      author: (author || 'Alex Nguyen (Lead Architect)').trim(),
+      author: (author || req.user?.name || 'Project Admin').trim(),
       membersCount: Number(membersCount) || 1,
       createdAt: now,
       updatedAt: now

@@ -3,13 +3,13 @@ import { sendSuccess, sendError } from '../../common/response.js';
 import { dbRepository } from '../../database/db.js';
 import { defaultWorkflowEngine } from './workflowEngine.js';
 import { defaultJobQueue } from './jobQueue.js';
-import { authenticateUser, requireRole, requireAuth } from '../../common/auth.js';
+import { authenticateUser, requireRole, requireAuth, checkProjectAccess } from '../../common/auth.js';
 
 export const workflowRouter = Router();
 
 /**
  * GET /api/v1/jobs/:id or /api/v1/workflow/jobs/:id
- * Retrieve background job status and results with authentication (NEW-13)
+ * Retrieve background job status and results with authentication and project isolation (NEW-13, R2-14, R3-05)
  */
 workflowRouter.get(
   ['/jobs/:id', '/workflow/jobs/:id'],
@@ -19,7 +19,18 @@ workflowRouter.get(
     const job = dbRepository.jobs.getById(req.params.id);
     if (!job) return sendError(res, 'Job not found', 404);
 
-    const parsedPayload = job.payload ? JSON.parse(job.payload) : null;
+    let parsedPayload: any = null;
+    try {
+      parsedPayload = job.payload ? JSON.parse(job.payload) : null;
+    } catch {
+      parsedPayload = job.payload;
+    }
+
+    const jobProjectId = parsedPayload?.projectId;
+    if (jobProjectId && req.user && !checkProjectAccess(req.user, jobProjectId)) {
+      return sendError(res, `Bạn không có quyền truy cập thông tin công việc của dự án "${jobProjectId}".`, 403);
+    }
+
     if (parsedPayload && parsedPayload.documentText) {
       delete parsedPayload.documentText;
     }
@@ -35,13 +46,23 @@ workflowRouter.get(
 
 /**
  * POST /api/v1/jobs/:id/cancel or /api/v1/workflow/jobs/:id/cancel
- * Cancel a pending or running job with role enforcement (NEW-13)
+ * Cancel a pending or running job with role enforcement and project isolation (NEW-13, R3-05)
  */
 workflowRouter.post(
   ['/jobs/:id/cancel', '/workflow/jobs/:id/cancel'],
   authenticateUser,
   requireRole(['QA', 'Reviewer / Approver', 'Project Admin', 'PM / Project Lead']),
   (req: Request, res: Response) => {
+    const job = dbRepository.jobs.getById(req.params.id);
+    if (!job) return sendError(res, 'Job not found', 404);
+
+    try {
+      const parsedPayload = job.payload ? JSON.parse(job.payload) : null;
+      if (parsedPayload?.projectId && req.user && !checkProjectAccess(req.user, parsedPayload.projectId)) {
+        return sendError(res, `Bạn không có quyền hủy công việc của dự án "${parsedPayload.projectId}".`, 403);
+      }
+    } catch {}
+
     const reason = (req.body.reason as string) || `Cancelled by ${req.user?.name || req.user?.role || 'user'}`;
     const success = defaultJobQueue.cancelJob(req.params.id, reason);
     if (!success) {
@@ -53,7 +74,7 @@ workflowRouter.post(
 
 /**
  * POST /api/v1/jobs/:id/retry or /api/v1/workflow/jobs/:id/retry
- * Re-trigger a failed job with role enforcement (BUG-011, NEW-13)
+ * Re-trigger a failed job with role enforcement and project isolation (BUG-011, NEW-13, R3-05)
  */
 workflowRouter.post(
   ['/jobs/:id/retry', '/workflow/jobs/:id/retry'],
@@ -62,6 +83,14 @@ workflowRouter.post(
   (req: Request, res: Response) => {
     const job = dbRepository.jobs.getById(req.params.id);
     if (!job) return sendError(res, 'Job not found', 404);
+
+    try {
+      const parsedPayload = job.payload ? JSON.parse(job.payload) : null;
+      if (parsedPayload?.projectId && req.user && !checkProjectAccess(req.user, parsedPayload.projectId)) {
+        return sendError(res, `Bạn không có quyền chạy lại công việc của dự án "${parsedPayload.projectId}".`, 403);
+      }
+    } catch {}
+
     if (job.status !== 'FAILED') {
       return sendError(res, 'Chỉ có thể retry công việc ở trạng thái FAILED', 400);
     }
@@ -78,7 +107,7 @@ workflowRouter.post(
 
 /**
  * POST /api/v1/workflow/transition
- * Perform a state machine transition with audit trail & role verification (BUG-005)
+ * Perform a state machine transition with audit trail & role verification (BUG-005, R3-05)
  */
 workflowRouter.post(
   ['/workflow/transition', '/transition'],
@@ -88,6 +117,13 @@ workflowRouter.post(
     const { documentId, versionNo, fromState, toState, reason, metadata } = req.body;
     if (!documentId || !toState) {
       return sendError(res, 'documentId và toState là bắt buộc', 400);
+    }
+
+    const doc = dbRepository.documents.getById(documentId);
+    if (!doc) return sendError(res, 'Document not found', 404);
+
+    if (req.user && !checkProjectAccess(req.user, doc.projectId)) {
+      return sendError(res, `Bạn không có quyền chuyển đổi trạng thái tài liệu thuộc dự án "${doc.projectId}".`, 403);
     }
 
     const authenticatedRole = req.user?.role || 'Reviewer / Approver';
@@ -124,6 +160,13 @@ workflowRouter.patch(
   async (req: Request, res: Response) => {
     const { category, actor } = req.body;
     if (!category) return sendError(res, 'category là bắt buộc', 400);
+
+    const doc = dbRepository.documents.getById(req.params.id);
+    if (!doc) return sendError(res, 'Document not found', 404);
+
+    if (req.user && !checkProjectAccess(req.user, doc.projectId)) {
+      return sendError(res, `Bạn không có quyền phân loại tài liệu thuộc dự án "${doc.projectId}".`, 403);
+    }
 
     const userActor = req.user?.name || actor || 'Reviewer';
     try {

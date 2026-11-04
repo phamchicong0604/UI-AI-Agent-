@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
 import { UserRole } from './types.js';
 import { sendError } from './response.js';
+import { dbRepository } from '../database/db.js';
 
 export interface AuthUser {
   id: string;
@@ -77,7 +78,7 @@ export function normalizeRole(roleInput?: string): UserRole | undefined {
 
   // Common aliases
   if (/^lead\s*ba$/i.test(trimmed)) return 'BA';
-  if (/^qa\s*lead$/i.test(trimmed)) return 'Reviewer / Approver'; // QA Lead has approval privileges, standard QA does not
+  if (/^qa\s*lead$/i.test(trimmed)) return 'QA'; // BUG-003: QA Lead maps to QA, not Reviewer / Approver
   if (/^admin$/i.test(trimmed)) return 'Project Admin';
   if (/^pm$/i.test(trimmed)) return 'PM / Project Lead';
   if (/^dev$/i.test(trimmed)) return 'Tech Lead / DEV';
@@ -201,6 +202,37 @@ export function requireRole(allowedRoles: Array<UserRole | string>) {
       return;
     }
 
+    next();
+  };
+}
+
+/**
+ * Verifies that the authenticated user has access to the target project (R3-05).
+ * Project Admin has global access. Other roles must belong to the project.
+ */
+export function checkProjectAccess(user: AuthUser | undefined, targetProjectId: string | undefined): boolean {
+  if (!user) return false;
+  if (user.role === 'Project Admin') return true;
+  if (!targetProjectId) return false;
+  if (user.projectId === targetProjectId) return true;
+  const memberRole = dbRepository.projectMembers.getRole(targetProjectId, user.id);
+  return Boolean(memberRole);
+}
+
+/**
+ * Middleware ensuring the authenticated user has permission to view/modify the requested project (R3-05).
+ */
+export function requireProjectAccess(getProjectId: (req: Request) => string | undefined) {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    if (!req.user) {
+      sendError(res, 'Unauthorized: Authentication required (valid signed session required)', 401);
+      return;
+    }
+    const targetProjectId = getProjectId(req);
+    if (targetProjectId && !checkProjectAccess(req.user, targetProjectId)) {
+      sendError(res, `Permission denied: Bạn không có quyền truy cập dữ liệu thuộc dự án "${targetProjectId}" (R3-05).`, 403);
+      return;
+    }
     next();
   };
 }

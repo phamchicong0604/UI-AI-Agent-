@@ -95,22 +95,27 @@ export class RetentionService {
         WHERE json_extract(payload, '$.projectId') = ?
       `).run(projectId);
 
-      // d.2 Delete requirements, test cases, test runs, evidence and bugs belonging to project (BUG-008)
-      try {
-        db.prepare(`DELETE FROM requirements WHERE project_id = ? OR json_extract(data, '$.projectId') = ?`).run(projectId, projectId);
-      } catch {}
-      try {
-        db.prepare(`DELETE FROM test_cases WHERE json_extract(data, '$.projectId') = ?`).run(projectId);
-      } catch {}
-      try {
-        db.prepare(`DELETE FROM test_runs WHERE json_extract(data, '$.projectId') = ?`).run(projectId);
-      } catch {}
-      try {
-        db.prepare(`DELETE FROM evidence WHERE json_extract(data, '$.projectId') = ?`).run(projectId);
-      } catch {}
-      try {
-        db.prepare(`DELETE FROM bugs WHERE json_extract(data, '$.projectId') = ?`).run(projectId);
-      } catch {}
+      // d.2 Delete requirements, test cases, test runs, evidence and bugs belonging to project (BUG-008, R3-12)
+      db.prepare(`
+        DELETE FROM requirements 
+        WHERE project_id = ? OR json_extract(data, '$.projectId') = ?
+      `).run(projectId, projectId);
+
+      db.prepare(`
+        DELETE FROM test_cases 
+        WHERE json_extract(data, '$.projectId') = ? 
+           OR requirement_id IN (SELECT id FROM requirements WHERE project_id = ?)
+      `).run(projectId, projectId);
+
+      db.prepare(`DELETE FROM test_runs WHERE json_extract(data, '$.projectId') = ?`).run(projectId);
+
+      db.prepare(`DELETE FROM evidence WHERE json_extract(data, '$.projectId') = ?`).run(projectId);
+
+      db.prepare(`
+        DELETE FROM bugs 
+        WHERE json_extract(data, '$.projectId') = ? 
+           OR json_extract(data, '$.requirementId') IN (SELECT id FROM requirements WHERE project_id = ?)
+      `).run(projectId, projectId);
 
       // e. Delete document_relationships
       db.prepare(`

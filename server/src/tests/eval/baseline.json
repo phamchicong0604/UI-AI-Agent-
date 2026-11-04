@@ -3,8 +3,10 @@
   "classificationAccuracy": 100,
   "multiLabelF1": 95.24,
   "extractionPrecision": 100,
-  "extractionRecall": 95,
+  "extractionRecall": 100,
   "conflictDetectionRecall": 100,
-  "averageLatencyMs": 0.6,
+  "conflictDetectionPrecision": 100,
+  "conflictFalsePositives": 0,
+  "averageLatencyMs": 1.2,
   "totalTokensEstimated": 784
 }
