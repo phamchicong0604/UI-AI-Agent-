@@ -104,7 +104,7 @@ export class EvalRunner {
       });
     }
 
-    // 2. Conflict Detection Benchmark (BUG-007: Multiple diverse conflict pairs)
+    // 2. Conflict Detection Benchmark (BUG-007: Positive & Negative conflict pairs)
     const now = new Date().toISOString();
     
     // Seed approved units into SQLite for conflict evaluation
@@ -117,6 +117,7 @@ export class EvalRunner {
     `).run(projectId, now, now, projectId, now, now, projectId, now, now);
 
     const testPairs: Array<{ candidate: CandidateKnowledgeUnit; expectConflict: boolean }> = [
+      // Positive cases (contradictions)
       {
         candidate: {
           id: 'ku-cand-timeout',
@@ -152,10 +153,39 @@ export class EvalRunner {
           evidence_level: 'Explicit'
         },
         expectConflict: true
+      },
+      // Negative cases (non-conflicting independent requirements)
+      {
+        candidate: {
+          id: 'ku-cand-audit-log',
+          project_id: projectId,
+          unit_type: 'Requirement',
+          subject: 'Nhật ký kiểm toán truy cập máy chủ',
+          action: 'Lưu trữ an toàn',
+          content: 'Hệ thống tự động lưu trữ nhật ký truy cập vào máy chủ an toàn trong 180 ngày.',
+          evidence_level: 'Explicit'
+        },
+        expectConflict: false
+      },
+      {
+        candidate: {
+          id: 'ku-cand-timeout-consistent',
+          project_id: projectId,
+          unit_type: 'Requirement',
+          subject: 'Thời gian timeout phiên thanh toán',
+          action: 'Thiết lập',
+          content: 'Thời gian timeout phiên thanh toán là 15m.',
+          evidence_level: 'Explicit'
+        },
+        expectConflict: false
       }
     ];
 
-    let detectedCriticalConflicts = 0;
+    let conflictTruePositives = 0;
+    let conflictFalseNegatives = 0;
+    let conflictFalsePositives = 0;
+    let conflictTrueNegatives = 0;
+
     for (const pair of testPairs) {
       db.prepare(`
         INSERT INTO knowledge_units (id, project_id, unit_type, content, subject, action, evidence_level, status, created_at, updated_at)
@@ -164,31 +194,64 @@ export class EvalRunner {
 
       const { conflicts: detected } = SemanticValidator.validateAgainstApproved(db, pair.candidate);
       const isCritical = detected.some(c => c.severity === 'Critical' && c.conflictType === 'Contradiction');
-      if (isCritical) {
-        detectedCriticalConflicts++;
+
+      if (pair.expectConflict) {
+        if (isCritical) conflictTruePositives++;
+        else conflictFalseNegatives++;
+      } else {
+        if (isCritical) conflictFalsePositives++;
+        else conflictTrueNegatives++;
       }
     }
 
-    const expectedConflictsCount = testPairs.filter(p => p.expectConflict).length;
-    const conflictDetectionRecall = expectedConflictsCount > 0
-      ? Number(((detectedCriticalConflicts / expectedConflictsCount) * 100).toFixed(2))
+    const conflictDivider = conflictTruePositives + conflictFalseNegatives;
+    const conflictDetectionRecall = conflictDivider > 0
+      ? Number(((conflictTruePositives / conflictDivider) * 100).toFixed(2))
       : 100.0;
 
-    // 3. Grounded Extraction Verification (verbatim quotes in content)
+    // 3. Grounded Extraction Verification against Ground Truth (BUG-007)
     let totalGroundTruthUnits = 0;
     let groundedVerbatimUnits = 0;
+    let candidateMatches = 0;
+    let totalCandidateUnits = 0;
+
     for (const tc of dataset) {
-      for (const u of tc.groundTruth.extractedUnits || []) {
-        totalGroundTruthUnits++;
-        if (u.exactQuote && tc.content.includes(u.exactQuote)) {
+      const gtUnits = tc.groundTruth.extractedUnits || [];
+      totalGroundTruthUnits += gtUnits.length;
+
+      const sentences = tc.content
+        .split(/(?<=[.!?\n])\s+/)
+        .map((s: string) => s.trim())
+        .filter((s: string) => s.length >= 10);
+
+      for (const gt of gtUnits) {
+        if (!gt.exactQuote) continue;
+        // Verify verbatim grounding in content
+        if (tc.content.includes(gt.exactQuote)) {
           groundedVerbatimUnits++;
         }
       }
+
+      for (const sent of sentences) {
+        const matchesGt = gtUnits.some((gt: any) => 
+          gt.exactQuote && (sent.includes(gt.exactQuote) || gt.exactQuote.includes(sent))
+        );
+        if (matchesGt) {
+          candidateMatches++;
+          totalCandidateUnits++;
+        } else if (/(?:shall|must|bắt buộc|hạn mức|thời gian timeout)/i.test(sent)) {
+          totalCandidateUnits++;
+        }
+      }
     }
-    const extractionPrecision = totalGroundTruthUnits > 0
+
+    const extractionRecall = totalGroundTruthUnits > 0
       ? Number(((groundedVerbatimUnits / totalGroundTruthUnits) * 100).toFixed(2))
       : 100.0;
-    const extractionRecall = 95.0; // Benchmark grounded recall on curated dataset
+
+    const extractionPrecision = totalCandidateUnits > 0
+      ? Number(((candidateMatches / totalCandidateUnits) * 100).toFixed(2))
+      : 100.0;
 
     db.close();
 

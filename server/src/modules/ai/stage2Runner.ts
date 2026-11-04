@@ -15,6 +15,7 @@ export interface Stage2RunOptions {
   modelId?: string;
   provider?: string;
   llmCaller?: (prompt: string) => Promise<string>;
+  signal?: AbortSignal;
 }
 
 export class Stage2CombinedRunner {
@@ -74,8 +75,21 @@ Hãy phân tích tài liệu sau đây và trả về kết quả dưới địn
       try {
         const parsed = JSON.parse(cached.outputPayload);
         const validated = Stage2CombinedOutputSchema.parse(parsed);
-        return { output: validated, fromCache: true, runId: cached.id };
+        let securityFlags: string[] | undefined;
+        if (cached.inputPayload) {
+          try {
+            const input = JSON.parse(cached.inputPayload);
+            if (Array.isArray(input.securityFlags)) {
+              securityFlags = input.securityFlags;
+            }
+          } catch {}
+        }
+        return { output: validated, fromCache: true, runId: cached.id, securityFlags };
       } catch {}
+    }
+
+    if (options.signal?.aborted) {
+      throw new Error('Stage 2 AI analysis cancelled');
     }
 
     // 4. Security: Prompt Injection Scanning & Delimiter Sandboxing (E5-T3)
@@ -93,19 +107,23 @@ Hãy phân tích tài liệu sau đây và trả về kết quả dưới địn
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
+        if (options.signal?.aborted) {
+          throw new Error('Stage 2 AI analysis cancelled');
+        }
+
         let currentPrompt = fullPrompt;
         if (attempt > 1 && lastError) {
           currentPrompt = `${fullPrompt}\n\n[LỖI VALIDATION LẦN TRƯỚC]: ${lastError.message}\nYêu cầu điều chỉnh lại cấu trúc JSON phản hồi cho chuẩn xác theo schema.`;
         }
 
         if (isOfflineOnly) {
-          // Zero external request: use Grounded Engine deterministic parser (E5-T2)
-          rawOutputStr = this.generateFallbackResponse(options.documentVersionId, options.documentTitle, redactionResult.text);
+          // Zero external request: use Grounded Engine deterministic parser with original text for exact quotes (BUG-017)
+          rawOutputStr = this.generateFallbackResponse(options.documentVersionId, options.documentTitle, options.documentText);
         } else if (options.llmCaller) {
           rawOutputStr = await options.llmCaller(currentPrompt);
         } else {
           // Default deterministic mock response when no caller passed
-          rawOutputStr = this.generateFallbackResponse(options.documentVersionId, options.documentTitle, redactionResult.text);
+          rawOutputStr = this.generateFallbackResponse(options.documentVersionId, options.documentTitle, options.documentText);
         }
 
         // Clean JSON markdown blocks if wrapped by LLM
@@ -228,7 +246,7 @@ Hãy phân tích tài liệu sau đây và trả về kết quả dưới địn
             subject: title,
             action: isRequirement ? 'tuân thủ đặc tả nghiệp vụ' : 'định nghĩa các nội dung cốt lõi',
             condition: undefined,
-            evidence_level: 'Explicit',
+            evidence_level: 'Inferred', // Deterministic fallback extraction is Inferred (BUG-017)
             source_anchor: {
               document_version_id: versionId,
               heading_path: ['1. Giới thiệu tổng quan'],

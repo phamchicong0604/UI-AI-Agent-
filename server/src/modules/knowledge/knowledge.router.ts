@@ -9,14 +9,26 @@ export const knowledgeRouter = Router();
 
 /**
  * GET /api/v1/knowledge-units
- * List atomic knowledge units with optional filters
+ * List atomic knowledge units with optional filters and source anchors (BUG-028)
  */
 knowledgeRouter.get('/knowledge-units', (req: Request, res: Response) => {
   const projectId = (req.query.projectId as string) || 'PRJ-01';
   const status = req.query.status as string | undefined;
   const unitType = req.query.unitType as string | undefined;
 
-  const units = dbRepository.knowledgeUnits.getByProject(projectId, { status, unitType });
+  const rawUnits = dbRepository.knowledgeUnits.getByProject(projectId, { status, unitType });
+  const units = rawUnits.map(u => {
+    const sources = dbRepository.knowledgeSources.getByUnitId(u.id);
+    const topSource = sources[0];
+    return {
+      ...u,
+      headingPath: topSource?.headingPath || null,
+      charOffsetStart: topSource?.charOffsetStart,
+      charOffsetEnd: topSource?.charOffsetEnd,
+      exactQuote: topSource?.exactQuote,
+      sources
+    };
+  });
   sendSuccess(res, units);
 });
 
@@ -29,8 +41,13 @@ knowledgeRouter.get('/knowledge-units/:id', (req: Request, res: Response) => {
   if (!unit) return sendError(res, 'Knowledge Unit không tồn tại', 404);
 
   const sources = dbRepository.knowledgeSources.getByUnitId(unit.id);
+  const topSource = sources[0];
   sendSuccess(res, {
     ...unit,
+    headingPath: topSource?.headingPath || null,
+    charOffsetStart: topSource?.charOffsetStart,
+    charOffsetEnd: topSource?.charOffsetEnd,
+    exactQuote: topSource?.exactQuote,
     sources
   });
 });
@@ -42,7 +59,7 @@ knowledgeRouter.get('/knowledge-units/:id', (req: Request, res: Response) => {
 knowledgeRouter.post(
   '/knowledge-units/:id/decision',
   authenticateUser,
-  requireRole(['Project Admin', 'Reviewer / Approver', 'PM / Project Lead', 'BA', 'Lead BA', 'QA Lead']),
+  requireRole(['Project Admin', 'Reviewer / Approver', 'PM / Project Lead']),
   async (req: Request, res: Response) => {
     const { decision, reason, overrideExplicit } = req.body;
     if (!decision || !['Approve', 'Reject'].includes(decision)) {
@@ -80,7 +97,11 @@ knowledgeRouter.get('/conflicts', (req: Request, res: Response) => {
   const projectId = (req.query.projectId as string) || 'PRJ-01';
   const severity = req.query.severity as string | undefined;
 
-  const conflicts = dbRepository.conflicts.getUnresolvedByProject(projectId, severity);
+  const rawConflicts = dbRepository.conflicts.getUnresolvedByProject(projectId, severity);
+  const conflicts = rawConflicts.map((c: any) => ({
+    ...c,
+    resolutionNotes: c.resolution_notes || c.resolutionNotes
+  }));
   sendSuccess(res, conflicts);
 });
 
@@ -91,7 +112,7 @@ knowledgeRouter.get('/conflicts', (req: Request, res: Response) => {
 knowledgeRouter.post(
   '/conflicts/:id/resolve',
   authenticateUser,
-  requireRole(['Project Admin', 'Reviewer / Approver', 'PM / Project Lead', 'BA', 'Lead BA', 'QA Lead']),
+  requireRole(['Project Admin', 'Reviewer / Approver', 'PM / Project Lead']),
   (req: Request, res: Response) => {
     let { resolution, notes } = req.body;
     if (!resolution) {

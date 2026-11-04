@@ -194,7 +194,8 @@ export class SemanticValidator {
       }
 
       const extractNumbersWithUnits = (text: string): UnitValue[] => {
-        const regex = /\b(\d+(?:\.\d+)?)\s*(phút|giây|giờ|ngày|tháng|năm|lần|ms|s|m|h|mb|gb|kb|tb|ccu|user|users|người|%|vnd|usd|px)\b/gi;
+        // Unicode-aware regex without ASCII \b pitfalls, correctly matching Vietnamese units like 'giờ' and '%' (BUG-015, R2-08)
+        const regex = /(?:^|[^\p{L}\p{N}])(\d+(?:\.\d+)?)\s*(phút|giây|giờ|ngày|tháng|năm|lần|ms|s|m|h|mb|gb|kb|tb|ccu|user|users|người|%|vnd|usd|px)(?=[^\p{L}\p{N}]|$)/gui;
         const results: UnitValue[] = [];
         let match: RegExpExecArray | null;
         while ((match = regex.exec(text)) !== null) {
@@ -204,7 +205,7 @@ export class SemanticValidator {
           else if (u === 'm') u = 'phút';
           else if (u === 'h') u = 'giờ';
           else if (u === 'users' || u === 'user') u = 'người';
-          results.push({ raw: match[0].trim(), value: val, unit: u });
+          results.push({ raw: `${match[1]} ${match[2]}`.trim(), value: val, unit: u });
         }
         return results;
       };

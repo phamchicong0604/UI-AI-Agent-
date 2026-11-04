@@ -213,31 +213,7 @@ export class ClassificationScorer {
         }
       }
 
-      // If FTS5 is available and matching approved knowledge units in project, add subtle grounding (BUG-024)
-      if (input.db && input.projectId && normalizedContent.length > 20) {
-        try {
-          const tokens = normalizedContent.slice(0, 60)
-            .replace(/[^\p{L}\p{N}\s]/gu, ' ')
-            .trim()
-            .split(/\s+/)
-            .filter(t => t.length > 1)
-            .slice(0, 5);
-          if (tokens.length > 0) {
-            const ftsQuery = tokens.map(t => `"${t.replace(/"/g, '""')}"`).join(' OR ');
-            const ftsMatch = input.db.prepare(`
-              SELECT count(*) as cnt FROM approved_knowledge_fts
-              WHERE project_id = ? AND approved_knowledge_fts MATCH ?
-            `).get(input.projectId, ftsQuery) as { cnt: number } | undefined;
-            if (ftsMatch && ftsMatch.cnt > 0) {
-              keywordScore = Math.min(1.0, keywordScore + 0.05);
-            }
-          }
-        } catch {
-          // Fallback gracefully if FTS query syntax error on weird characters
-        }
-      }
-
-      // Total Weighted Score
+      // Total Weighted Score (Deterministic based on file path, headings and keywords - BUG-024)
       const totalScore = Math.min(1.0, Number((
         weights.pathWeight * pathScore +
         weights.headingWeight * headingScore +

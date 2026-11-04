@@ -17,6 +17,15 @@ export function updateBaselineAndReport(): void {
 
   // 2. Write official evaluation report
   const reportPath = path.resolve(__dirname, '../../../../docs/AI-EVALUATION-REPORT.md');
+  const evalStatus = {
+    accuracy: metrics.classificationAccuracy >= 85.0 ? '✅ ĐẠT' : '❌ CHƯA ĐẠT',
+    f1: metrics.multiLabelF1 >= 80.0 ? '✅ ĐẠT' : '❌ CHƯA ĐẠT',
+    precision: metrics.extractionPrecision >= 80.0 ? '✅ ĐẠT' : '❌ CHƯA ĐẠT',
+    recall: metrics.extractionRecall >= 80.0 ? '✅ ĐẠT' : '❌ CHƯA ĐẠT',
+    conflict: metrics.conflictDetectionRecall >= 85.0 ? '✅ ĐẠT' : '❌ CHƯA ĐẠT',
+    latency: metrics.averageLatencyMs < 500 ? '✅ ĐẠT' : '⚠️ CHẬM'
+  };
+
   const reportMarkdown = `# AI Document Pipeline Evaluation Report (Epic E9)
 
 Báo cáo kết quả kiểm thử định lượng hệ thống trích xuất tri thức và phân loại tài liệu tự động trên bộ dữ liệu kiểm chuẩn chuẩn hóa \`dataset.v1.json\` (DOC-EVAL-01 đến DOC-EVAL-${metrics.totalCases < 10 ? '0' + metrics.totalCases : metrics.totalCases}).
@@ -27,12 +36,12 @@ Báo cáo kết quả kiểm thử định lượng hệ thống trích xuất t
 
 | Chỉ số (Metric) | Ngưỡng yêu cầu (Threshold) | Kết quả đạt được (Actual) | Đánh giá |
 |---|---|---|---|
-| **Classification Accuracy** | $\\ge 85.0\\%$ | **${metrics.classificationAccuracy}%** (${detailedResults.filter(r => r.isCorrect).length}/${metrics.totalCases}) | ✅ VƯỢT CHỈ TIÊU |
-| **Multi-label F1** | $\\ge 80.0\\%$ | **${metrics.multiLabelF1}%** | ✅ ĐẠT |
-| **Extraction Precision** | $\\ge 80.0\\%$ | **${metrics.extractionPrecision}%** | ✅ ĐẠT |
-| **Extraction Recall** | $\\ge 80.0\\%$ | **${metrics.extractionRecall}%** | ✅ ĐẠT |
-| **Conflict Detection Recall** | $\\ge 85.0\\%$ | **${metrics.conflictDetectionRecall}%** | ✅ ĐẠT TUYỆT ĐỐI |
-| **Thời gian xử lý trung bình** | $< 500\\text{ms}$ / doc | **${metrics.averageLatencyMs} ms** | ✅ CỰC NHANH (0 LLM call) |
+| **Classification Accuracy** | $\\ge 85.0\\%$ | **${metrics.classificationAccuracy}%** (${detailedResults.filter(r => r.isCorrect).length}/${metrics.totalCases}) | ${evalStatus.accuracy} |
+| **Multi-label F1** | $\\ge 80.0\\%$ | **${metrics.multiLabelF1}%** | ${evalStatus.f1} |
+| **Extraction Precision** | $\\ge 80.0\\%$ | **${metrics.extractionPrecision}%** | ${evalStatus.precision} |
+| **Extraction Recall** | $\\ge 80.0\\%$ | **${metrics.extractionRecall}%** | ${evalStatus.recall} |
+| **Conflict Detection Recall** | $\\ge 85.0\\%$ | **${metrics.conflictDetectionRecall}%** | ${evalStatus.conflict} |
+| **Thời gian xử lý trung bình** | $< 500\\text{ms}$ / doc | **${metrics.averageLatencyMs} ms** | ${evalStatus.latency} |
 | **Tổng tokens tiêu thụ** | Giám sát | **${metrics.totalTokensEstimated} tokens** | Tiết kiệm 100% token LLM |
 
 ---
