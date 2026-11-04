@@ -405,7 +405,7 @@ export interface AuditEvent {
   user: string;
   role: UserRole;
   action: string;
-  entityType: 'Document' | 'Requirement' | 'TestCase' | 'Evidence' | 'TestRun' | 'Bug' | 'Conflict';
+  entityType: 'Document' | 'Requirement' | 'TestCase' | 'Evidence' | 'TestRun' | 'Bug' | 'Conflict' | 'User';
   entityId: string;
   details: string;
   timestamp: string;

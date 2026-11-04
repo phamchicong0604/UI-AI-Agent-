@@ -15,6 +15,7 @@ import { agentRouter } from './modules/agent/agent.router.js';
 import { workflowRouter } from './modules/workflow/workflow.router.js';
 import { knowledgeRouter } from './modules/knowledge/knowledge.router.js';
 import { authRouter } from './common/auth.router.js';
+import { authenticateUser } from './common/auth.js';
 
 export const app = express();
 
@@ -23,7 +24,7 @@ app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// Health check endpoint
+// Health check endpoint (Public)
 app.get('/health', (req, res) => {
   res.json({
     status: 'healthy',
@@ -31,6 +32,17 @@ app.get('/health', (req, res) => {
     version: '0.1.0',
     timestamp: new Date().toISOString()
   });
+});
+
+// Global Authentication Gate (R4-01, Condition 1, R5-08):
+// Every route under /api/v1 strictly requires a valid session token,
+// EXCEPT the public authentication endpoint: POST /api/v1/auth/login.
+app.use('/api/v1', (req, res, next) => {
+  const isPublicAuth = (req.path === '/auth/login' || req.path === '/auth/login/') && req.method === 'POST';
+  if (isPublicAuth) {
+    return next();
+  }
+  return authenticateUser(req, res, next);
 });
 
 // Mount API v1 Routers

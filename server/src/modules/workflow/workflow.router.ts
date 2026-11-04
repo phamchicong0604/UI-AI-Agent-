@@ -3,7 +3,7 @@ import { sendSuccess, sendError } from '../../common/response.js';
 import { dbRepository } from '../../database/db.js';
 import { defaultWorkflowEngine } from './workflowEngine.js';
 import { defaultJobQueue } from './jobQueue.js';
-import { authenticateUser, requireRole, requireAuth, checkProjectAccess } from '../../common/auth.js';
+import { authenticateUser, requireRole, requireAuth, checkProjectAccess, getUserRoleInProject } from '../../common/auth.js';
 
 export const workflowRouter = Router();
 
@@ -126,7 +126,7 @@ workflowRouter.post(
       return sendError(res, `Bạn không có quyền chuyển đổi trạng thái tài liệu thuộc dự án "${doc.projectId}".`, 403);
     }
 
-    const authenticatedRole = req.user?.role || 'Reviewer / Approver';
+    const authenticatedRole = req.user ? (getUserRoleInProject(req.user.id, doc.projectId || 'PRJ-01') || req.user.role) : 'Reviewer / Approver';
     const authenticatedActor = req.user?.name || req.user?.id || 'Reviewer';
 
     try {

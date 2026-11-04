@@ -1,11 +1,16 @@
 import { Router, Request, Response } from 'express';
+import crypto from 'crypto';
 import { sendSuccess, sendError } from '../../common/response.js';
 import { dbRepository } from '../../database/db.js';
 import { computeSha256 } from '../../common/crypto.js';
 import { AiService } from '../ai/ai.service.js';
+import { authenticateUser, requireSystemAdmin, checkProjectAccess } from '../../common/auth.js';
 
 export const agentRouter = Router();
 const aiService = new AiService();
+
+// All agent CLI/Terminal configuration and execution routes require genuine System Admin privileges (R4-02, R5-02)
+agentRouter.use(authenticateUser, requireSystemAdmin);
 
 /**
  * GET /api/v1/agent/config
@@ -19,7 +24,7 @@ agentRouter.get('/config', (req: Request, res: Response) => {
   let cliToken = dbRepository.settings.get('AGENT_CLI_TOKEN');
 
   if (!cliToken) {
-    cliToken = `docqa_tok_${computeSha256(`initial_token_${Date.now()}`).slice(0, 32)}`;
+    cliToken = `docqa_tok_${crypto.randomBytes(24).toString('hex')}`;
     dbRepository.settings.set('AGENT_CLI_TOKEN', cliToken);
   }
 
@@ -54,7 +59,7 @@ agentRouter.post('/config', (req: Request, res: Response) => {
  * Rotates the terminal CLI access token
  */
 agentRouter.post('/generate-token', (req: Request, res: Response) => {
-  const newToken = `docqa_tok_${computeSha256(`rotate_${Date.now()}_${Math.random()}`).slice(0, 32)}`;
+  const newToken = `docqa_tok_${crypto.randomBytes(24).toString('hex')}`;
   dbRepository.settings.set('AGENT_CLI_TOKEN', newToken);
   sendSuccess(res, { cliToken: newToken }, 'New CLI token generated successfully');
 });
@@ -126,8 +131,10 @@ agentRouter.post('/execute', async (req: Request, res: Response) => {
       const reqItem = dbRepository.requirements.getById(reqId);
       if (!reqItem) {
         output = `[ERROR] Requirement "${reqId}" not found in database.`;
+      } else if (reqItem.projectId && req.user && !checkProjectAccess(req.user, reqItem.projectId)) {
+        output = `[ERROR] Permission denied: Bạn không có quyền truy cập yêu cầu thuộc dự án "${reqItem.projectId}" (R4-02).`;
       } else {
-        const result = await aiService.generateGroundedDrafts({ requirement: reqItem });
+        const result = await aiService.generateGroundedDrafts({ requirement: reqItem, projectId: reqItem.projectId });
         output = [
           `[AGENT] Grounded Test Case Generation for ${reqId} ("${reqItem.title}"):`,
           `  Status Policy: MANDATORY DRAFT ONLY (Human Reviewer Required)`,
@@ -138,20 +145,25 @@ agentRouter.post('/execute', async (req: Request, res: Response) => {
       }
     } else if (action === 'impact') {
       const docId = parts[1] || 'DOC-02';
-      const reqs = dbRepository.requirements.getAll();
-      const tcs = dbRepository.testCases.getAll();
-      const impact = await aiService.analyzeChangeImpact({
-        documentId: docId,
-        requirements: reqs,
-        testCases: tcs
-      });
-      output = [
-        `[AGENT] Change Impact Blast-Radius for ${docId}:`,
-        `  Severity: ${impact.impactSeverity.toUpperCase()}`,
-        `  Impacted Requirements: ${impact.affectedRequirements.join(', ') || 'None'}`,
-        `  Invalidated Test Cases: ${impact.affectededTestCaseIds.join(', ') || 'None'}`,
-        `  Reasoning: ${impact.reasoning}`
-      ].join('\n');
+      const doc = dbRepository.documents.getById(docId);
+      if (doc?.projectId && req.user && !checkProjectAccess(req.user, doc.projectId)) {
+        output = `[ERROR] Permission denied: Bạn không có quyền phân tích tác động tài liệu thuộc dự án "${doc.projectId}" (R4-02).`;
+      } else {
+        const reqs = dbRepository.requirements.getAll(doc?.projectId);
+        const tcs = dbRepository.testCases.getAll();
+        const impact = await aiService.analyzeChangeImpact({
+          documentId: docId,
+          requirements: reqs,
+          testCases: tcs
+        });
+        output = [
+          `[AGENT] Change Impact Blast-Radius for ${docId}:`,
+          `  Severity: ${impact.impactSeverity.toUpperCase()}`,
+          `  Impacted Requirements: ${impact.affectedRequirements.join(', ') || 'None'}`,
+          `  Invalidated Test Cases: ${impact.affectededTestCaseIds.join(', ') || 'None'}`,
+          `  Reasoning: ${impact.reasoning}`
+        ].join('\n');
+      }
     } else if (action === 'help') {
       output = [
         'Available DocQA CLI commands:',
