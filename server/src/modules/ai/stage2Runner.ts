@@ -219,7 +219,8 @@ Hãy phân tích tài liệu sau đây và trả về kết quả dưới địn
       .filter(s => s.length >= 10);
 
     const extractedUnits: Array<z.infer<typeof ExtractedUnitSchema>> = [];
-    const requirementRegex = /(?:yêu cầu|phải|bắt buộc|hạn mức|thời gian timeout|thời gian xử lý|hoàn tiền|shall|must|support|tuân thủ|tiêu chuẩn|kích thước tối thiểu|quy định|xác thực|bảo mật|nghiệm thu|p0|wal|sha-256|concurrency|latency|rto|brand color|mã màu)/i;
+    // Generalized specification indicators and modal verbs (R4-14)
+    const requirementRegex = /(?:yêu cầu|phải|bắt buộc|cần|được phép|không được|tuân thủ|quy định|tiêu chuẩn|chuẩn|áp dụng|cho phép|giới hạn|hạn mức|tối thiểu|tối đa|tự động|thời gian|timeout|latency|kích thước|nghiệm thu|shall|must|should|require|required|mandatory|prohibit|ensure|strictly|support|maintain)/i;
 
     for (const sent of sentences) {
       if (requirementRegex.test(sent)) {
@@ -270,7 +271,7 @@ Hãy phân tích tài liệu sau đây và trả về kết quả dưới địn
    * Deterministic grounded fallback generator matching Stage 2 Combined Schema.
    * BUG-017: Verbatim exact quotes from document text, strictly valid offsets.
    */
-  private generateFallbackResponse(versionId: string, title: string, text: string): string {
+  public generateFallbackResponse(versionId: string, title: string, text: string): string {
     const trimmed = text.trim();
     if (!trimmed) {
       return JSON.stringify({

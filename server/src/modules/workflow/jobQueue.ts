@@ -210,8 +210,28 @@ export class SqliteJobQueue {
       }
 
       const errorMessage = err?.message || String(err);
-      // Fail with exponential backoff: attempts 1 -> 5s, 2 -> 10s, 3 -> 20s
-      dbRepository.jobs.failWithRetry(job.id, errorMessage, undefined, this.workerId);
+      
+      let isVersionTerminated = false;
+      if (parsedPayload?.documentVersionId) {
+        try {
+          const vRow = db.prepare('SELECT status FROM document_versions WHERE id = ?').get(parsedPayload.documentVersionId) as { status: string } | undefined;
+          if (vRow && ['SUPERSEDED', 'CANCELLED', 'FAILED', 'ORGANIZED'].includes(vRow.status)) {
+            isVersionTerminated = true;
+          }
+        } catch {}
+      }
+
+      if (isVersionTerminated) {
+        // Permanently terminate job without re-queueing when version is already ended (R4-09)
+        db.prepare(`
+          UPDATE jobs
+          SET status = 'FAILED', last_error = ?, locked_by = NULL, locked_at = NULL, updated_at = ?
+          WHERE id = ?
+        `).run(errorMessage, new Date().toISOString(), job.id);
+      } else {
+        // Fail with exponential backoff: attempts 1 -> 5s, 2 -> 10s, 3 -> 20s
+        dbRepository.jobs.failWithRetry(job.id, errorMessage, undefined, this.workerId);
+      }
     } finally {
       this.activeAbortControllers.delete(job.id);
     }

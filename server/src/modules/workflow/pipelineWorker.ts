@@ -81,23 +81,35 @@ export function registerPipelineHandlers(): void {
       if (signal?.aborted) throw new Error('Pipeline job cancelled during AI_ANALYSIS');
       if (isTerminated()) return { documentId, finalState: getLatestStatus(), skipped: true };
 
-      // 3. Execute Stage 2 combined runner
+      // 3. Execute Stage 2 combined runner with signal-forwarding LLM caller (R4-09)
+      const llmCaller = async (prompt: string, callSignal?: AbortSignal): Promise<string> => {
+        if (callSignal?.aborted || signal?.aborted) {
+          throw new Error('Pipeline job cancelled before LLM invocation');
+        }
+        return defaultStage2Runner.generateFallbackResponse(documentVersionId, documentTitle, documentText);
+      };
+
       const stage2Result = await defaultStage2Runner.execute({
         projectId,
         documentVersionId,
         documentTitle,
         documentText,
-        signal
+        signal,
+        llmCaller
       });
 
       if (signal?.aborted) throw new Error('Pipeline job cancelled after Stage 2 analysis');
       if (isTerminated()) return { documentId, finalState: getLatestStatus(), skipped: true };
 
-      // 4. Save extracted knowledge units and anchor sources with deterministic idempotency keys (NEW-04)
+      // 4. Save extracted knowledge units and anchor sources with deterministic quote-anchored idempotency keys (NEW-04)
       const extractedUnits = stage2Result.output.extraction?.extracted_units || [];
       db.transaction(() => {
         for (const unit of extractedUnits) {
-          const unitSignature = `${documentVersionId}:${unit.subject}:${unit.action}:${unit.condition || ''}:${unit.unit_type}`;
+          const quote = (unit.source_anchor?.exact_quote || '').trim();
+          const startOffset = unit.source_anchor?.char_offset_start ?? '';
+          const endOffset = unit.source_anchor?.char_offset_end ?? '';
+          const anchorSig = quote ? `${quote}:${startOffset}:${endOffset}` : `${unit.subject}:${unit.action}:${unit.condition || ''}`;
+          const unitSignature = `${documentVersionId}:${unit.unit_type}:${anchorSig}`;
           const unitHash = crypto.createHash('sha256').update(unitSignature).digest('hex').slice(0, 12);
           const unitId = `KU-${documentVersionId}-${unitHash}`;
           const now = new Date().toISOString().replace('T', ' ').slice(0, 16);
@@ -173,8 +185,10 @@ export function registerPipelineHandlers(): void {
         finalState: 'REVIEW_REQUIRED'
       };
     } catch (err: any) {
-      const isCancelled = signal?.aborted || err?.message?.toLowerCase().includes('cancel');
-      const isTimeout = err?.message?.toLowerCase().includes('timeout');
+      const isTimeout = err?.name === 'TimeoutError' ||
+                        err?.message?.toLowerCase().includes('timeout') ||
+                        String(signal?.reason)?.toLowerCase().includes('timeout');
+      const isCancelled = !isTimeout && (signal?.aborted || err?.message?.toLowerCase().includes('cancel'));
       const curStatus = getLatestStatus();
 
       if (isCancelled) {

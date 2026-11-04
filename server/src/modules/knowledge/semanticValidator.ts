@@ -187,29 +187,99 @@ export class SemanticValidator {
         continue;
       }
 
-      // Check Numerical / Value Contradiction with STRICT UNIT MATCHING (BUG-015, R3-14)
-      // Never compare bare unitless numbers like "bước 1" vs "bước 2". Only compare matching physical/logical units!
-      // Supports Vietnamese decimal comma (e.g., "1,5 giờ" -> 1.5) and avoids false alarms on multi-choice lists (R3-14)
+      // Check Numerical / Value Contradiction with STRICT UNIT MATCHING and QUALIFIER CONTEXT (BUG-015, R3-14, R4-12)
+      // Distinguishes thousands separator ("10,000 CCU" -> 10000) from decimal comma ("1,5 giờ" -> 1.5).
+      // Normalizes physical units (1,5 giờ == 90 phút == 5400 giây).
+      // Uses qualifier context to prevent masking conflicts ("timeout 30m, cảnh báo 15m" vs "timeout 15m").
       interface UnitValue {
         raw: string;
         value: number;
         unit: string;
+        dimension: string;
+        normalizedValue: number;
+        qualifier: string;
       }
 
+      const parseNumericString = (str: string): number => {
+        const cleaned = str.trim();
+        // Thousands separator with comma (e.g. 10,000 or 1,234,567)
+        if (/^\d{1,3}(?:,\d{3})+(?:\.\d+)?$/.test(cleaned)) {
+          return parseFloat(cleaned.replace(/,/g, ''));
+        }
+        // Thousands separator with dot (e.g. 10.000 or 1.234.567)
+        if (/^\d{1,3}(?:\.\d{3})+(?:,\d+)?$/.test(cleaned)) {
+          return parseFloat(cleaned.replace(/\./g, '').replace(',', '.'));
+        }
+        // Decimal comma (e.g. 1,5 or 0,25)
+        if (/^\d+,\d+$/.test(cleaned)) {
+          return parseFloat(cleaned.replace(',', '.'));
+        }
+        return parseFloat(cleaned);
+      };
+
+      const TIME_FACTORS: Record<string, number> = {
+        'ms': 0.001,
+        'giây': 1,
+        's': 1,
+        'phút': 60,
+        'm': 60,
+        'giờ': 3600,
+        'h': 3600,
+        'ngày': 86400,
+        'tháng': 2592000,
+        'năm': 31536000
+      };
+
+      const DATA_FACTORS: Record<string, number> = {
+        'kb': 1024,
+        'mb': 1024 * 1024,
+        'gb': 1024 * 1024 * 1024,
+        'tb': 1024 * 1024 * 1024 * 1024
+      };
+
       const extractNumbersWithUnits = (text: string): UnitValue[] => {
-        // Unicode-aware regex supporting decimal commas (1,5 giờ) and dots (1.5h) (R3-14)
-        const regex = /(?:^|[^\p{L}\p{N}])(\d+(?:[.,]\d+)?)\s*(phút|giây|giờ|ngày|tháng|năm|lần|ms|s|m|h|mb|gb|kb|tb|ccu|user|users|người|%|vnd|usd|px)(?=[^\p{L}\p{N}]|$)/gui;
+        const regex = /(?:^|[^\p{L}\p{N}])(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:[.,]\d+)?)\s*(phút|giây|giờ|ngày|tháng|năm|lần|ms|s|m|h|mb|gb|kb|tb|ccu|user|users|người|%|vnd|usd|px)(?=[^\p{L}\p{N}]|$)/gui;
         const results: UnitValue[] = [];
         let match: RegExpExecArray | null;
         while ((match = regex.exec(text)) !== null) {
-          const normalizedNumStr = match[1].replace(',', '.');
-          const val = parseFloat(normalizedNumStr);
+          const val = parseNumericString(match[1]);
           let u = match[2].toLowerCase();
-          if (u === 's') u = 'giây';
-          else if (u === 'm') u = 'phút';
-          else if (u === 'h') u = 'giờ';
-          else if (u === 'users' || u === 'user') u = 'người';
-          results.push({ raw: `${match[1]} ${match[2]}`.trim(), value: val, unit: u });
+          if (u === 'users' || u === 'user' || u === 'người') u = 'ccu';
+
+          // Extract preceding words as qualifier context (e.g. timeout, cảnh báo, tối đa, tối thiểu)
+          const preText = text.slice(Math.max(0, match.index - 35), match.index).toLowerCase();
+          let qualifier = 'general';
+          if (preText.includes('timeout') || preText.includes('hết hạn') || preText.includes('thời gian chờ')) {
+            qualifier = 'timeout';
+          } else if (preText.includes('cảnh báo') || preText.includes('warning') || preText.includes('nhắc nhở')) {
+            qualifier = 'warning';
+          } else if (preText.includes('tối đa') || preText.includes('max') || preText.includes('hạn mức cao nhất')) {
+            qualifier = 'max';
+          } else if (preText.includes('tối thiểu') || preText.includes('min') || preText.includes('ít nhất')) {
+            qualifier = 'min';
+          } else if (preText.includes('xử lý') || preText.includes('latency') || preText.includes('phản hồi')) {
+            qualifier = 'latency';
+          }
+
+          let dimension = u;
+          let normalizedValue = val;
+
+          if (TIME_FACTORS[u]) {
+            dimension = 'TIME';
+            normalizedValue = val * TIME_FACTORS[u];
+          } else if (DATA_FACTORS[u]) {
+            dimension = 'DATA';
+            normalizedValue = val * DATA_FACTORS[u];
+          }
+
+          results.push({
+            raw: `${match[1]} ${match[2]}`.trim(),
+            value: val,
+            unit: u,
+            dimension,
+            normalizedValue,
+            qualifier
+          });
         }
         return results;
       };
@@ -220,16 +290,21 @@ export class SemanticValidator {
       let hasNumberConflict = false;
       if (candidateUnits.length > 0 && approvedUnitsList.length > 0) {
         for (const cu of candidateUnits) {
-          const matchingApproved = approvedUnitsList.filter(au => au.unit === cu.unit);
+          // Match by physical dimension (e.g. TIME, DATA, ccu)
+          const matchingApproved = approvedUnitsList.filter(au => au.dimension === cu.dimension);
           if (matchingApproved.length === 0) continue;
 
-          // If the candidate value matches any of the approved values with this unit, it's valid (e.g. from an approved list/options)
-          if (matchingApproved.some(au => Math.abs(au.value - cu.value) < 1e-6)) {
+          // If qualifier context is specific (e.g. timeout vs warning), find corresponding qualifier in approved
+          const qualifierMatched = matchingApproved.filter(au => au.qualifier === cu.qualifier);
+          const candidatesToCompare = qualifierMatched.length > 0 ? qualifierMatched : matchingApproved;
+
+          // If normalized value matches any equivalent approved spec (e.g. 1.5h == 90m), no conflict
+          if (candidatesToCompare.some(au => Math.abs(au.normalizedValue - cu.normalizedValue) < 1e-4)) {
             continue;
           }
 
-          // Conflict detected: none of the approved specs match the candidate's value
-          const firstApproved = matchingApproved[0];
+          // Conflict detected: none of the comparable approved specs match the candidate's value
+          const firstApproved = candidatesToCompare[0];
           hasNumberConflict = true;
           conflicts.push({
             id: randomUUID(),
