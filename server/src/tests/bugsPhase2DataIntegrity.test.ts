@@ -117,7 +117,8 @@ describe('Bug Review Phase 2: Data Integrity (BUG-008, BUG-019 to BUG-023)', () 
       const res = await fetch(`${baseUrl}/api/v1/documents/upload`, {
         method: 'POST',
         headers: {
-          'Content-Type': `multipart/form-data; boundary=${boundary}`
+          'Content-Type': `multipart/form-data; boundary=${boundary}`,
+          'Authorization': `Bearer ${adminToken}`
         },
         body
       });

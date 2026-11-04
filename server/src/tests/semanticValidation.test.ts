@@ -282,5 +282,65 @@ describe('Semantic Validation & Risk Scoring (Epic E7-T3, E7-T4)', () => {
       const policyConflicts = conflicts.filter(c => c.conflictType === 'Contradiction' && c.description.includes('policy contradiction'));
       expect(policyConflicts.length).toBe(0);
     });
+
+    it('accurately detects numeric contradictions with Vietnamese units like "giờ" and symbols like "%" (R2-08)', () => {
+      const now = new Date().toISOString();
+
+      // Case 1: Vietnamese unit "giờ"
+      const approvedHourId = 'ku-appr-hour';
+      db.prepare(`
+        INSERT INTO knowledge_units (id, project_id, unit_type, content, subject, action, evidence_level, status, created_at, updated_at)
+        VALUES (?, ?, 'Requirement', 'Thời gian hoàn tiền tự động là 24 giờ.', 'Thời gian hoàn tiền', 'Hoàn tiền', 'Explicit', 'Approved', ?, ?)
+      `).run(approvedHourId, projectId, now, now);
+
+      const candidateHour: CandidateKnowledgeUnit = {
+        id: 'cand-hour-conflict',
+        project_id: projectId,
+        unit_type: 'Requirement',
+        subject: 'Thời gian hoàn tiền',
+        action: 'Hoàn tiền',
+        content: 'Thời gian hoàn tiền tự động là 2 giờ.',
+        evidence_level: 'Explicit'
+      };
+
+      db.prepare(`
+        INSERT INTO knowledge_units (id, project_id, unit_type, content, subject, action, evidence_level, status, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'Draft', ?, ?)
+      `).run(candidateHour.id, candidateHour.project_id, candidateHour.unit_type, candidateHour.content, candidateHour.subject, candidateHour.action, candidateHour.evidence_level, now, now);
+
+      const { conflicts: hourConflicts } = SemanticValidator.validateAgainstApproved(db, candidateHour);
+      const hourContradictions = hourConflicts.filter(c => c.conflictType === 'Contradiction' && c.severity === 'Critical');
+      expect(hourContradictions.length).toBe(1);
+      expect(hourContradictions[0].description).toContain('[2 giờ]');
+      expect(hourContradictions[0].description).toContain('[24 giờ]');
+
+      // Case 2: Symbol "%"
+      const approvedPercentId = 'ku-appr-pct';
+      db.prepare(`
+        INSERT INTO knowledge_units (id, project_id, unit_type, content, subject, action, evidence_level, status, created_at, updated_at)
+        VALUES (?, ?, 'Requirement', 'Tỷ lệ kiểm thử tự động đạt 90%.', 'Tỷ lệ kiểm thử tự động', 'Nghiệm thu', 'Explicit', 'Approved', ?, ?)
+      `).run(approvedPercentId, projectId, now, now);
+
+      const candidatePercent: CandidateKnowledgeUnit = {
+        id: 'cand-pct-conflict',
+        project_id: projectId,
+        unit_type: 'Requirement',
+        subject: 'Tỷ lệ kiểm thử tự động',
+        action: 'Nghiệm thu',
+        content: 'Tỷ lệ kiểm thử tự động đạt 50%.',
+        evidence_level: 'Explicit'
+      };
+
+      db.prepare(`
+        INSERT INTO knowledge_units (id, project_id, unit_type, content, subject, action, evidence_level, status, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'Draft', ?, ?)
+      `).run(candidatePercent.id, candidatePercent.project_id, candidatePercent.unit_type, candidatePercent.content, candidatePercent.subject, candidatePercent.action, candidatePercent.evidence_level, now, now);
+
+      const { conflicts: pctConflicts } = SemanticValidator.validateAgainstApproved(db, candidatePercent);
+      const pctContradictions = pctConflicts.filter(c => c.conflictType === 'Contradiction' && c.severity === 'Critical');
+      expect(pctContradictions.length).toBe(1);
+      expect(pctContradictions[0].description).toContain('[50 %]');
+      expect(pctContradictions[0].description).toContain('[90 %]');
+    });
   });
 });

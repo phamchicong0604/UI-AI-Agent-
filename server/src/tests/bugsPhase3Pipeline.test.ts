@@ -6,11 +6,13 @@ import { db, dbRepository } from '../database/db.js';
 import { defaultJobQueue, SqliteJobQueue } from '../modules/workflow/jobQueue.js';
 import { registerPipelineHandlers } from '../modules/workflow/pipelineWorker.js';
 import { defaultWorkflowEngine, ALLOWED_TRANSITIONS } from '../modules/workflow/workflowEngine.js';
+import { signUserSession } from '../common/auth.js';
 
 describe('Bug Review Phase 3: Pipeline & Job Queue (BUG-010, BUG-012, BUG-013, BUG-018)', () => {
   let server: http.Server;
   let baseUrl: string;
   const testProjectId = `PRJ-P3-${Date.now()}`;
+  const adminToken = signUserSession({ id: 'usr_admin', username: 'admin', name: 'Alex Nguyen', role: 'Project Admin' });
 
   beforeAll(async () => {
     registerPipelineHandlers();
@@ -55,7 +57,8 @@ describe('Bug Review Phase 3: Pipeline & Job Queue (BUG-010, BUG-012, BUG-013, B
       const res = await fetch(`${baseUrl}/api/v1/documents/upload`, {
         method: 'POST',
         headers: {
-          'Content-Type': `multipart/form-data; boundary=${boundary}`
+          'Content-Type': `multipart/form-data; boundary=${boundary}`,
+          'Authorization': `Bearer ${adminToken}`
         },
         body
       });
@@ -67,12 +70,15 @@ describe('Bug Review Phase 3: Pipeline & Job Queue (BUG-010, BUG-012, BUG-013, B
 
       const createdDoc = json.data.documents[0];
 
-      // Verify a PIPELINE_RUN job was enqueued
+      // Verify a PIPELINE_RUN job was enqueued specifically for this document (R2-16)
       const pendingJobs = db.prepare(`
-        SELECT * FROM jobs WHERE type = 'PIPELINE_RUN' AND status = 'PENDING'
-      `).all() as any[];
+        SELECT * FROM jobs 
+        WHERE type = 'PIPELINE_RUN' 
+          AND status = 'PENDING' 
+          AND json_extract(payload, '$.documentId') = ?
+      `).all(createdDoc.id) as any[];
 
-      expect(pendingJobs.length).toBeGreaterThanOrEqual(1);
+      expect(pendingJobs.length).toBe(1);
 
       // Trigger worker cycle
       const processed = await defaultJobQueue.processNext(5);
@@ -187,6 +193,70 @@ describe('Bug Review Phase 3: Pipeline & Job Queue (BUG-010, BUG-012, BUG-013, B
 
       const finalJob = dbRepository.jobs.getById(jobId);
       expect(finalJob?.status).toBe('COMPLETED');
+    });
+
+    it('BUG-012: cancelJob triggers abort signal and cancels running or pending job', async () => {
+      const queue = new SqliteJobQueue('worker-cancel-test');
+      let signalAbortedDuringExecution = false;
+
+      queue.registerHandler('PIPELINE_RUN', async (_payload, _job, signal) => {
+        // Wait briefly to allow cancellation call
+        await new Promise<void>((resolve) => {
+          const checkTimer = setInterval(() => {
+            if (signal?.aborted) {
+              signalAbortedDuringExecution = true;
+              clearInterval(checkTimer);
+              resolve();
+            }
+          }, 20);
+          setTimeout(() => {
+            clearInterval(checkTimer);
+            resolve();
+          }, 500);
+        });
+      });
+
+      const jobId = queue.enqueue('PIPELINE_RUN', { documentId: 'DOC-CANCEL-TEST' });
+
+      // Start processing in background
+      const processPromise = queue.processNext(1);
+
+      // Cancel the job while in-flight
+      await new Promise(r => setTimeout(r, 50));
+      const cancelled = queue.cancelJob(jobId, 'User requested cancellation during execution');
+      expect(cancelled).toBe(true);
+
+      await processPromise;
+      expect(signalAbortedDuringExecution).toBe(true);
+
+      const finalJob = dbRepository.jobs.getById(jobId);
+      expect(finalJob?.status).toBe('CANCELLED');
+      expect(finalJob?.lastError).toContain('cancellation');
+    });
+
+    it('BUG-013: two competing workers do not execute the same job twice (atomic locking)', async () => {
+      const queue1 = new SqliteJobQueue('worker-compete-1');
+      const queue2 = new SqliteJobQueue('worker-compete-2');
+
+      let executionCount = 0;
+      const handler = async () => {
+        executionCount++;
+        await new Promise(r => setTimeout(r, 30));
+      };
+
+      queue1.registerHandler('PIPELINE_RUN', handler);
+      queue2.registerHandler('PIPELINE_RUN', handler);
+
+      queue1.enqueue('PIPELINE_RUN', { test: 'compete-lock' });
+
+      // Run both workers concurrently
+      const [p1, p2] = await Promise.all([
+        queue1.processNext(1),
+        queue2.processNext(1)
+      ]);
+
+      expect(p1 + p2).toBe(1);
+      expect(executionCount).toBe(1);
     });
   });
 });

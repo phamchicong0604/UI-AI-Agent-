@@ -96,6 +96,24 @@ describe('Bug Review Phase 1: Security & Governance (BUG-001 to BUG-006, BUG-009
 
     it('BUG-001: AiService.generateGroundedDrafts automatically routes OFFLINE_ONLY project to deterministic local engine', async () => {
       const aiService = new AiService();
+      db.prepare(`
+        INSERT OR REPLACE INTO requirements (id, project_id, type, priority, status, data, updated_at)
+        VALUES (?, ?, 'Functional', 'High', 'Draft', ?, datetime('now'))
+      `).run(
+        'REQ-OFF-01',
+        testOfflineProjectId,
+        JSON.stringify({
+          id: 'REQ-OFF-01',
+          title: 'Offline Requirement',
+          description: 'Hệ thống chạy offline an toàn',
+          type: 'Functional',
+          priority: 'High',
+          businessRules: ['Rule 1'],
+          acceptanceCriteria: [{ id: 'AC-1', text: 'Thỏa mãn điều kiện', completed: false }],
+          sourceReferences: []
+        })
+      );
+
       const result = await aiService.generateGroundedDrafts({
         requirement: {
           id: 'REQ-OFF-01',
@@ -119,6 +137,74 @@ describe('Bug Review Phase 1: Security & Governance (BUG-001 to BUG-006, BUG-009
       expect(result.testCases).toBeDefined();
       expect(result.testCases.length).toBeGreaterThan(0);
       expect(result.testCases[0].title).toContain('Offline Requirement');
+    });
+
+    it('R2-03: AiService resolves project strictly from DB requirement and throws PolicyViolationError if missing', async () => {
+      const aiService = new AiService();
+      await expect(
+        aiService.generateGroundedDrafts({
+          requirement: {
+            id: 'REQ-NON-EXISTENT-SPOOF',
+            title: 'Spoofed Requirement',
+            description: 'Unsaved requirement attempting external routing',
+            type: 'Functional',
+            priority: 'High',
+            businessRules: [],
+            acceptanceCriteria: [],
+            sourceReferences: [],
+            status: 'Draft',
+            owner: 'Tester',
+            approver: 'Approver',
+            createdAt: '2026-11-03',
+            updatedAt: '2026-11-03'
+          },
+          projectId: testProjectId
+        })
+      ).rejects.toThrow(PolicyViolationError);
+    });
+
+    it('R2-03: AiService uses DB requirement.project_id instead of client-supplied projectId', async () => {
+      const aiService = new AiService();
+      db.prepare(`
+        INSERT OR REPLACE INTO requirements (id, project_id, type, priority, status, data, updated_at)
+        VALUES (?, ?, 'Functional', 'High', 'Draft', ?, datetime('now'))
+      `).run(
+        'REQ-DB-OFFLINE',
+        testOfflineProjectId,
+        JSON.stringify({
+          id: 'REQ-DB-OFFLINE',
+          title: 'Database Requirement in Offline Project',
+          description: 'Verified DB storage',
+          type: 'Functional',
+          priority: 'High',
+          acceptanceCriteria: [{ id: 'AC-1', text: 'Criteria 1', completed: false }],
+          sourceReferences: []
+        })
+      );
+
+      // Client claims ALLOW_EXTERNAL testProjectId, but DB requirement belongs to testOfflineProjectId
+      const result = await aiService.generateGroundedDrafts({
+        requirement: {
+          id: 'REQ-DB-OFFLINE',
+          title: 'Database Requirement in Offline Project',
+          description: 'Client sent external project',
+          type: 'Functional',
+          priority: 'High',
+          businessRules: [],
+          acceptanceCriteria: [{ id: 'AC-1', text: 'Criteria 1', completed: false }],
+          sourceReferences: [],
+          status: 'Draft',
+          owner: 'Tester',
+          approver: 'Approver',
+          createdAt: '2026-11-03',
+          updatedAt: '2026-11-03'
+        },
+        projectId: testProjectId
+      });
+
+      expect(result).toBeDefined();
+      expect(result.testCases.length).toBeGreaterThan(0);
+      expect(result.testCases[0].title).toContain('Database Requirement in Offline Project');
     });
   });
 
@@ -495,6 +581,98 @@ describe('Bug Review Phase 1: Security & Governance (BUG-001 to BUG-006, BUG-009
       expect(result.text).toContain('[REDACTED_EMAIL]');
       expect(result.text).not.toContain('AKIA1234567890ABCDEF');
       expect(result.text).not.toContain('contact@somedomain.com');
+    });
+  });
+
+  describe('Round 2 Security Hardening: R2-01, R2-02, R2-04', () => {
+    it('R2-01: POST /api/v1/auth/session rejects arbitrary role declaration without credentials', async () => {
+      const res = await fetch(`${baseUrl}/api/v1/auth/session`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role: 'Project Admin', name: 'Imposter' })
+      });
+
+      expect(res.status).toBe(401);
+      const json = await res.json() as any;
+      expect(json.success).toBe(false);
+      expect(json.error).toContain('Vui lòng cung cấp mật khẩu');
+    });
+
+    it('R2-01: POST /api/v1/auth/session issues valid signed token when valid PBKDF2 credentials provided', async () => {
+      const res = await fetch(`${baseUrl}/api/v1/auth/session`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role: 'Project Admin', credential: 'admin123' })
+      });
+
+      expect(res.status).toBe(200);
+      const json = await res.json() as any;
+      expect(json.success).toBe(true);
+      expect(json.data.token).toBeDefined();
+      expect(json.data.user.role).toBe('Project Admin');
+    });
+
+    it('R2-02: verifyUserSession rejects tampered session tokens with constant-time verification', async () => {
+      const { verifyUserSession, signUserSession } = await import('../common/auth.js');
+      const validToken = signUserSession({
+        id: 'user-test',
+        name: 'Tester',
+        role: 'QA',
+        projectId: 'PRJ-01'
+      });
+
+      // Valid token verifies
+      const user = verifyUserSession(validToken);
+      expect(user).not.toBeNull();
+      expect(user?.role).toBe('QA');
+
+      // Tampered token (modified signature or payload)
+      const parts = validToken.split('.');
+      const tamperedToken = `${parts[0]}.${parts[1]}.tampered_signature_xyz`;
+      expect(verifyUserSession(tamperedToken)).toBeNull();
+    });
+
+    it('R2-04: Upserting knowledge units preserves Approved status and does not revert to Draft on retry', () => {
+      const unitId = `KU-RETRY-TEST-${Date.now()}`;
+      const now = new Date().toISOString();
+
+      // 1. Initial creation
+      dbRepository.knowledgeUnits.create({
+        id: unitId,
+        projectId: 'PRJ-01',
+        unitType: 'Requirement',
+        content: 'Initial unit content',
+        subject: 'Authentication',
+        action: 'Login',
+        condition: null,
+        evidenceLevel: 'Explicit',
+        status: 'Draft',
+        createdAt: now,
+        updatedAt: now
+      });
+
+      // 2. Mark unit as Approved
+      db.prepare("UPDATE knowledge_units SET status = 'Approved', content = 'Approved unit content' WHERE id = ?").run(unitId);
+
+      // 3. Retry execution tries to upsert the unit with Draft status again
+      dbRepository.knowledgeUnits.create({
+        id: unitId,
+        projectId: 'PRJ-01',
+        unitType: 'Requirement',
+        content: 'Overwritten draft content',
+        subject: 'Authentication',
+        action: 'Login',
+        condition: null,
+        evidenceLevel: 'Explicit',
+        status: 'Draft',
+        createdAt: now,
+        updatedAt: now
+      });
+
+      // 4. Verify status and content remain Approved
+      const unitAfterRetry = dbRepository.knowledgeUnits.getById(unitId);
+      expect(unitAfterRetry?.status).toBe('Approved');
+      expect(unitAfterRetry?.content).toBe('Approved unit content');
     });
   });
 });

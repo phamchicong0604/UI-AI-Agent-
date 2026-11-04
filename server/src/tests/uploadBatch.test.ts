@@ -4,13 +4,23 @@ import http from 'http';
 import AdmZip from 'adm-zip';
 import { db, dbRepository } from '../database/db.js';
 import { documentsRouter } from '../modules/documents/documents.router.js';
+import { signUserSession } from '../common/auth.js';
 
 describe('Upload Batches & Duplicate Detection (E2-T2)', () => {
   let testProjectId: string;
   let server: http.Server;
   let baseUrl: string;
+  let authHeaders: Record<string, string>;
 
   beforeAll(async () => {
+    const adminToken = signUserSession({
+      id: 'usr_admin',
+      username: 'admin',
+      name: 'Alex Nguyen',
+      role: 'Project Admin'
+    });
+    authHeaders = { 'Authorization': `Bearer ${adminToken}` };
+
     const app = express();
     app.use(express.json());
     app.use('/api/v1/documents', documentsRouter);
@@ -82,6 +92,19 @@ describe('Upload Batches & Duplicate Detection (E2-T2)', () => {
     expect(projectBatches.some(b => b.id === batchId)).toBe(true);
   });
 
+  it('should reject unauthenticated upload with 401 (R2-07, R2-17)', async () => {
+    const formData = new FormData();
+    formData.append('projectId', testProjectId);
+    formData.append('files', new Blob(['# Test Content'], { type: 'text/markdown' }), 'unauth.md');
+
+    const res = await fetch(`${baseUrl}/api/v1/documents/upload`, {
+      method: 'POST',
+      body: formData
+    });
+
+    expect(res.status).toBe(401);
+  });
+
   it('should process ZIP archive where 1 corrupt file out of 5 does not fail the batch and marks status PARTIAL', async () => {
     const zip = new AdmZip();
     // 4 valid markdown files
@@ -103,6 +126,7 @@ describe('Upload Batches & Duplicate Detection (E2-T2)', () => {
 
     const res = await fetch(`${baseUrl}/api/v1/documents/upload`, {
       method: 'POST',
+      headers: authHeaders,
       body: formData
     });
 
@@ -147,6 +171,7 @@ describe('Upload Batches & Duplicate Detection (E2-T2)', () => {
 
     const res1 = await fetch(`${baseUrl}/api/v1/documents/upload`, {
       method: 'POST',
+      headers: authHeaders,
       body: form1
     });
 
@@ -166,6 +191,7 @@ describe('Upload Batches & Duplicate Detection (E2-T2)', () => {
 
     const res2 = await fetch(`${baseUrl}/api/v1/documents/upload`, {
       method: 'POST',
+      headers: authHeaders,
       body: form2
     });
 
@@ -202,6 +228,7 @@ describe('Upload Batches & Duplicate Detection (E2-T2)', () => {
 
     const uploadRes = await fetch(`${baseUrl}/api/v1/documents/upload`, {
       method: 'POST',
+      headers: authHeaders,
       body: form
     });
 
