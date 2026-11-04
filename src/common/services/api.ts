@@ -33,41 +33,78 @@ export function setAuthToken(token: string | null): void {
   }
 }
 
-const DEFAULT_ROLE_PASSWORDS: Record<string, string> = {
-  'Project Admin': 'admin123',
-  'PM / Project Lead': 'pm123',
-  'BA': 'ba123',
-  'Tech Lead / DEV': 'dev123',
-  'QA': 'qa123',
-  'Reviewer / Approver': 'reviewer123'
-};
+export interface AuthSessionResponse {
+  token: string;
+  user: {
+    id: string;
+    username: string;
+    name: string;
+    role: string;
+    projectId?: string;
+  };
+}
 
-/**
- * Exchanges active UI role and user for an HMAC-signed session token with the backend (NEW-01, NEW-02, R2-01).
- * On failure, immediately revokes/clears any stale token to avoid privilege leakage (R2-09).
- */
-export async function authenticateRoleSession(role: string, name?: string): Promise<string> {
-  // Synchronously clear previous token to eliminate race window during role switch (R2-09)
-  setAuthToken(null);
-  try {
-    const credential = DEFAULT_ROLE_PASSWORDS[role] || 'admin123';
-    const res = await fetch(`${API_BASE_URL}/auth/session`, {
+export const authApi = {
+  async login(username: string, password: string, projectId?: string): Promise<AuthSessionResponse> {
+    const res = await fetch(`${API_BASE_URL}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ role, name, credential })
+      body: JSON.stringify({ username, password, projectId })
     });
     const json = await res.json().catch(() => ({}));
-    if (res.ok && json.data?.token) {
-      setAuthToken(json.data.token);
-      return json.data.token;
+    if (!res.ok) {
+      throw new Error(json.message || json.error || 'Đăng nhập không thành công');
     }
-  } catch (err) {
-    console.warn('[DocQA Auth] Session authentication error:', err);
+    if (json.data?.token) {
+      setAuthToken(json.data.token);
+      return json.data;
+    }
+    throw new Error('Không nhận được token xác thực');
+  },
+
+  async switchAdminRole(role: string, projectId?: string): Promise<AuthSessionResponse> {
+    const token = getAuthToken();
+    const res = await fetch(`${API_BASE_URL}/auth/session`, {
+      method: 'POST',
+      headers: { 
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({ role, projectId })
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(json.message || json.error || 'Chuyển vai trò thất bại');
+    }
+    if (json.data?.token) {
+      setAuthToken(json.data.token);
+      return json.data;
+    }
+    throw new Error('Không nhận được token xác thực mới');
+  },
+
+  async getMe(): Promise<any | null> {
+    const token = getAuthToken();
+    if (!token) return null;
+    try {
+      const res = await fetch(`${API_BASE_URL}/auth/me`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (!res.ok) {
+        setAuthToken(null);
+        return null;
+      }
+      const json = await res.json();
+      return json.data?.user || null;
+    } catch {
+      return null;
+    }
+  },
+
+  logout(): void {
+    setAuthToken(null);
   }
-  // Invalidate any previously held token if current role authentication fails (R2-09)
-  setAuthToken(null);
-  return '';
-}
+};
 
 async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
   const headers: Record<string, string> = {

@@ -27,14 +27,16 @@ authRouter.post('/login', (req: Request, res: Response) => {
     return sendError(res, 'Thông tin đăng nhập không hợp lệ.', 401);
   }
 
-  // Resolve role from project_members if projectId is specified (R2-01)
-  let resolvedRole = dbUser.role;
+  // Resolve role from project_members for specified target project (R2-01, R3-05)
   const targetProject = projectId || 'PRJ-01';
   const memberRole = dbRepository.projectMembers.getRole(targetProject, dbUser.id);
-  if (memberRole) {
-    resolvedRole = memberRole;
+
+  // Enforce project membership: non-admin users cannot log into projects they are not members of (R3-05)
+  if (!memberRole && dbUser.role !== 'Project Admin') {
+    return sendError(res, `Người dùng "${dbUser.username}" không có quyền truy cập dự án "${targetProject}".`, 403);
   }
 
+  const resolvedRole = memberRole || dbUser.role;
   const canonicalRole = normalizeRole(resolvedRole) || 'QA';
 
   const user: AuthUser = {
@@ -121,11 +123,11 @@ authRouter.post('/session', (req: Request, res: Response) => {
   }
 
   const targetProject = projectId || 'PRJ-01';
-  let resolvedRole = dbUser.role;
   const memberRole = dbRepository.projectMembers.getRole(targetProject, dbUser.id);
-  if (memberRole) {
-    resolvedRole = memberRole;
+  if (!memberRole && dbUser.role !== 'Project Admin') {
+    return sendError(res, `Người dùng "${dbUser.username}" không có quyền truy cập dự án "${targetProject}".`, 403);
   }
+  let resolvedRole = memberRole || dbUser.role;
 
   const canonicalRole = normalizeRole(resolvedRole) || 'QA';
 

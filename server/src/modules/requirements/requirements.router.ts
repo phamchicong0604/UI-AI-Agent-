@@ -2,19 +2,25 @@ import { Router, Request, Response } from 'express';
 import { sendSuccess, sendError } from '../../common/response.js';
 import { RequirementItem } from '../../common/types.js';
 import { dbRepository } from '../../database/db.js';
-import { authenticateUser, requireAuth, requireRole } from '../../common/auth.js';
+import { authenticateUser, requireAuth, requireRole, checkProjectAccess } from '../../common/auth.js';
 
 export const requirementsRouter = Router();
 
-requirementsRouter.get('/', (req: Request, res: Response) => {
-  const projectId = req.query.projectId as string | undefined;
+requirementsRouter.get('/', authenticateUser, (req: Request, res: Response) => {
+  const projectId = (req.query.projectId as string) || (req.user as any)?.projectId;
+  if (req.user && projectId && !checkProjectAccess(req.user, projectId)) {
+    return sendError(res, `Bạn không có quyền truy cập yêu cầu của dự án "${projectId}".`, 403);
+  }
   const reqs = dbRepository.requirements.getAll(projectId);
   sendSuccess(res, reqs);
 });
 
-requirementsRouter.get('/:id', (req: Request, res: Response) => {
+requirementsRouter.get('/:id', authenticateUser, (req: Request, res: Response) => {
   const reqItem = dbRepository.requirements.getById(req.params.id);
   if (!reqItem) return sendError(res, 'Requirement not found', 404);
+  if (req.user && reqItem.projectId && !checkProjectAccess(req.user, reqItem.projectId)) {
+    return sendError(res, `Bạn không có quyền truy cập yêu cầu thuộc dự án "${reqItem.projectId}".`, 403);
+  }
   sendSuccess(res, reqItem);
 });
 
@@ -22,8 +28,12 @@ requirementsRouter.post('/', authenticateUser, requireAuth, (req: Request, res: 
   const { title, description, type, priority, businessRules, acceptanceCriteria, sourceReferences, owner, projectId } = req.body;
   if (!title) return sendError(res, 'Title is required', 400);
 
-  const existing = dbRepository.requirements.getAll();
   const projId = projectId || (req.user as any)?.projectId || 'PRJ-01';
+  if (req.user && !checkProjectAccess(req.user, projId)) {
+    return sendError(res, `Bạn không có quyền tạo yêu cầu trong dự án "${projId}".`, 403);
+  }
+
+  const existing = dbRepository.requirements.getAll();
   const newReq: RequirementItem = {
     id: `REQ-00${existing.length + 1}`,
     title,
@@ -48,6 +58,10 @@ requirementsRouter.patch('/:id/status', authenticateUser, requireAuth, (req: Req
   const { status } = req.body;
   const reqItem = dbRepository.requirements.getById(req.params.id);
   if (!reqItem) return sendError(res, 'Requirement not found', 404);
+
+  if (req.user && reqItem.projectId && !checkProjectAccess(req.user, reqItem.projectId)) {
+    return sendError(res, `Bạn không có quyền cập nhật yêu cầu thuộc dự án "${reqItem.projectId}".`, 403);
+  }
 
   // BR-AUTH-01: Only Approver/Admin roles can approve requirements (NEW-11)
   if (status === 'Approved' || status === 'Rejected') {

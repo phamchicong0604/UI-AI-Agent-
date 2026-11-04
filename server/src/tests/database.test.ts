@@ -1,4 +1,7 @@
 import { describe, it, expect } from 'vitest';
+import Database from 'better-sqlite3';
+import { DatabaseMigrator } from '../database/migrator.js';
+import { allMigrations } from '../database/migrations/index.js';
 import { dbRepository } from '../database/db.js';
 import { DocumentItem, RequirementItem, TestCaseItem } from '../common/types.js';
 
@@ -137,5 +140,98 @@ describe('SQLite Database Layer & Repository CRUD', () => {
     dbRepository.documents.delete('DOC-PROJ-TEST-01');
     dbRepository.projects.delete('PRJ-TEST-99');
     expect(dbRepository.projects.getById('PRJ-TEST-99')).toBeNull();
+  });
+
+  it('executes migrations 001-011 on a pre-populated database without data loss or foreign key cascades (R3-01)', () => {
+    const memDb = new Database(':memory:');
+    memDb.pragma('foreign_keys = ON');
+
+    // 1. Run migrations 001 through 009
+    const earlyMigrations = allMigrations.filter(m => parseInt(m.version) <= 9);
+    const migrator1 = new DatabaseMigrator(memDb, earlyMigrations);
+    migrator1.runPendingMigrations();
+
+    // 2. Populate pre-existing project with rich interrelated data
+    const prjId = 'PRJ-LEGACY';
+    memDb.prepare(`
+      INSERT INTO projects (id, name, key, description, version, author, members_count, ai_policy, data, created_at, updated_at)
+      VALUES (?, 'Legacy Core System', 'LCS', 'Pre-existing project before migration 010', 'v1.0.0', 'Architect QA', 3, 'OFFLINE_ONLY', '{}', '2026-11-01', '2026-11-01')
+    `).run(prjId);
+
+    memDb.prepare(`
+      INSERT INTO documents (id, project_id, category, status, data, updated_at)
+      VALUES ('DOC-LEGACY-01', ?, '05_Technical_Documents', 'Approved', '{"id":"DOC-LEGACY-01","title":"Legacy Architecture Document"}', '2026-11-01')
+    `).run(prjId);
+
+    memDb.prepare(`
+      INSERT INTO document_versions (id, document_id, version_no, file_id, extracted_content, status, change_summary, created_by, created_at)
+      VALUES ('VER-LEGACY-01', 'DOC-LEGACY-01', 'v1.0', NULL, 'Extracted text', 'Approved', 'Initial release', 'Architect QA', '2026-11-01')
+    `).run();
+
+    memDb.prepare(`
+      INSERT INTO requirements (id, type, priority, status, data, updated_at)
+      VALUES ('REQ-LEGACY-01', 'Compliance', 'P0', 'Approved', '{"id":"REQ-LEGACY-01","title":"Audit Trail Requirement"}', '2026-11-01')
+    `).run();
+
+    memDb.prepare(`
+      INSERT INTO test_cases (id, requirement_id, status, type, priority, data, updated_at)
+      VALUES ('TC-LEGACY-01', 'REQ-LEGACY-01', 'Ready', 'Functional', 'P0', '{"id":"TC-LEGACY-01","title":"Test Audit Logging"}', '2026-11-01')
+    `).run();
+
+    memDb.prepare(`
+      INSERT INTO bugs (id, status, severity, priority, data, updated_at)
+      VALUES ('BUG-LEGACY-01', 'Open', 'Major', 'High', '{"id":"BUG-LEGACY-01","title":"Audit log timestamp skew"}', '2026-11-01')
+    `).run();
+
+    memDb.prepare(`
+      INSERT INTO knowledge_units (id, project_id, unit_type, content, subject, action, evidence_level, status, created_at, updated_at)
+      VALUES ('KU-LEGACY-01', ?, 'Requirement', 'Audit logs must be kept for 365 days', 'Audit Log Retention', 'Enforce Retention', 'Explicit', 'Approved', '2026-11-01', '2026-11-01')
+    `).run(prjId);
+
+    memDb.prepare(`
+      INSERT INTO conflicts (id, project_id, unit_a_id, unit_b_id, conflict_type, severity, description, resolution, created_at)
+      VALUES ('CONF-LEGACY-01', ?, 'KU-LEGACY-01', 'KU-LEGACY-01', 'Redundancy', 'Minor', 'Duplicate retention rule', 'UNRESOLVED', '2026-11-01')
+    `).run(prjId);
+
+    // 3. Now run remaining migrations (010 and 011)
+    const migratorFull = new DatabaseMigrator(memDb, allMigrations);
+    migratorFull.runPendingMigrations();
+
+    // 4. Verify ZERO data loss across all tables
+    const project = memDb.prepare('SELECT * FROM projects WHERE id = ?').get(prjId) as any;
+    expect(project).toBeDefined();
+    expect(project.id).toBe(prjId);
+    expect(project.ai_policy).toBe('OFFLINE_ONLY');
+
+    const doc = memDb.prepare('SELECT * FROM documents WHERE id = ?').get('DOC-LEGACY-01') as any;
+    expect(doc).toBeDefined();
+    expect(doc.project_id).toBe(prjId);
+
+    const docVer = memDb.prepare('SELECT * FROM document_versions WHERE id = ?').get('VER-LEGACY-01') as any;
+    expect(docVer).toBeDefined();
+    expect(docVer.document_id).toBe('DOC-LEGACY-01');
+
+    const req = memDb.prepare('SELECT * FROM requirements WHERE id = ?').get('REQ-LEGACY-01') as any;
+    expect(req).toBeDefined();
+
+    const tc = memDb.prepare('SELECT * FROM test_cases WHERE id = ?').get('TC-LEGACY-01') as any;
+    expect(tc).toBeDefined();
+
+    const bug = memDb.prepare('SELECT * FROM bugs WHERE id = ?').get('BUG-LEGACY-01') as any;
+    expect(bug).toBeDefined();
+
+    const ku = memDb.prepare('SELECT * FROM knowledge_units WHERE id = ?').get('KU-LEGACY-01') as any;
+    expect(ku).toBeDefined();
+    expect(ku.project_id).toBe(prjId);
+
+    const conf = memDb.prepare('SELECT * FROM conflicts WHERE id = ?').get('CONF-LEGACY-01') as any;
+    expect(conf).toBeDefined();
+    expect(conf.project_id).toBe(prjId);
+
+    // 5. Verify foreign key integrity with PRAGMA foreign_key_check
+    const fkErrors = memDb.prepare('PRAGMA foreign_key_check').all();
+    expect(fkErrors.length).toBe(0);
+
+    memDb.close();
   });
 });

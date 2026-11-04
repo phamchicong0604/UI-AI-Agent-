@@ -1,5 +1,5 @@
 import { JobRecord, JobType } from '../../common/types.js';
-import { dbRepository } from '../../database/db.js';
+import { db, dbRepository } from '../../database/db.js';
 
 export type JobHandler<T = any> = (payload: T, job: JobRecord, signal?: AbortSignal) => Promise<any>;
 
@@ -86,14 +86,30 @@ export class SqliteJobQueue {
   }
 
   /**
-   * Cancel an in-flight or queued job immediately (BUG-012)
+   * Cancel an in-flight or queued job immediately (BUG-012, R3-10)
    */
   public cancelJob(jobId: string, reason?: string): boolean {
     const controller = this.activeAbortControllers.get(jobId);
     if (controller) {
       controller.abort(new Error(reason || 'Job cancelled by user request'));
     }
-    return dbRepository.jobs.cancel(jobId, reason);
+    const cancelled = dbRepository.jobs.cancel(jobId, reason);
+    if (cancelled) {
+      try {
+        const job = dbRepository.jobs.getById(jobId);
+        if (job) {
+          const payload = typeof job.payload === 'string' ? JSON.parse(job.payload) : job.payload;
+          if (payload?.documentVersionId) {
+            db.prepare(`
+              UPDATE document_versions
+              SET status = 'CANCELLED'
+              WHERE id = ? AND status NOT IN ('ORGANIZED', 'SUPERSEDED')
+            `).run(payload.documentVersionId);
+          }
+        }
+      } catch {}
+    }
+    return cancelled;
   }
 
   /**

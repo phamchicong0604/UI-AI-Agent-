@@ -261,7 +261,7 @@ export const KnowledgeReviewModal: React.FC<KnowledgeReviewModalProps> = ({
                 </span>
               </div>
               <p className="text-xs text-slate-400 mt-0.5">
-                Màn hình duyệt tri thức chi tiết (Split-Screen Knowledge Review) — {approvedCount}/{units.length} đã duyệt
+                {t('splitScreenReview')} — {approvedCount}/{units.length} {t('statusApproved')}
               </p>
             </div>
           </div>
@@ -315,7 +315,7 @@ export const KnowledgeReviewModal: React.FC<KnowledgeReviewModalProps> = ({
             <div className="flex items-center gap-2 text-xs text-rose-300">
               <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
               <span>
-                Phát hiện <strong>{conflicts.length} xung đột tri thức</strong> cần được xử lý trước khi tài liệu chuyển sang trạng thái ORGANIZED.
+                {t('detectedConflictsWarning')} ({conflicts.length})
               </span>
             </div>
             <Button
@@ -323,7 +323,7 @@ export const KnowledgeReviewModal: React.FC<KnowledgeReviewModalProps> = ({
               size="sm"
               onClick={() => setActiveConflict(conflicts[0])}
             >
-              Xử lý xung đột ngay
+              {t('resolveConflictNow')}
             </Button>
           </div>
         )}
@@ -334,11 +334,11 @@ export const KnowledgeReviewModal: React.FC<KnowledgeReviewModalProps> = ({
           <div className="md:col-span-5 flex flex-col h-full bg-slate-950/40 min-h-0">
             <div className="px-4 py-2.5 border-b border-slate-800/80 bg-slate-950/60 flex items-center justify-between">
               <span className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
-                <FileText className="w-3.5 h-3.5 text-slate-400" /> Văn bản tài liệu gốc
+                <FileText className="w-3.5 h-3.5 text-slate-400" /> {t('originalDocumentText')}
               </span>
               {selectedUnit?.exactQuote && (
                 <span className="text-[10px] text-amber-400 flex items-center gap-1">
-                  Đang bôi sáng trích dẫn neo nguồn
+                  {t('highlightingSourceAnchor')}
                 </span>
               )}
             </div>
@@ -353,7 +353,7 @@ export const KnowledgeReviewModal: React.FC<KnowledgeReviewModalProps> = ({
             <div className="px-4 py-2.5 border-b border-slate-800 bg-slate-950/40 flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <Filter className="w-3.5 h-3.5 text-slate-400" />
-                <span className="text-xs font-semibold text-slate-300">Bộ lọc tri thức:</span>
+                <span className="text-xs font-semibold text-slate-300">{t('knowledgeFilter')}:</span>
               </div>
               <div className="flex items-center gap-1">
                 {['ALL', 'Explicit', 'Inferred', 'Assumed'].map(level => (
@@ -376,7 +376,7 @@ export const KnowledgeReviewModal: React.FC<KnowledgeReviewModalProps> = ({
             <div className="flex-1 p-4 overflow-y-auto space-y-3">
               {filteredUnits.length === 0 ? (
                 <div className="p-8 text-center text-xs text-slate-500 italic">
-                  Không có đơn vị tri thức nào thỏa mãn bộ lọc.
+                  {t('noUnitsMatchFilter')}
                 </div>
               ) : (
                 filteredUnits.map(unit => {
@@ -477,7 +477,7 @@ export const KnowledgeReviewModal: React.FC<KnowledgeReviewModalProps> = ({
             <textarea
               value={rejectReason}
               onChange={(e) => setRejectReason(e.target.value)}
-              placeholder="Nhập lý do từ chối (tối thiểu 5 ký tự)..."
+              placeholder={t('rejectReasonPlaceholder')}
               className="w-full h-24 p-3 rounded-xl bg-slate-950 border border-slate-750 text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-rose-500 mb-2"
             />
             {rejectError && (

@@ -3,10 +3,11 @@ import { sendSuccess, sendError } from '../../common/response.js';
 import { computeAuditEventHash } from '../../common/crypto.js';
 import { AuditEvent } from '../../common/types.js';
 import { dbRepository } from '../../database/db.js';
+import { authenticateUser, requireAuth } from '../../common/auth.js';
 
 export const auditRouter = Router();
 
-auditRouter.get('/events', (req: Request, res: Response) => {
+auditRouter.get('/events', authenticateUser, (req: Request, res: Response) => {
   const events = dbRepository.auditEvents.getAll();
   sendSuccess(res, events);
 });
@@ -15,7 +16,7 @@ auditRouter.get('/events', (req: Request, res: Response) => {
  * POST /api/v1/audit/events
  * Appends a new tamper-evident audit event chained to the previous block hash
  */
-auditRouter.post('/events', (req: Request, res: Response) => {
+auditRouter.post('/events', authenticateUser, requireAuth, (req: Request, res: Response) => {
   const { user, role, action, entityType, entityId, details } = req.body;
   if (!user || !action || !entityType || !entityId) {
     return sendError(res, 'User, action, entityType and entityId are required', 400);
@@ -49,7 +50,7 @@ auditRouter.post('/events', (req: Request, res: Response) => {
  * POST /api/v1/audit/verify-chain
  * Validates cryptographic block-chain integrity of all audit events
  */
-auditRouter.post('/verify-chain', (req: Request, res: Response) => {
+auditRouter.post('/verify-chain', authenticateUser, requireAuth, (req: Request, res: Response) => {
   const auditStore = dbRepository.auditEvents.getAll();
   let isChainValid = true;
   const verificationLog: any[] = [];

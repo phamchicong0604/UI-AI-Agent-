@@ -37,8 +37,9 @@ import {
   bugsApi,
   auditApi,
   getAiConnection,
-  authenticateRoleSession
+  authApi
 } from '../common/services/api';
+import { LoginModal } from '../components/auth/LoginModal';
 
 export type NavigationTab = 
   | 'dashboard'
@@ -57,6 +58,12 @@ interface AppContextType {
   currentRole: UserRole;
   setCurrentRole: (role: UserRole) => void;
   currentUser: string;
+  authUser: { id: string; username: string; name: string; role: string; projectId?: string } | null;
+  isLoginModalOpen: boolean;
+  setIsLoginModalOpen: (open: boolean) => void;
+  login: (username: string, password: string, projectId?: string) => Promise<void>;
+  logout: () => void;
+  switchRole: (role: UserRole) => Promise<void>;
   activeProject: Project;
   setActiveProject: (proj: Project) => void;
   projects: Project[];
@@ -163,13 +170,52 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return () => window.removeEventListener('hashchange', onHashChange);
   }, []);
 
+  const [authUser, setAuthUser] = useState<{ id: string; username: string; name: string; role: string; projectId?: string } | null>(null);
   const [currentRole, setCurrentRole] = useState<UserRole>('QA');
-  const [currentUser] = useState<string>('Duc Pham');
+  const [currentUser, setCurrentUser] = useState<string>('Khách');
+  const [isLoginModalOpen, setIsLoginModalOpen] = useState<boolean>(false);
 
-  // Authenticate session whenever active role or user switches (NEW-01, NEW-02)
+  // Check existing session on mount
   useEffect(() => {
-    authenticateRoleSession(currentRole, currentUser);
-  }, [currentRole, currentUser]);
+    let isMounted = true;
+    authApi.getMe().then(user => {
+      if (isMounted && user) {
+        setAuthUser(user);
+        setCurrentRole(user.role as UserRole);
+        setCurrentUser(user.name || user.username);
+      }
+    }).catch(() => {});
+    return () => { isMounted = false; };
+  }, []);
+
+  const login = async (username: string, password: string, projectId?: string) => {
+    const res = await authApi.login(username, password, projectId);
+    setAuthUser(res.user);
+    setCurrentRole(res.user.role as UserRole);
+    setCurrentUser(res.user.name || res.user.username);
+    if (res.user.projectId) {
+      const found = projects.find(p => p.id === res.user.projectId);
+      if (found) setActiveProject(found);
+    }
+    await syncWithBackend();
+  };
+
+  const logout = () => {
+    authApi.logout();
+    setAuthUser(null);
+    setCurrentRole('QA');
+    setCurrentUser('Khách');
+  };
+
+  const switchRole = async (role: UserRole) => {
+    try {
+      const res = await authApi.switchAdminRole(role, activeProject.id);
+      setAuthUser(res.user);
+      setCurrentRole(res.user.role as UserRole);
+    } catch (err: any) {
+      console.warn('Admin switch role failed:', err);
+    }
+  };
 
   // Backend Sync State
   const [backendConnected, setBackendConnected] = useState<boolean>(false);
@@ -752,6 +798,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         currentRole,
         setCurrentRole,
         currentUser,
+        authUser,
+        isLoginModalOpen,
+        setIsLoginModalOpen,
+        login,
+        logout,
+        switchRole,
         activeProject,
         setActiveProject,
         projects,
@@ -811,6 +863,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }}
     >
       {children}
+      <LoginModal isOpen={isLoginModalOpen} onClose={() => setIsLoginModalOpen(false)} />
     </AppContext.Provider>
   );
 };

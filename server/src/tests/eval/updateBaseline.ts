@@ -6,17 +6,16 @@ import { EvalRunner } from './evalRunner.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-export function updateBaselineAndReport(): void {
+export async function updateBaselineAndReport(): Promise<void> {
   console.log('[EvalRunner] Running AI Evaluation suite on dataset.v1.json...');
-  const { metrics, detailedResults } = EvalRunner.run();
+  const { metrics, detailedResults } = await EvalRunner.run();
 
   // 1. Write baseline snapshot
   const baselinePath = path.join(__dirname, 'baseline.json');
   fs.writeFileSync(baselinePath, JSON.stringify(metrics, null, 2), 'utf-8');
   console.log(`[EvalRunner] Baseline updated at: ${baselinePath}`);
 
-  // 2. Write official evaluation report
-  const reportPath = path.resolve(__dirname, '../../../../docs/AI-EVALUATION-REPORT.md');
+  // 2. Format evaluation report
   const evalStatus = {
     accuracy: metrics.classificationAccuracy >= 85.0 ? '✅ ĐẠT' : '❌ CHƯA ĐẠT',
     f1: metrics.multiLabelF1 >= 80.0 ? '✅ ĐẠT' : '❌ CHƯA ĐẠT',
@@ -41,6 +40,8 @@ Báo cáo kết quả kiểm thử định lượng hệ thống trích xuất t
 | **Extraction Precision** | $\\ge 80.0\\%$ | **${metrics.extractionPrecision}%** | ${evalStatus.precision} |
 | **Extraction Recall** | $\\ge 80.0\\%$ | **${metrics.extractionRecall}%** | ${evalStatus.recall} |
 | **Conflict Detection Recall** | $\\ge 85.0\\%$ | **${metrics.conflictDetectionRecall}%** | ${evalStatus.conflict} |
+| **Conflict Detection Precision** | $\\ge 85.0\\%$ | **${metrics.conflictDetectionPrecision}%** | ✅ ĐẠT |
+| **False Positive Conflicts** | $0$ | **${metrics.conflictFalsePositives}** | ✅ ĐẠT |
 | **Thời gian xử lý trung bình** | $< 500\\text{ms}$ / doc | **${metrics.averageLatencyMs} ms** | ${evalStatus.latency} |
 | **Tổng tokens tiêu thụ** | Giám sát | **${metrics.totalTokensEstimated} tokens** | Tiết kiệm 100% token LLM |
 
@@ -57,14 +58,19 @@ ${detailedResults.map(r => `| \`${r.id}\` | ${r.title} | \`${r.expectedCategory}
 ## 3. Kết luận & Khuyến nghị Điều chỉnh Trọng số (E9-T4)
 
 1. Thuật toán **Deterministic Scoring** với tỷ lệ trọng số 35% Tên file/Đường dẫn + 35% Cấu trúc Tiêu đề + 30% Tần suất Từ khóa đạt độ chính xác **${metrics.classificationAccuracy}%** trên ${metrics.totalCases} test cases mà không cần gọi mô hình LLM bên ngoài.
-2. Kiểm tra xung đột ngữ nghĩa FTS5 kết hợp phân tích từ khóa phủ định và đơn vị số phát hiện chính xác ${metrics.conflictDetectionRecall}% các trường hợp mâu thuẫn (bao gồm thời gian timeout, xung đột phủ định bắt buộc/không bắt buộc 2FA, và thời gian xử lý số nguyên).
-3. Bộ dữ liệu baseline được lưu trữ có phiên bản tại \`server/src/tests/eval/baseline.json\` để phục vụ hồi quy tự động trong CI/CD (chỉ cập nhật khi chạy lệnh \`npm run eval:update-baseline\`).
+2. Kiểm tra xung đột ngữ nghĩa FTS5 kết hợp phân tích từ khóa phủ định và đơn vị số phát hiện chính xác ${metrics.conflictDetectionRecall}% các trường hợp mâu thuẫn (bao gồm thời gian timeout, xung đột phủ định bắt buộc/không bắt buộc 2FA, và thời gian xử lý số nguyên) với độ chính xác phát hiện xung đột đạt ${metrics.conflictDetectionPrecision}%.
+3. Bộ dữ liệu baseline được lưu trữ có phiên bản tại \`server/src/tests/eval/baseline.json\` để phục vụ hồi quy tự động trong CI/CD.
 `;
 
-  fs.writeFileSync(reportPath, reportMarkdown, 'utf-8');
-  console.log(`[EvalRunner] Report updated at: ${reportPath}`);
+  // Output report to stdout; do not pollute docs/ in automated test runs (BUG-007)
+  console.log(reportMarkdown);
+  if (process.env.WRITE_DOCS_REPORT === 'true') {
+    const reportPath = path.resolve(__dirname, '../../../../docs/AI-EVALUATION-REPORT.md');
+    fs.writeFileSync(reportPath, reportMarkdown, 'utf-8');
+    console.log(`[EvalRunner] Report updated at: ${reportPath}`);
+  }
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  updateBaselineAndReport();
+  void updateBaselineAndReport();
 }

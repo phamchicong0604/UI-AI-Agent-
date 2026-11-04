@@ -2,9 +2,12 @@ import { PipelineRunRecord } from '../../common/types.js';
 import { db } from '../../database/db.js';
 import { defaultSkillRegistry } from './skillRegistry.js';
 import { defaultDataPolicyService } from './dataPolicyService.js';
+import crypto from 'crypto';
+import { z } from 'zod';
 import { 
   Stage2CombinedOutputSchema, 
-  Stage2CombinedOutput 
+  Stage2CombinedOutput,
+  ExtractedUnitSchema
 } from './skills/schemas.js';
 
 export interface Stage2RunOptions {
@@ -14,8 +17,9 @@ export interface Stage2RunOptions {
   documentText: string;
   modelId?: string;
   provider?: string;
-  llmCaller?: (prompt: string) => Promise<string>;
+  llmCaller?: (prompt: string, signal?: AbortSignal) => Promise<string>;
   signal?: AbortSignal;
+  skipPersistence?: boolean;
 }
 
 export class Stage2CombinedRunner {
@@ -70,32 +74,35 @@ Hãy phân tích tài liệu sau đây và trả về kết quả dưới địn
     });
 
     // 3. Check Cache Hit (E4-T2.3)
-    const cached = defaultSkillRegistry.getCachedOutput(options.documentVersionId, skillVersion.id, modelId);
-    if (cached && cached.outputPayload) {
-      try {
-        const parsed = JSON.parse(cached.outputPayload);
-        const validated = Stage2CombinedOutputSchema.parse(parsed);
-        let securityFlags: string[] | undefined;
-        if (cached.inputPayload) {
-          try {
-            const input = JSON.parse(cached.inputPayload);
-            if (Array.isArray(input.securityFlags)) {
-              securityFlags = input.securityFlags;
-            }
-          } catch {}
-        }
-        return { output: validated, fromCache: true, runId: cached.id, securityFlags };
-      } catch {}
+    if (!options.skipPersistence) {
+      const cached = defaultSkillRegistry.getCachedOutput(options.documentVersionId, skillVersion.id, modelId);
+      if (cached && cached.outputPayload) {
+        try {
+          const parsed = JSON.parse(cached.outputPayload);
+          const validated = Stage2CombinedOutputSchema.parse(parsed);
+          let securityFlags: string[] | undefined;
+          if (cached.inputPayload) {
+            try {
+              const input = JSON.parse(cached.inputPayload);
+              if (Array.isArray(input.securityFlags)) {
+                securityFlags = input.securityFlags;
+              }
+            } catch {}
+          }
+          return { output: validated, fromCache: true, runId: cached.id, securityFlags };
+        } catch {}
+      }
     }
 
     if (options.signal?.aborted) {
       throw new Error('Stage 2 AI analysis cancelled');
     }
 
-    // 4. Security: Prompt Injection Scanning & Delimiter Sandboxing (E5-T3)
+    // 4. Security: Prompt Injection Scanning & Delimiter Sandboxing (E5-T3, BUG-016)
     const injectionCheck = defaultDataPolicyService.detectPromptInjection(options.documentText);
     const redactionResult = defaultDataPolicyService.redactSensitiveData(options.documentText);
-    const sandboxedContent = defaultDataPolicyService.wrapUntrustedDocument(redactionResult.text);
+    const dynamicDelimiter = `CONTENT_${crypto.randomBytes(4).toString('hex')}`;
+    const sandboxedContent = defaultDataPolicyService.wrapUntrustedDocument(redactionResult.text, dynamicDelimiter);
 
     const startTime = Date.now();
     const fullPrompt = `${Stage2CombinedRunner.PROMPT_TEMPLATE}\n\n=== DOCUMENT VERSION: ${options.documentVersionId} ===\n${sandboxedContent}`;
@@ -120,7 +127,7 @@ Hãy phân tích tài liệu sau đây và trả về kết quả dưới địn
           // Zero external request: use Grounded Engine deterministic parser with original text for exact quotes (BUG-017)
           rawOutputStr = this.generateFallbackResponse(options.documentVersionId, options.documentTitle, options.documentText);
         } else if (options.llmCaller) {
-          rawOutputStr = await options.llmCaller(currentPrompt);
+          rawOutputStr = await options.llmCaller(currentPrompt, options.signal);
         } else {
           // Default deterministic mock response when no caller passed
           rawOutputStr = this.generateFallbackResponse(options.documentVersionId, options.documentTitle, options.documentText);
@@ -145,46 +152,50 @@ Hãy phân tích tài liệu sau đây và trả về kết quả dưới địn
     const runId = `RUN-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
     if (!validatedOutput) {
-      // Record FAILED run in pipeline_runs (E4-T3.2)
+      if (!options.skipPersistence) {
+        // Record FAILED run in pipeline_runs (E4-T3.2)
+        defaultSkillRegistry.saveRun({
+          id: runId,
+          documentVersionId: options.documentVersionId,
+          skillVersionId: skillVersion.id,
+          modelId,
+          provider,
+          status: 'FAILED',
+          inputPayload: JSON.stringify({ textLength: options.documentText.length }),
+          outputPayload: rawOutputStr || null,
+          tokensPrompt: Math.ceil(fullPrompt.length / 4),
+          tokensCompletion: 0,
+          latencyMs,
+          errorMessage: lastError?.message || 'Schema validation failed after retries',
+          createdAt: new Date().toISOString()
+        });
+      }
+
+      throw new Error(`Stage 2 AI analysis failed schema validation: ${lastError?.message}`);
+    }
+
+    if (!options.skipPersistence) {
+      // 5. Record SUCCESS run in pipeline_runs with size and tokens (E5-T2.3)
       defaultSkillRegistry.saveRun({
         id: runId,
         documentVersionId: options.documentVersionId,
         skillVersionId: skillVersion.id,
         modelId,
         provider,
-        status: 'FAILED',
-        inputPayload: JSON.stringify({ textLength: options.documentText.length }),
-        outputPayload: rawOutputStr || null,
-        tokensPrompt: Math.ceil(fullPrompt.length / 4),
-        tokensCompletion: 0,
+        status: 'SUCCESS',
+        inputPayload: JSON.stringify({
+          textLength: options.documentText.length,
+          redactions: redactionResult.totalRedactions,
+          securityFlags: injectionCheck.flags
+        }),
+        outputPayload: JSON.stringify(validatedOutput),
+        tokensPrompt: isOfflineOnly ? 0 : Math.ceil(fullPrompt.length / 4),
+        tokensCompletion: isOfflineOnly ? 0 : Math.ceil(rawOutputStr.length / 4),
         latencyMs,
-        errorMessage: lastError?.message || 'Schema validation failed after retries',
+        errorMessage: null,
         createdAt: new Date().toISOString()
       });
-
-      throw new Error(`Stage 2 AI analysis failed schema validation: ${lastError?.message}`);
     }
-
-    // 5. Record SUCCESS run in pipeline_runs with size and tokens (E5-T2.3)
-    defaultSkillRegistry.saveRun({
-      id: runId,
-      documentVersionId: options.documentVersionId,
-      skillVersionId: skillVersion.id,
-      modelId,
-      provider,
-      status: 'SUCCESS',
-      inputPayload: JSON.stringify({
-        textLength: options.documentText.length,
-        redactions: redactionResult.totalRedactions,
-        securityFlags: injectionCheck.flags
-      }),
-      outputPayload: JSON.stringify(validatedOutput),
-      tokensPrompt: isOfflineOnly ? 0 : Math.ceil(fullPrompt.length / 4),
-      tokensCompletion: isOfflineOnly ? 0 : Math.ceil(rawOutputStr.length / 4),
-      latencyMs,
-      errorMessage: null,
-      createdAt: new Date().toISOString()
-    });
 
     return { 
       output: validatedOutput, 
@@ -192,6 +203,67 @@ Hãy phân tích tài liệu sau đây và trả về kết quả dưới địn
       runId,
       securityFlags: injectionCheck.flags
     };
+  }
+
+  /**
+   * Grounded extraction of knowledge units from text (BUG-007, BUG-017).
+   * Verbatim exact quotes with byte-accurate character offsets and Inferred evidence level.
+   */
+  public extractGroundedUnits(versionId: string, title: string, text: string): Array<z.infer<typeof ExtractedUnitSchema>> {
+    const trimmed = text.trim();
+    if (!trimmed) return [];
+
+    const sentences = trimmed
+      .split(/(?<=[.!?\n])\s+/)
+      .map(s => s.trim())
+      .filter(s => s.length >= 10);
+
+    const extractedUnits: Array<z.infer<typeof ExtractedUnitSchema>> = [];
+    const requirementRegex = /(?:yêu cầu|phải|bắt buộc|hạn mức|thời gian timeout|thời gian xử lý|hoàn tiền|shall|must|support|tuân thủ|tiêu chuẩn|kích thước tối thiểu|quy định|xác thực|bảo mật|nghiệm thu|p0|wal|sha-256|concurrency|latency|rto|brand color|mã màu)/i;
+
+    for (const sent of sentences) {
+      if (requirementRegex.test(sent)) {
+        const startOffset = Math.max(0, text.indexOf(sent));
+        const endOffset = startOffset + sent.length;
+        extractedUnits.push({
+          unit_type: 'Requirement',
+          subject: title,
+          action: 'tuân thủ đặc tả kỹ thuật và nghiệp vụ',
+          condition: undefined,
+          evidence_level: 'Inferred', // Deterministic fallback extraction is Inferred (BUG-017)
+          source_anchor: {
+            document_version_id: versionId,
+            heading_path: ['1. Giới thiệu tổng quan'],
+            char_offset_start: startOffset,
+            char_offset_end: endOffset,
+            exact_quote: sent
+          }
+        });
+      }
+    }
+
+    // Fallback if no requirement regex matched: use first sentence as Definition
+    if (extractedUnits.length === 0 && sentences.length > 0) {
+      const firstSentence = sentences[0];
+      const startOffset = Math.max(0, text.indexOf(firstSentence));
+      const endOffset = startOffset + firstSentence.length;
+      extractedUnits.push({
+        unit_type: 'Definition',
+        subject: title,
+        action: 'định nghĩa các nội dung cốt lõi',
+        condition: undefined,
+        evidence_level: 'Inferred',
+        source_anchor: {
+          document_version_id: versionId,
+          heading_path: ['1. Giới thiệu tổng quan'],
+          char_offset_start: startOffset,
+          char_offset_end: endOffset,
+          exact_quote: firstSentence
+        }
+      });
+    }
+
+    return extractedUnits;
   }
 
   /**
@@ -219,18 +291,8 @@ Hãy phân tích tài liệu sau đây và trả về kết quả dưới địn
       });
     }
 
-    // Extract actual sentences or non-empty lines from the document text
-    const sentences = trimmed
-      .split(/(?<=[.!?\n])\s+/)
-      .map(s => s.trim())
-      .filter(s => s.length >= 10);
-
-    const firstSentence = sentences[0] || trimmed.slice(0, Math.min(trimmed.length, 120));
-    const startOffset = Math.max(0, text.indexOf(firstSentence));
-    const endOffset = startOffset >= 0 ? startOffset + firstSentence.length : Math.min(text.length, firstSentence.length);
-    const exactQuote = firstSentence;
-
-    const isRequirement = /(?:yêu cầu|phải|bắt buộc|requirement|shall|must)/i.test(firstSentence);
+    const extractedUnits = this.extractGroundedUnits(versionId, title, text);
+    const hasRequirement = extractedUnits.some(u => u.unit_type === 'Requirement');
 
     return JSON.stringify({
       understanding: {
@@ -240,25 +302,10 @@ Hãy phân tích tài liệu sau đây và trả về kết quả dưới địn
         key_domains: ['System Requirements', 'Quality Assurance']
       },
       extraction: {
-        extracted_units: [
-          {
-            unit_type: isRequirement ? 'Requirement' : 'Definition',
-            subject: title,
-            action: isRequirement ? 'tuân thủ đặc tả nghiệp vụ' : 'định nghĩa các nội dung cốt lõi',
-            condition: undefined,
-            evidence_level: 'Inferred', // Deterministic fallback extraction is Inferred (BUG-017)
-            source_anchor: {
-              document_version_id: versionId,
-              heading_path: ['1. Giới thiệu tổng quan'],
-              char_offset_start: startOffset,
-              char_offset_end: endOffset,
-              exact_quote: exactQuote
-            }
-          }
-        ]
+        extracted_units: extractedUnits
       },
       classification: {
-        recommended_category: isRequirement ? '02_Business_Requirements' : '01_Project_Overview',
+        recommended_category: hasRequirement ? '02_Business_Requirements' : '01_Project_Overview',
         confidence_score: 0.88,
         reasoning: 'Trích xuất trực tiếp nguyên văn dựa trên câu thực tế trong văn bản tài liệu'
       }

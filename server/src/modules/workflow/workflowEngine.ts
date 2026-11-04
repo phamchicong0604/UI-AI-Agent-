@@ -1,6 +1,7 @@
 import { WorkflowState, AuditEvent } from '../../common/types.js';
 import { db, dbRepository } from '../../database/db.js';
 import { computeSha256, computeAuditEventHash } from '../../common/crypto.js';
+import { defaultJobQueue } from './jobQueue.js';
 
 export class WorkflowTransitionError extends Error {
   constructor(public fromState: WorkflowState, public toState: WorkflowState, public reason: string) {
@@ -190,21 +191,33 @@ export class WorkflowEngine {
   }
 
   /**
-   * Mark older pending version as SUPERSEDED when a new version is submitted (E3-T3.3, BUG-018)
-   * Enforces state machine transitions and closes pending review decisions.
+   * Mark older pending/failed/in-flight versions as SUPERSEDED when a new version is submitted (E3-T3.3, BUG-018)
+   * Enforces state machine transitions, cancels active jobs, and closes pending review decisions & open conflicts.
    */
   public async supersedePreviousVersions(documentId: string, currentVersionNo: string, actor: string): Promise<number> {
     const timestamp = new Date().toISOString();
 
-    // Query pending versions (do not supersede active in-flight worker stages: FILE_PROCESSING, AI_ANALYSIS, VALIDATION)
+    // Query older versions that are not already SUPERSEDED or CANCELLED (BUG-018: include in-flight and FAILED)
     const olderVersions = db.prepare(`
       SELECT id, version_no, status FROM document_versions
-      WHERE document_id = ? AND version_no != ? AND status IN ('UPLOADED', 'REVIEW_REQUIRED', 'FEEDBACK_REQUIRED', 'ORGANIZED')
+      WHERE document_id = ? AND version_no != ? AND status NOT IN ('SUPERSEDED', 'CANCELLED')
     `).all(documentId, currentVersionNo) as Array<{ id: string; version_no: string; status: WorkflowState }>;
 
     let supersededCount = 0;
     for (const oldVer of olderVersions) {
       try {
+        // Cancel any pending or in-flight jobs for this version (BUG-018)
+        try {
+          const pendingJobs = db.prepare(`
+            SELECT id FROM jobs
+            WHERE status IN ('PENDING', 'RUNNING')
+              AND json_extract(payload, '$.documentVersionId') = ?
+          `).all(oldVer.id) as Array<{ id: string }>;
+          for (const j of pendingJobs) {
+            defaultJobQueue.cancelJob(j.id, `Superseded by newer version ${currentVersionNo}`);
+          }
+        } catch {}
+
         await this.transition({
           documentId,
           versionNo: oldVer.version_no,
@@ -223,6 +236,20 @@ export class WorkflowEngine {
           WHERE id IN (SELECT unit_id FROM knowledge_sources WHERE document_version_id = ?)
             AND status IN ('Draft', 'In Review')
         `).run(timestamp, oldVer.id);
+
+        // Close open conflicts involving units of the superseded version (BUG-018)
+        db.prepare(`
+          UPDATE conflicts
+          SET status = 'RESOLVED',
+              resolution = 'SUPERSEDED',
+              resolution_notes = ?,
+              resolved_at = ?
+          WHERE status = 'OPEN'
+            AND (
+              unit_a_id IN (SELECT unit_id FROM knowledge_sources WHERE document_version_id = ?)
+              OR unit_b_id IN (SELECT unit_id FROM knowledge_sources WHERE document_version_id = ?)
+            )
+        `).run(`Tự động đóng do phiên bản tài liệu trước đó bị thay thế bởi ${currentVersionNo}`, timestamp, oldVer.id, oldVer.id);
       } catch (err: any) {
         console.warn(`[WorkflowEngine] Could not supersede version ${oldVer.version_no}:`, err.message);
       }

@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { sendSuccess, sendError } from '../../common/response.js';
 import { dbRepository } from '../../database/db.js';
+import { authenticateUser, requireAuth, requireRole } from '../../common/auth.js';
 
 export const settingsRouter = Router();
 
@@ -8,7 +9,7 @@ export const settingsRouter = Router();
  * GET /api/v1/settings/ai
  * Retrieves current AI configuration (with API keys masked for security)
  */
-settingsRouter.get('/ai', (req: Request, res: Response) => {
+settingsRouter.get('/ai', authenticateUser, requireAuth, (req: Request, res: Response) => {
   const provider = dbRepository.settings.get('AI_PROVIDER') || process.env.AI_PROVIDER || 'gemini';
   const geminiModel = dbRepository.settings.get('GEMINI_MODEL') || process.env.GEMINI_MODEL || 'gemini-1.5-pro';
   const openaiModel = dbRepository.settings.get('OPENAI_MODEL') || process.env.OPENAI_MODEL || 'gpt-4o';
@@ -38,7 +39,7 @@ settingsRouter.get('/ai', (req: Request, res: Response) => {
  * POST /api/v1/settings/ai
  * Updates AI provider, model, and API keys into persistent SQLite storage
  */
-settingsRouter.post('/ai', (req: Request, res: Response) => {
+settingsRouter.post('/ai', authenticateUser, requireRole(['Project Admin']), (req: Request, res: Response) => {
   const { provider, geminiKey, openaiKey, geminiModel, openaiModel } = req.body;
 
   if (provider && ['gemini', 'openai'].includes(provider)) {
@@ -69,7 +70,7 @@ settingsRouter.post('/ai', (req: Request, res: Response) => {
  * POST /api/v1/settings/ai/test-connection
  * Tests connection to active AI provider (Gemini or OpenAI) with a simple prompt
  */
-settingsRouter.post('/ai/test-connection', async (req: Request, res: Response) => {
+settingsRouter.post('/ai/test-connection', authenticateUser, requireRole(['Project Admin', 'PM / Project Lead']), async (req: Request, res: Response) => {
   const provider = dbRepository.settings.get('AI_PROVIDER') || process.env.AI_PROVIDER || 'gemini';
   const startTime = Date.now();
 

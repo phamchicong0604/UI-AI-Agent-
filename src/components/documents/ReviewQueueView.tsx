@@ -364,18 +364,18 @@ export const ReviewQueueView: React.FC<ReviewQueueViewProps> = ({
                     {/* Extracted units breakdown */}
                     <div className="flex flex-wrap items-center gap-3 text-xs text-slate-400">
                       <span>
-                        Tri thức trích xuất: <strong className="text-slate-200">{item.unitsCount}</strong>
+                        {t('totalExtractedKnowledge')}: <strong className="text-slate-200">{item.unitsCount}</strong>
                       </span>
                       <span>
-                        Rõ ràng: <strong className="text-emerald-400">{item.explicitCount} Explicit</strong>
+                        {t('knowledgeModalEvidenceExplicit')}: <strong className="text-emerald-400">{item.explicitCount} Explicit</strong>
                       </span>
                       {item.inferredCount > 0 && (
                         <span>
-                          Suy luận/Giả định: <strong className="text-amber-400">{item.inferredCount} Inferred</strong>
+                          {t('knowledgeModalEvidenceInferred')}: <strong className="text-amber-400">{item.inferredCount} Inferred</strong>
                         </span>
                       )}
                       <span>
-                        Cập nhật: <span className="text-slate-400">{item.document.updatedAt}</span>
+                        {t('reviewQueueUpdated')}: <span className="text-slate-400">{item.document.updatedAt}</span>
                       </span>
                     </div>
                   </div>

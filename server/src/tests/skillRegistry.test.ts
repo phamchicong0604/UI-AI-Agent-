@@ -159,14 +159,27 @@ describe('AI Skill Contracts & Versioned Registry (Epic E4)', () => {
     });
 
     it('should serve results from cache when calling same document version, skill version and model (E4-T2.3 AC)', async () => {
+      const extProjId = `PRJ-EXT-${Date.now()}`;
+      dbRepository.projects.upsert({
+        id: extProjId,
+        key: 'EXT',
+        name: 'External AI Allowed Project',
+        description: 'Testing external AI policy',
+        version: 'v1.0.0',
+        author: 'Vitest',
+        membersCount: 1,
+        createdAt: '2026-11-03',
+        aiPolicy: 'ALLOW_EXTERNAL'
+      });
+
       const docId = `DOC-CACHE-${Date.now()}`;
       const docVersionId = `${docId}-v1.0`;
 
       // Seed parent document and document_version for foreign key integrity
       db.prepare(`
         INSERT INTO documents (id, project_id, category, status, data, updated_at)
-        VALUES (?, 'PRJ-01', '01_Project_Overview', 'Draft', '{}', '2026-11-03')
-      `).run(docId);
+        VALUES (?, ?, '01_Project_Overview', 'Draft', '{}', '2026-11-03')
+      `).run(docId, extProjId);
       db.prepare(`
         INSERT INTO document_versions (id, document_id, version_no, file_id, extracted_content, status, change_summary, created_by, created_at)
         VALUES (?, ?, 'v1.0', NULL, 'Test content', 'UPLOADED', 'Initial', 'Tester', '2026-11-03')
@@ -210,7 +223,7 @@ describe('AI Skill Contracts & Versioned Registry (Epic E4)', () => {
 
       // Run 1: First execution -> Calls LLM, saves to cache
       const run1 = await runner.execute({
-        projectId: 'PRJ-01',
+        projectId: extProjId,
         documentVersionId: docVersionId,
         documentTitle: 'Database Specs',
         documentText: 'Tài liệu cấu hình database. Chỉ chấp nhận kết nối qua SSL.',
@@ -223,7 +236,7 @@ describe('AI Skill Contracts & Versioned Registry (Epic E4)', () => {
 
       // Run 2: Second execution with identical input and model -> Retrieved from cache
       const run2 = await runner.execute({
-        projectId: 'PRJ-01',
+        projectId: extProjId,
         documentVersionId: docVersionId,
         documentTitle: 'Database Specs',
         documentText: 'Tài liệu cấu hình database. Chỉ chấp nhận kết nối qua SSL.',
@@ -239,21 +252,34 @@ describe('AI Skill Contracts & Versioned Registry (Epic E4)', () => {
 
   describe('Stage 2 Combined Execution & Pipeline Traceability (E4-T4)', () => {
     it('should execute combined Understanding, Extraction and Classification in a single pipeline run', async () => {
+      const extProjId = `PRJ-EXT-STAGE2-${Date.now()}`;
+      dbRepository.projects.upsert({
+        id: extProjId,
+        key: 'EXTS2',
+        name: 'External Stage 2 Project',
+        description: 'Testing external AI policy Stage 2',
+        version: 'v1.0.0',
+        author: 'Vitest',
+        membersCount: 1,
+        createdAt: '2026-11-03',
+        aiPolicy: 'ALLOW_EXTERNAL'
+      });
+
       const docId = `DOC-STAGE2-${Date.now()}`;
       const docVersionId = `${docId}-v1.0`;
 
       // Seed parent document and document_version for foreign key integrity
       db.prepare(`
         INSERT INTO documents (id, project_id, category, status, data, updated_at)
-        VALUES (?, 'PRJ-01', '01_Project_Overview', 'Draft', '{}', '2026-11-03')
-      `).run(docId);
+        VALUES (?, ?, '01_Project_Overview', 'Draft', '{}', '2026-11-03')
+      `).run(docId, extProjId);
       db.prepare(`
         INSERT INTO document_versions (id, document_id, version_no, file_id, extracted_content, status, change_summary, created_by, created_at)
         VALUES (?, ?, 'v1.0', NULL, 'Test content', 'UPLOADED', 'Initial', 'Tester', '2026-11-03')
       `).run(docVersionId, docId);
 
       const result = await runner.execute({
-        projectId: 'PRJ-01',
+        projectId: extProjId,
         documentVersionId: docVersionId,
         documentTitle: 'QA Plan MVP',
         documentText: '# Kế hoạch kiểm thử\nYêu cầu hệ thống phải hỗ trợ chạy 500 test cases đồng thời.'

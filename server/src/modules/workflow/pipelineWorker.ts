@@ -173,9 +173,24 @@ export function registerPipelineHandlers(): void {
         finalState: 'REVIEW_REQUIRED'
       };
     } catch (err: any) {
-      if (job.attempts + 1 >= job.maxAttempts) {
-        const curStatus = getLatestStatus();
-        if (['FILE_PROCESSING', 'AI_ANALYSIS', 'VALIDATION'].includes(curStatus)) {
+      const isCancelled = signal?.aborted || err?.message?.toLowerCase().includes('cancel');
+      const isTimeout = err?.message?.toLowerCase().includes('timeout');
+      const curStatus = getLatestStatus();
+
+      if (isCancelled) {
+        if (['UPLOADED', 'FILE_PROCESSING', 'AI_ANALYSIS', 'VALIDATION'].includes(curStatus)) {
+          await defaultWorkflowEngine.transition({
+            documentId,
+            versionNo,
+            fromState: curStatus as any,
+            toState: 'CANCELLED',
+            actor: 'System Worker',
+            role: 'System Worker',
+            reason: `Pipeline bị hủy: ${err.message}`
+          }).catch(() => {});
+        }
+      } else if (isTimeout || (job.attempts + 1 >= job.maxAttempts)) {
+        if (['UPLOADED', 'FILE_PROCESSING', 'AI_ANALYSIS', 'VALIDATION'].includes(curStatus)) {
           await defaultWorkflowEngine.transition({
             documentId,
             versionNo,
@@ -183,7 +198,7 @@ export function registerPipelineHandlers(): void {
             toState: 'FAILED',
             actor: 'System Worker',
             role: 'System Worker',
-            reason: `Pipeline thất bại sau ${job.maxAttempts} lần thử: ${err.message}`
+            reason: isTimeout ? `Pipeline timeout: ${err.message}` : `Pipeline thất bại sau ${job.maxAttempts} lần thử: ${err.message}`
           }).catch(() => {});
         }
       }

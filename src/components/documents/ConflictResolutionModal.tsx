@@ -99,7 +99,7 @@ export const ConflictResolutionModal: React.FC<ConflictResolutionModalProps> = (
                 {getSeverityBadge(conflict.severity)}
               </div>
               <p className="text-xs text-slate-400 mt-0.5">
-                Loại: <span className="font-semibold text-slate-300">{conflict.conflictType}</span> — ID: {conflict.id.slice(0, 8)}
+                {t('conflictType')}: <span className="font-semibold text-slate-300">{conflict.conflictType}</span> — ID: {conflict.id.slice(0, 8)}
               </p>
             </div>
           </div>
@@ -124,7 +124,7 @@ export const ConflictResolutionModal: React.FC<ConflictResolutionModalProps> = (
           <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs flex items-start gap-2.5">
             <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-400" />
             <div>
-              <span className="font-semibold">Mô tả mâu thuẫn: </span>
+              <span className="font-semibold">{t('conflictDescription')}: </span>
               {conflict.description}
             </div>
           </div>
@@ -136,19 +136,19 @@ export const ConflictResolutionModal: React.FC<ConflictResolutionModalProps> = (
               <div>
                 <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-800">
                   <span className="text-xs font-semibold text-emerald-400 flex items-center gap-1.5">
-                    <CheckCircle2 className="w-3.5 h-3.5" /> Bản ghi ĐÃ PHÊ DUYỆT (Unit B)
+                    <CheckCircle2 className="w-3.5 h-3.5" /> {t('approvedUnitB')}
                   </span>
                   <span className="text-[10px] text-slate-400 font-mono">{conflict.unitBId.slice(0, 8)}</span>
                 </div>
                 <div className="text-xs text-slate-400 mb-1">
-                  Chủ thể: <span className="text-slate-200 font-medium">{conflict.unitBSubject || 'Quy tắc đã duyệt'}</span>
+                  {t('subjectLabel')}: <span className="text-slate-200 font-medium">{conflict.unitBSubject || 'Quy tắc đã duyệt'}</span>
                 </div>
                 <div className="p-3 rounded-lg bg-slate-900 border border-slate-800 text-xs text-slate-300 italic font-serif">
                   "{conflict.unitBContent || 'Nội dung quy chuẩn hiện tại trong kho tri thức.'}"
                 </div>
               </div>
               <div className="text-[11px] text-slate-400 mt-2">
-                Nguồn: <span className="text-slate-400">{conflict.unitBSource || 'Tài liệu đã phê duyệt trước đây'}</span>
+                {t('sourceLabel')}: <span className="text-slate-400">{conflict.unitBSource || 'Tài liệu đã phê duyệt trước đây'}</span>
               </div>
             </div>
 
@@ -157,19 +157,19 @@ export const ConflictResolutionModal: React.FC<ConflictResolutionModalProps> = (
               <div>
                 <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-800">
                   <span className="text-xs font-semibold text-amber-400 flex items-center gap-1.5">
-                    <AlertTriangle className="w-3.5 h-3.5" /> Đề xuất TÀI LIỆU MỚI (Unit A)
+                    <AlertTriangle className="w-3.5 h-3.5" /> {t('incomingUnitA')}
                   </span>
                   <span className="text-[10px] text-slate-400 font-mono">{conflict.unitAId.slice(0, 8)}</span>
                 </div>
                 <div className="text-xs text-slate-400 mb-1">
-                  Chủ thể: <span className="text-slate-200 font-medium">{conflict.unitASubject || 'Đề xuất mới'}</span>
+                  {t('subjectLabel')}: <span className="text-slate-200 font-medium">{conflict.unitASubject || 'Đề xuất mới'}</span>
                 </div>
                 <div className="p-3 rounded-lg bg-slate-900 border border-slate-800 text-xs text-slate-200 italic font-serif">
                   "{conflict.unitAContent || 'Nội dung đề xuất mới đang chờ kiểm duyệt.'}"
                 </div>
               </div>
               <div className="text-[11px] text-slate-400 mt-2">
-                Nguồn: <span className="text-slate-400">{conflict.unitASource || 'Tài liệu đang xét duyệt'}</span>
+                {t('sourceLabel')}: <span className="text-slate-400">{conflict.unitASource || 'Tài liệu đang xét duyệt'}</span>
               </div>
             </div>
           </div>
@@ -177,7 +177,7 @@ export const ConflictResolutionModal: React.FC<ConflictResolutionModalProps> = (
           {/* Resolution Options */}
           <div className="space-y-3 pt-2">
             <label className="text-xs font-bold text-slate-300 block uppercase tracking-wider">
-              Chọn phương án phân giải xung đột:
+              {t('chooseResolution')}:
             </label>
 
             {/* Option 1: KEEP_NEW_SUPERSEDE_OLD */}
@@ -199,7 +199,7 @@ export const ConflictResolutionModal: React.FC<ConflictResolutionModalProps> = (
               <div className="text-xs">
                 <div className="font-semibold text-indigo-300">1. KEEP_NEW_SUPERSEDE_OLD ({t('conflictOptionSupersede')})</div>
                 <div className="text-slate-400 mt-0.5">
-                  Chấp thuận đề xuất mới từ tài liệu này. Bản ghi tri thức cũ sẽ chuyển sang trạng thái <strong>Superseded</strong> và tự động đưa các Test Case liên quan về <strong>In Review</strong> (Change Impact).
+                  {t('conflictSupersedeDesc')}
                 </div>
               </div>
             </label>
@@ -223,7 +223,7 @@ export const ConflictResolutionModal: React.FC<ConflictResolutionModalProps> = (
               <div className="text-xs">
                 <div className="font-semibold text-rose-300">2. REJECT_NEW_PRESERVE_OLD ({t('conflictOptionReject')})</div>
                 <div className="text-slate-400 mt-0.5">
-                  Bảo lưu quy định đã được phê duyệt trước đây. Đề xuất mới bị từ chối do vi phạm quy chuẩn dự án.
+                  {t('conflictRejectDesc')}
                 </div>
               </div>
             </label>
@@ -245,9 +245,9 @@ export const ConflictResolutionModal: React.FC<ConflictResolutionModalProps> = (
                 className="mt-1 accent-amber-500"
               />
               <div className="text-xs">
-                <div className="font-semibold text-amber-300">3. MERGE_SPECIFICATION ({t('conflictOptionCoexist')})</div>
+                <div className="font-semibold text-amber-300">3. MERGE_SPECIFICATION ({t('conflictOptionMerge')})</div>
                 <div className="text-slate-400 mt-0.5">
-                  Cả hai cùng tồn tại song song nhưng phân định cho các điều kiện, phân hệ hoặc ngữ cảnh đặc thù khác nhau (Coexist).
+                  {t('conflictMergeDesc')}
                 </div>
               </div>
             </label>
