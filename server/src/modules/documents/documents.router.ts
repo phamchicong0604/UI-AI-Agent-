@@ -390,13 +390,15 @@ documentsRouter.post('/', authenticateUser, requireAuth, async (req: Request, re
 
   if (req.body.id) {
     const existingDoc = dbRepository.documents.getById(req.body.id);
-    if (existingDoc && existingDoc.projectId !== projId) {
-      return sendError(res, 'Tài liệu thuộc dự án khác. Không được phép ghi đè chéo dự án (R4-03).', 403);
+    if (existingDoc) {
+      if (existingDoc.projectId !== projId) {
+        return sendError(res, 'Tài liệu thuộc dự án khác. Không được phép ghi đè chéo dự án (R4-03).', 403);
+      }
+      return sendError(res, `Tài liệu với ID "${req.body.id}" đã tồn tại. Vui lòng sử dụng API tải phiên bản mới để cập nhật.`, 409);
     }
   }
 
-  const isExistingDoc = Boolean(req.body.id && dbRepository.documents.getById(req.body.id));
-  const id = isExistingDoc ? req.body.id : generateDocId();
+  const id = generateDocId();
   const timestamp = new Date().toISOString().replace('T', ' ').slice(0, 16);
   const isoNow = new Date().toISOString();
   const version = currentVersion || 'v1.0';
@@ -478,11 +480,6 @@ documentsRouter.post('/', authenticateUser, requireAuth, async (req: Request, re
     });
 
     tx.immediate();
-
-    // Supersede previous versions through state machine for existing documents (BUG-018, R2-12)
-    if (isExistingDoc) {
-      await defaultWorkflowEngine.supersedePreviousVersions(id, version, author || 'System User').catch(() => {});
-    }
 
     sendSuccess(res, newDoc, 'Document created and persisted to SQLite with SHA-256 signature', 201);
   } catch (dbErr: any) {
@@ -861,12 +858,12 @@ documentsRouter.post('/upload', authenticateUser, requireAuth, upload.array('fil
 
 /**
  * DELETE /api/v1/documents/:id
- * Remove a document, cleans up child records and disk files (BUG-023)
+ * Remove a document, cleans up child records and disk files (BUG-023, R6-01)
  */
 documentsRouter.delete(
   '/:id',
   authenticateUser,
-  requireRole(['Project Admin', 'PM / Project Lead']),
+  requireAuth,
   async (req: Request, res: Response) => {
     const docId = req.params.id;
     const doc = dbRepository.documents.getById(docId);
@@ -874,6 +871,12 @@ documentsRouter.delete(
 
     if (req.user && !checkProjectAccess(req.user, doc.projectId)) {
       return sendError(res, `Bạn không có quyền xóa tài liệu thuộc dự án "${doc.projectId}".`, 403);
+    }
+
+    // Role dynamic evaluation per project (Condition 3, R6-01): User must be Admin or PM specifically in doc.projectId
+    const effectiveRole = req.user ? getUserRoleInProject(req.user.id, doc.projectId || 'PRJ-01') : null;
+    if (!effectiveRole || !['Project Admin', 'PM / Project Lead'].includes(effectiveRole)) {
+      return sendError(res, `Permission denied: Vai trò "${effectiveRole || 'QA'}" trong dự án "${doc.projectId}" không có quyền xóa tài liệu (Condition 3, R6-01).`, 403);
     }
 
     // Track stored file keys to clean up from disk
@@ -960,9 +963,9 @@ documentsRouter.patch('/:id/status', authenticateUser, requireAuth, (req: Reques
     return sendError(res, `Bạn không có quyền chuyển đổi trạng thái tài liệu thuộc dự án "${doc.projectId}".`, 403);
   }
 
-  // Enforce rule BR-AUTH-01: Approver/Admin role required in this specific project for governed transitions (Condition 3, BUG-006, R2-10)
+  // Enforce rule BR-AUTH-01: Approver/Admin role required in this specific project for governed transitions (Condition 3, BUG-006, R2-10, R6-01)
   const targetDocProj = doc.projectId || 'PRJ-01';
-  const effectiveRole = req.user ? (getUserRoleInProject(req.user.id, targetDocProj) || req.user.role) : null;
+  const effectiveRole = req.user ? getUserRoleInProject(req.user.id, targetDocProj) : null;
   if (['Approved', 'Rejected', 'Deprecated'].includes(status) || doc.status === 'Approved') {
     if (!effectiveRole || !['Project Admin', 'Reviewer / Approver', 'PM / Project Lead'].includes(effectiveRole)) {
       return sendError(res, `Permission denied: Vai trò "${effectiveRole || 'QA'}" trong dự án "${doc.projectId}" không có quyền phê duyệt/chuyển trạng thái tài liệu (Condition 3).`, 403);

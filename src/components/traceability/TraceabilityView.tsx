@@ -108,15 +108,15 @@ export const TraceabilityView: React.FC = () => {
 
   const handleExportCSV = () => {
     const headers = [
-      'Tài liệu nguồn (Document)',
-      'Phiên bản (Version)',
-      'Mã Yêu cầu (Req ID)',
-      'Tiêu đề Yêu cầu (Title)',
-      'Trạng thái (Status)',
-      'Ca kiểm thử (Test Cases)',
-      'Thực thi (Executions)',
-      'Bằng chứng (Evidences)',
-      'Lỗi liên quan (Bugs)'
+      t('traceExportSourceDoc'),
+      t('traceExportVersion'),
+      t('traceExportReqId'),
+      t('traceExportReqTitle'),
+      t('traceExportStatus'),
+      t('traceExportTestCases'),
+      t('traceExportExecutions'),
+      t('traceExportEvidences'),
+      t('traceExportBugs')
     ];
 
     const rows = filteredRows.map(r => [
@@ -125,10 +125,10 @@ export const TraceabilityView: React.FC = () => {
       r.requirement.id,
       r.requirement.title,
       r.requirement.status,
-      r.testCases.map(tc => tc.id).join('; ') || 'CHƯA CÓ KIỂM THỬ',
-      r.executions.map(e => `${e.testCaseId}:${e.status}`).join('; ') || 'Chưa chạy',
+      r.testCases.map(tc => tc.id).join('; ') || t('traceNoTestCases'),
+      r.executions.map(e => `${e.testCaseId}:${e.status}`).join('; ') || t('statusNotRun'),
       r.evidences.map(e => e.id).join('; '),
-      r.bugs.map(b => `${b.id}(${b.severity})`).join('; ')
+      r.bugs.map(b => `${b.id}(${b.severity})`).join('; ') || t('traceNoBugs')
     ]);
 
     downloadCsv(`Traceability_Matrix_${new Date().toISOString().slice(0, 10)}`, headers, rows);

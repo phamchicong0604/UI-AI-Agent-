@@ -35,19 +35,19 @@ export const ProjectModal: React.FC<ProjectModalProps> = ({
     const cleanKey = key.trim().toUpperCase();
 
     if (!cleanName) {
-      setError(t('projectName') + ' là bắt buộc');
+      setError(t('projectNameRequired'));
       return;
     }
     if (!cleanKey) {
-      setError(t('projectKey') + ' là bắt buộc');
+      setError(t('projectKeyRequired'));
       return;
     }
     if (!/^[A-Z0-9_-]{2,10}$/.test(cleanKey)) {
-      setError('Mã dự án (Key) phải từ 2-10 ký tự chữ cái, số, không dấu và không dấu cách (VD: CRM, OMS, FCB)');
+      setError(t('projectKeyFormat'));
       return;
     }
     if (projects.some(p => p.key === cleanKey)) {
-      setError(`Mã dự án "${cleanKey}" đã tồn tại. Vui lòng chọn mã khác.`);
+      setError(t('projectKeyExists', { key: cleanKey }));
       return;
     }
 
@@ -70,7 +70,7 @@ export const ProjectModal: React.FC<ProjectModalProps> = ({
       onCreated?.(created.id);
       onClose();
     } catch (err: any) {
-      setError(err.message || 'Lỗi khi tạo dự án');
+      setError(err.message || t('projectCreateError'));
     } finally {
       setIsSubmitting(false);
     }
@@ -87,7 +87,7 @@ export const ProjectModal: React.FC<ProjectModalProps> = ({
           </div>
           <div>
             <span className="text-base font-bold text-white">{t('projectCreateNew')}</span>
-            <p className="text-xs text-slate-400 mt-0.5">Tạo không gian làm việc dự án mới để lưu trữ tài liệu & ma trận kiểm thử</p>
+            <p className="text-xs text-slate-400 mt-0.5">{t('projectCreateDesc')}</p>
           </div>
         </div>
       }
@@ -119,7 +119,7 @@ export const ProjectModal: React.FC<ProjectModalProps> = ({
                 }
               }
             }}
-            placeholder="Ví dụ: Omni-channel E-Commerce Platform"
+            placeholder={t('projectNamePlaceholder')}
             className="w-full px-3.5 py-2 rounded-xl bg-slate-950/80 border border-slate-750 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
           />
         </div>
@@ -191,7 +191,7 @@ export const ProjectModal: React.FC<ProjectModalProps> = ({
             rows={3}
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            placeholder="Mô tả mục tiêu sản phẩm, phạm vi các module và yêu cầu kiểm thử chính..."
+            placeholder={t('projectDescPlaceholder')}
             className="w-full px-3.5 py-2 rounded-xl bg-slate-950/80 border border-slate-750 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
           />
         </div>
@@ -206,7 +206,7 @@ export const ProjectModal: React.FC<ProjectModalProps> = ({
             disabled={isSubmitting}
             icon={isSubmitting ? undefined : <Check className="w-4 h-4" />}
           >
-            {isSubmitting ? 'Đang tạo dự án...' : t('actionCreate')}
+            {isSubmitting ? t('projectCreateSubmitting') : t('actionCreate')}
           </Button>
         </div>
       </form>

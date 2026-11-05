@@ -42,56 +42,16 @@ import { ReviewQueueView } from './ReviewQueueView';
 import { Button, Badge, Modal } from '../../common/components';
 import { formatHashCode } from '../../common/utils/hash';
 
-const CATEGORY_LABELS: Record<DocumentCategory, { vi: string; en: string; shortVi: string; shortEn: string }> = {
-  '01_Project_Overview': {
-    vi: '01. Tổng quan dự án',
-    en: '01. Project Overview',
-    shortVi: '01. Tổng quan',
-    shortEn: '01. Overview'
-  },
-  '02_Business_Requirements': {
-    vi: '02. Yêu cầu nghiệp vụ (BRD)',
-    en: '02. Business Requirements',
-    shortVi: '02. Nghiệp vụ BRD',
-    shortEn: '02. BRD'
-  },
-  '03_System_Requirements': {
-    vi: '03. Đặc tả hệ thống (SRS)',
-    en: '03. System Requirements',
-    shortVi: '03. Đặc tả SRS',
-    shortEn: '03. SRS'
-  },
-  '04_UI_UX': {
-    vi: '04. Thiết kế UI / UX',
-    en: '04. UI & UX Design',
-    shortVi: '04. Thiết kế UI/UX',
-    shortEn: '04. UI/UX'
-  },
-  '05_Technical_Documents': {
-    vi: '05. Tài liệu kỹ thuật & API',
-    en: '05. Technical & API Docs',
-    shortVi: '05. Kỹ thuật & API',
-    shortEn: '05. Tech & API'
-  },
-  '06_QA': {
-    vi: '06. Kế hoạch & Chiến lược QA',
-    en: '06. QA & Test Strategy',
-    shortVi: '06. Kế hoạch QA',
-    shortEn: '06. QA Strategy'
-  },
-  '07_EVD_Evidence': {
-    vi: '07. Hướng dẫn Bằng chứng (EVD)',
-    en: '07. Evidence Guides (EVD)',
-    shortVi: '07. Bằng chứng EVD',
-    shortEn: '07. Evidence'
-  },
-  '08_Change_History': {
-    vi: '08. Lịch sử thay đổi',
-    en: '08. Change History',
-    shortVi: '08. Lịch sử thay đổi',
-    shortEn: '08. Changelog'
-  }
-};
+const CATEGORY_KEYS: DocumentCategory[] = [
+  '01_Project_Overview',
+  '02_Business_Requirements',
+  '03_System_Requirements',
+  '04_UI_UX',
+  '05_Technical_Documents',
+  '06_QA',
+  '07_EVD_Evidence',
+  '08_Change_History'
+];
 
 export const DocumentsView: React.FC = () => {
   const {
@@ -105,7 +65,7 @@ export const DocumentsView: React.FC = () => {
   } = useApp();
   const { t, language } = useI18n();
 
-  // Mode: 'reader' (Đọc tài liệu dự án) vs 'list' (Quản lý danh sách tải lên) vs 'review' (Hàng đợi duyệt)
+  // Mode: 'reader' vs 'list' vs 'review'
   const [viewMode, setViewMode] = useState<'reader' | 'list' | 'review'>('reader');
   const [readingDocId, setReadingDocId] = useState<string | null>(null);
 
@@ -161,15 +121,22 @@ export const DocumentsView: React.FC = () => {
   }, [projectDocs, readingDocId, selectedCategory]);
 
   const getCategoryLabel = (cat: DocumentCategory, short = false) => {
-    const item = CATEGORY_LABELS[cat];
-    if (!item) return cat;
-    if (short) return language === 'vi' ? item.shortVi : item.shortEn;
-    return language === 'vi' ? item.vi : item.en;
+    switch (cat) {
+      case '01_Project_Overview': return short ? t('cat01_short') : t('cat01_overview');
+      case '02_Business_Requirements': return short ? t('cat02_short') : t('cat02_brd');
+      case '03_System_Requirements': return short ? t('cat03_short') : t('cat03_srs');
+      case '04_UI_UX': return short ? t('cat04_short') : t('cat04_uiux');
+      case '05_Technical_Documents': return short ? t('cat05_short') : t('cat05_tech');
+      case '06_QA': return short ? t('cat06_short') : t('cat06_qa');
+      case '07_EVD_Evidence': return short ? t('cat07_short') : t('cat07_evd');
+      case '08_Change_History': return short ? t('cat08_short') : t('cat08_change');
+      default: return cat;
+    }
   };
 
   const categories: { key: DocumentCategory | 'ALL'; label: string; count: number }[] = [
-    { key: 'ALL', label: language === 'vi' ? 'Tất cả tài liệu' : 'All Documents', count: projectDocs.length },
-    ...(Object.keys(CATEGORY_LABELS) as DocumentCategory[]).map(key => ({
+    { key: 'ALL', label: t('allDocuments'), count: projectDocs.length },
+    ...CATEGORY_KEYS.map(key => ({
       key,
       label: getCategoryLabel(key, false),
       count: projectDocs.filter(d => d.category === key).length
@@ -198,7 +165,7 @@ export const DocumentsView: React.FC = () => {
 
   const expandAllFolders = () => {
     const all: Record<string, boolean> = {};
-    (Object.keys(CATEGORY_LABELS) as DocumentCategory[]).forEach(k => { all[k] = true; });
+    CATEGORY_KEYS.forEach(k => { all[k] = true; });
     setOpenFolders(all);
   };
 
@@ -222,25 +189,25 @@ export const DocumentsView: React.FC = () => {
       case 'Approved':
         return (
           <Badge variant="success" icon={<CheckCircle2 className="w-3 h-3" />}>
-            {language === 'vi' ? 'Đã duyệt' : 'Approved'}
+            {t('docStatusApproved')}
           </Badge>
         );
       case 'In Review':
         return (
           <Badge variant="warning" icon={<Clock className="w-3 h-3" />}>
-            {language === 'vi' ? 'Chờ duyệt' : 'In Review'}
+            {t('docStatusInReview')}
           </Badge>
         );
       case 'Draft':
         return (
           <Badge variant="neutral">
-            {language === 'vi' ? 'Bản nháp' : 'Draft'}
+            {t('docStatusDraft')}
           </Badge>
         );
       case 'Deprecated':
         return (
           <Badge variant="danger" icon={<AlertTriangle className="w-3 h-3" />}>
-            {language === 'vi' ? 'Ngưng dùng' : 'Deprecated'}
+            {t('docStatusDeprecated')}
           </Badge>
         );
       default:
@@ -325,7 +292,7 @@ export const DocumentsView: React.FC = () => {
                           </div>
                           <div className="flex items-center justify-between mt-1 text-[11px] text-slate-400">
                             <span>{p.version} • {p.author?.split('(')[0]?.trim()}</span>
-                            <span className="font-mono text-slate-300">{pCount} tài liệu</span>
+                            <span className="font-mono text-slate-300">{pCount} {t('docCountSuffix')}</span>
                           </div>
                         </button>
                       );
@@ -338,27 +305,27 @@ export const DocumentsView: React.FC = () => {
             {/* Quick Metrics */}
             <div className="flex items-center gap-2 text-xs whitespace-nowrap">
               <span className="px-2.5 py-1 rounded-lg bg-slate-800/80 border border-slate-750 text-slate-300 font-medium">
-                Tổng: <strong className="text-white font-mono">{projectDocs.length}</strong>
+                {t('docTotal')} <strong className="text-white font-mono">{projectDocs.length}</strong>
               </span>
               <span className="px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/25 text-emerald-300 font-medium">
-                Đã duyệt: <strong className="font-mono">{approvedCount}</strong>
+                {t('docApproved')} <strong className="font-mono">{approvedCount}</strong>
               </span>
               {draftOrReviewCount > 0 && (
                 <span className="px-2.5 py-1 rounded-lg bg-amber-500/10 border border-amber-500/25 text-amber-300 font-medium">
-                  Chờ duyệt: <strong className="font-mono">{draftOrReviewCount}</strong>
+                  {t('docInReview')} <strong className="font-mono">{draftOrReviewCount}</strong>
                 </span>
               )}
             </div>
           </div>
 
           <p className="text-xs text-slate-400 truncate max-w-2xl pl-0.5">
-            {activeProject.description || 'Không gian đọc và quản trị tài liệu đặc tả dự án'}
+            {activeProject.description || t('docWorkspaceDesc')}
           </p>
         </div>
 
         {/* Right: View Mode Toggle & Primary Actions */}
         <div className="flex flex-wrap items-center gap-2.5 shrink-0">
-          {/* Mode Switcher: Đọc tài liệu (Reader) vs Quản lý (List) */}
+          {/* Mode Switcher */}
           <div className="flex items-center p-1 rounded-xl bg-slate-950 border border-slate-750">
             <button
               type="button"
@@ -370,7 +337,7 @@ export const DocumentsView: React.FC = () => {
               }`}
             >
               <BookOpen className="w-3.5 h-3.5" />
-              <span>{language === 'vi' ? 'Đọc tài liệu' : 'Doc Reader'}</span>
+              <span>{t('docReaderMode')}</span>
             </button>
             <button
               type="button"
@@ -382,7 +349,7 @@ export const DocumentsView: React.FC = () => {
               }`}
             >
               <ListFilter className="w-3.5 h-3.5" />
-              <span>{language === 'vi' ? 'Lịch sử tải lên' : 'Upload List'}</span>
+              <span>{t('docUploadListMode')}</span>
             </button>
             <button
               type="button"
@@ -394,7 +361,7 @@ export const DocumentsView: React.FC = () => {
               }`}
             >
               <ShieldCheck className="w-3.5 h-3.5" />
-              <span>{language === 'vi' ? 'Hàng đợi duyệt (Review)' : 'Review Queue'}</span>
+              <span>{t('docReviewQueueMode')}</span>
             </button>
           </div>
 
@@ -404,7 +371,7 @@ export const DocumentsView: React.FC = () => {
             onClick={() => setIsProjectModalOpen(true)}
             icon={<FolderPlus className="w-4 h-4 text-emerald-400" />}
           >
-            {language === 'vi' ? 'Dự án mới' : 'New Project'}
+            {t('docNewProjectBtn')}
           </Button>
 
           <Button
@@ -413,12 +380,12 @@ export const DocumentsView: React.FC = () => {
             onClick={() => setIsUploadModalOpen(true)}
             icon={<UploadCloud className="w-4 h-4" />}
           >
-            {language === 'vi' ? 'Tải lên (.md, .zip)' : 'Upload'}
+            {t('docUploadBtn')}
           </Button>
         </div>
       </div>
 
-      {/* 2. HORIZONTAL CATEGORY SWITCHER RIBBON (Dải chuyển đổi hạng mục nhanh) */}
+      {/* 2. HORIZONTAL CATEGORY SWITCHER RIBBON */}
       <div className="flex items-center gap-2 overflow-x-auto pb-1 select-none scrollbar-thin">
         {/* All Categories Pill */}
         <button
@@ -431,7 +398,7 @@ export const DocumentsView: React.FC = () => {
           }`}
         >
           <Folder className="w-3.5 h-3.5 text-indigo-400" />
-          <span>Tất cả tài liệu</span>
+          <span>{t('allDocuments')}</span>
           <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
             selectedCategory === 'ALL' ? 'bg-indigo-700 text-white' : 'bg-slate-850 text-slate-400'
           }`}>
@@ -440,11 +407,10 @@ export const DocumentsView: React.FC = () => {
         </button>
 
         {/* 8 Standard Categories Pills */}
-        {(Object.keys(CATEGORY_LABELS) as DocumentCategory[]).map((catKey) => {
+        {CATEGORY_KEYS.map((catKey) => {
           const isSelected = selectedCategory === catKey;
           const count = projectDocs.filter(d => d.category === catKey).length;
-          const labelObj = CATEGORY_LABELS[catKey];
-          const shortLabel = language === 'vi' ? labelObj.shortVi : labelObj.shortEn;
+          const shortLabel = getCategoryLabel(catKey, true);
 
           return (
             <button
@@ -475,7 +441,7 @@ export const DocumentsView: React.FC = () => {
         })}
       </div>
 
-      {/* 3. READER WORKSPACE MODE (Chỗ Đọc Tài Liệu Dự Án) */}
+      {/* 3. READER WORKSPACE MODE */}
       {viewMode === 'reader' && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
           {/* Left Navigation Tree (Folder Accordion) */}
@@ -488,7 +454,7 @@ export const DocumentsView: React.FC = () => {
                   type="text"
                   value={localSearch}
                   onChange={(e) => setLocalSearch(e.target.value)}
-                  placeholder={language === 'vi' ? 'Tìm tài liệu, mã DOC...' : 'Search document...'}
+                  placeholder={t('docSearchPlaceholder')}
                   className="w-full bg-slate-900 border border-slate-800 rounded-xl pl-8 pr-7 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500"
                 />
                 {localSearch && (
@@ -506,28 +472,28 @@ export const DocumentsView: React.FC = () => {
                 <div className="px-2 py-1 text-[11px] font-bold uppercase tracking-wider text-slate-400 flex items-center justify-between border-b border-slate-800/80 pb-2">
                   <span className="flex items-center gap-1.5">
                     <Folder className="w-3.5 h-3.5 text-indigo-400" />
-                    <span>Cây thư mục ({filteredDocs.length})</span>
+                    <span>{t('docFolderTree')} ({filteredDocs.length})</span>
                   </span>
                   <div className="flex items-center gap-1 text-[10px] normal-case">
                     <button
                       onClick={expandAllFolders}
                       className="text-indigo-400 hover:text-indigo-300 font-semibold px-1"
                     >
-                      Mở hết
+                      {t('docExpandAll')}
                     </button>
                     <span className="text-slate-600">•</span>
                     <button
                       onClick={collapseAllFolders}
                       className="text-slate-400 hover:text-slate-200 px-1"
                     >
-                      Đóng hết
+                      {t('docCollapseAll')}
                     </button>
                   </div>
                 </div>
 
                 {/* Categories & Document Folders */}
                 <div className="space-y-1.5 pt-1">
-                  {(Object.keys(CATEGORY_LABELS) as DocumentCategory[])
+                  {CATEGORY_KEYS
                     .filter(catKey => {
                       if (selectedCategory !== 'ALL' && selectedCategory !== catKey) return false;
                       const catDocs = filteredDocs.filter(d => d.category === catKey);
@@ -556,7 +522,7 @@ export const DocumentsView: React.FC = () => {
                               ) : (
                                 <Folder className="w-4 h-4 text-indigo-400 shrink-0" />
                               )}
-                              <span className="truncate">{CATEGORY_LABELS[catKey]?.vi}</span>
+                              <span className="truncate">{getCategoryLabel(catKey)}</span>
                             </div>
                             <div className="flex items-center gap-1.5 shrink-0">
                               <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-slate-800 text-slate-400">
@@ -575,7 +541,7 @@ export const DocumentsView: React.FC = () => {
                             <div className="p-1 space-y-1 bg-slate-900/40 border-t border-slate-850">
                               {catDocs.length === 0 ? (
                                 <div className="p-2.5 text-center text-[11px] text-slate-500 italic">
-                                  Chưa có tài liệu nào trong thư mục này
+                                  {t('docNoDocsInFolder')}
                                 </div>
                               ) : (
                                 catDocs.map(doc => {
@@ -618,7 +584,7 @@ export const DocumentsView: React.FC = () => {
                     className="w-full py-2 px-3 rounded-xl bg-slate-850 hover:bg-slate-800 border border-slate-750 text-xs font-semibold text-indigo-300 hover:text-white flex items-center justify-center gap-1.5 transition-colors"
                   >
                     <UploadCloud className="w-3.5 h-3.5" />
-                    <span>+ Tải lên file .md hoặc .zip</span>
+                    <span>{t('docUploadPrompt')}</span>
                   </button>
                 </div>
               </div>
@@ -678,8 +644,8 @@ export const DocumentsView: React.FC = () => {
           {/* Left Sidebar: Standard 8 Folders */}
           <div className="lg:col-span-3 p-3 rounded-2xl bg-slate-900 border border-slate-800 space-y-1">
             <div className="px-3 py-2 text-[11px] font-bold uppercase tracking-wider text-slate-400 flex items-center justify-between">
-              <span>{language === 'vi' ? 'Danh mục tài liệu' : 'Categories'}</span>
-              <span className="font-mono text-[10px] text-slate-500">8 chuẩn</span>
+              <span>{t('uploadCategoryLabel')}</span>
+              <span className="font-mono text-[10px] text-slate-500">{t('docCategoriesStandard')}</span>
             </div>
 
             {categories.map((cat) => {
@@ -720,11 +686,11 @@ export const DocumentsView: React.FC = () => {
               <div className="flex items-center gap-1.5 overflow-x-auto">
                 {(
                   [
-                    { key: 'ALL', label: language === 'vi' ? 'Tất cả' : 'All' },
-                    { key: 'Approved', label: language === 'vi' ? 'Đã duyệt' : 'Approved' },
-                    { key: 'In Review', label: language === 'vi' ? 'Chờ duyệt' : 'In Review' },
-                    { key: 'Draft', label: language === 'vi' ? 'Bản nháp' : 'Draft' },
-                    { key: 'Deprecated', label: language === 'vi' ? 'Ngưng dùng' : 'Deprecated' }
+                    { key: 'ALL', label: t('actionAll') },
+                    { key: 'Approved', label: t('docStatusApproved') },
+                    { key: 'In Review', label: t('docStatusInReview') },
+                    { key: 'Draft', label: t('docStatusDraft') },
+                    { key: 'Deprecated', label: t('docStatusDeprecated') }
                   ] as const
                 ).map(st => {
                   const active = statusFilter === st.key;
@@ -752,12 +718,12 @@ export const DocumentsView: React.FC = () => {
                     type="text"
                     value={localSearch}
                     onChange={(e) => setLocalSearch(e.target.value)}
-                    placeholder={language === 'vi' ? 'Lọc nhanh tên, mã DOC...' : 'Filter by title, ID...'}
+                    placeholder={t('docFilterPlaceholder')}
                     className="w-full bg-slate-950/90 border border-slate-800 rounded-xl pl-8 pr-3 py-1 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500"
                   />
                 </div>
                 <span className="text-xs text-slate-400 whitespace-nowrap hidden md:inline">
-                  <strong className="text-slate-200">{filteredDocs.length}</strong> tài liệu
+                  <strong className="text-slate-200">{filteredDocs.length}</strong> {t('docCountSuffix')}
                 </span>
               </div>
             </div>
@@ -831,7 +797,7 @@ export const DocumentsView: React.FC = () => {
                               className="px-2.5 py-1.5 rounded-xl bg-emerald-600/20 border border-emerald-500/30 text-emerald-300 hover:bg-emerald-600/30 transition-colors text-xs font-semibold flex items-center gap-1 whitespace-nowrap"
                             >
                               <CheckCircle2 className="w-3.5 h-3.5" />
-                              <span>{language === 'vi' ? 'Duyệt' : 'Approve'}</span>
+                              <span>{t('actionApprove')}</span>
                             </button>
                           )}
 
@@ -842,10 +808,10 @@ export const DocumentsView: React.FC = () => {
                               setViewMode('reader');
                             }}
                             className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white transition-colors text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap shadow-sm shadow-indigo-600/20"
-                            title="Mở chế độ đọc tài liệu"
+                            title={t('docReadNowTitle')}
                           >
                             <BookOpen className="w-3.5 h-3.5" />
-                            <span>{language === 'vi' ? 'Đọc ngay' : 'Read'}</span>
+                            <span>{t('docReadNow')}</span>
                           </button>
 
                           <button
@@ -855,7 +821,7 @@ export const DocumentsView: React.FC = () => {
                             title={t('docVersionHistory')}
                           >
                             <History className="w-3.5 h-3.5 text-slate-400" />
-                            <span>{doc.versions?.length || 1} bản</span>
+                            <span>{t('docVersionsCount', { count: doc.versions?.length || 1 })}</span>
                           </button>
 
                           <button
@@ -903,7 +869,7 @@ export const DocumentsView: React.FC = () => {
                             <button
                               type="button"
                               onClick={() => handleCopyChecksum(checksum)}
-                              title="Nhấp để sao chép mã băm SHA-256 hoàn chỉnh"
+                              title={t('docCopyShaTitle')}
                               className="flex items-center gap-1 px-2.5 py-0.5 rounded-md bg-slate-950 border border-slate-800 text-slate-300 hover:text-white hover:border-slate-700 transition-colors"
                             >
                               <ShieldCheck className="w-3 h-3 text-emerald-400" />
@@ -977,14 +943,14 @@ export const DocumentsView: React.FC = () => {
         <Modal
           isOpen={Boolean(activeVersionDoc)}
           onClose={() => setActiveVersionDoc(null)}
-          title={`Lịch sử Phiên bản & Chữ ký băm mật mã: ${activeVersionDoc.id}`}
+          title={t('docHistoryModalTitle', { id: activeVersionDoc.id })}
           maxWidth="lg"
         >
           <div className="space-y-4">
             <div className="p-3 bg-slate-950/70 border border-slate-800 rounded-xl space-y-1">
               <div className="text-xs font-bold text-white">{activeVersionDoc.title}</div>
               <div className="text-[11px] text-slate-400">
-                Thuộc dự án: <strong className="text-indigo-300">{activeProject.name}</strong> • Hạng mục: {getCategoryLabel(activeVersionDoc.category)}
+                {t('docBelongsToProject')} <strong className="text-indigo-300">{activeProject.name}</strong> • {t('docCategoryLabel')} {getCategoryLabel(activeVersionDoc.category)}
               </div>
             </div>
 
@@ -1003,11 +969,11 @@ export const DocumentsView: React.FC = () => {
                     </div>
 
                     <p className="text-xs text-slate-300 leading-relaxed">
-                      {ver.changeSummary || 'Cập nhật nội dung đặc tả kỹ thuật'}
+                      {ver.changeSummary || t('docDefaultChangeSummary')}
                     </p>
 
                     <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between text-[11px] text-slate-400">
-                      <span>Tác giả: <strong className="text-slate-300">{ver.author}</strong></span>
+                      <span>{t('docAuthorLabel')} <strong className="text-slate-300">{ver.author}</strong></span>
                       <div className="flex items-center gap-1 font-mono text-emerald-400">
                         <ShieldCheck className="w-3.5 h-3.5" />
                         <span className="truncate max-w-[200px]" title={ver.checksum}>{ver.checksum}</span>
@@ -1016,7 +982,7 @@ export const DocumentsView: React.FC = () => {
                   </div>
                 ))
               ) : (
-                <div className="p-4 text-center text-slate-500 text-xs">Chưa có lịch sử phiên bản nào</div>
+                <div className="p-4 text-center text-slate-500 text-xs">{t('docNoVersionHistory')}</div>
               )}
             </div>
           </div>
@@ -1028,20 +994,20 @@ export const DocumentsView: React.FC = () => {
         <Modal
           isOpen={Boolean(confirmDeleteId)}
           onClose={() => setConfirmDeleteId(null)}
-          title="Xác nhận xóa tài liệu"
+          title={t('docConfirmDeleteTitle')}
           maxWidth="sm"
         >
           <div className="space-y-4">
             <p className="text-xs text-slate-300 leading-relaxed">
-              Bạn có chắc chắn muốn xóa tài liệu <strong className="text-rose-400 font-mono">{confirmDeleteId}</strong>?
-              Hành động này sẽ được ghi vào nhật ký kiểm toán bất biến SHA-256.
+              {t('docConfirmDeleteBody', { id: confirmDeleteId })}
+              {t('docConfirmDeleteAuditNotice')}
             </p>
             <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
               <Button variant="secondary" size="sm" onClick={() => setConfirmDeleteId(null)}>
-                Hủy bỏ
+                {t('docCancelDelete')}
               </Button>
               <Button variant="danger" size="sm" onClick={() => handleDelete(confirmDeleteId)}>
-                Xác nhận xóa
+                {t('docConfirmDeleteBtn')}
               </Button>
             </div>
           </div>

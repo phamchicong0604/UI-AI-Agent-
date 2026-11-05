@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import { sendSuccess, sendError } from '../../common/response.js';
 import { Project } from '../../common/types.js';
 import { db, dbRepository } from '../../database/db.js';
-import { authenticateUser, requireAuth, requireRole, checkProjectAccess } from '../../common/auth.js';
+import { authenticateUser, requireAuth, checkProjectAccess, getUserRoleInProject, normalizeRole } from '../../common/auth.js';
 
 export const projectsRouter = Router();
 
@@ -13,7 +13,9 @@ export const projectsRouter = Router();
 projectsRouter.get('/', authenticateUser, (req: Request, res: Response) => {
   try {
     let list = dbRepository.projects.getAll();
-    if (req.user && req.user.role !== 'Project Admin') {
+    const dbUser = req.user ? dbRepository.users.getById(req.user.id) : null;
+    const isSystemAdmin = dbUser && normalizeRole(dbUser.role) === 'Project Admin';
+    if (req.user && !isSystemAdmin) {
       const allowed = new Set(dbRepository.projectMembers.getProjectsForUser(req.user.id));
       if (req.user.projectId) {
         allowed.add(req.user.projectId);
@@ -45,10 +47,16 @@ projectsRouter.get('/:id', authenticateUser, (req: Request, res: Response) => {
 
 /**
  * POST /api/v1/projects
- * Creates and registers a new project workspace (Restricted to Project Admin / PM)
+ * Creates and registers a new project workspace (Restricted to genuine System Admin or PM in DB)
  */
-projectsRouter.post('/', authenticateUser, requireAuth, requireRole(['Project Admin', 'PM / Project Lead']), (req: Request, res: Response) => {
+projectsRouter.post('/', authenticateUser, requireAuth, (req: Request, res: Response) => {
   try {
+    const dbUser = req.user ? dbRepository.users.getById(req.user.id) : null;
+    const userRole = dbUser ? normalizeRole(dbUser.role) : null;
+    if (!userRole || !['Project Admin', 'PM / Project Lead'].includes(userRole)) {
+      return sendError(res, 'Permission denied: Chỉ Quản trị viên hệ thống hoặc Trưởng dự án mới có quyền tạo dự án mới.', 403);
+    }
+
     const { name, key, description, version, author, membersCount } = req.body;
     if (!name || !key) {
       return sendError(res, 'Project name and key are required', 400);
@@ -108,4 +116,61 @@ projectsRouter.post('/', authenticateUser, requireAuth, requireRole(['Project Ad
   } catch (err: any) {
     sendError(res, `Failed to create project: ${err.message}`, 500);
   }
+});
+
+/**
+ * GET /api/v1/projects/:id/members
+ * Retrieves all members of a project (R6-06)
+ */
+projectsRouter.get('/:id/members', authenticateUser, (req: Request, res: Response) => {
+  if (req.user && !checkProjectAccess(req.user, req.params.id)) {
+    return sendError(res, `Bạn không có quyền xem thành viên dự án "${req.params.id}".`, 403);
+  }
+  const members = dbRepository.projectMembers.listByProject(req.params.id);
+  sendSuccess(res, members);
+});
+
+/**
+ * POST /api/v1/projects/:id/members
+ * Adds or updates a project member (Restricted to Project Admin / PM in target project) (R6-06)
+ */
+projectsRouter.post('/:id/members', authenticateUser, requireAuth, (req: Request, res: Response) => {
+  const projId = req.params.id;
+  const proj = dbRepository.projects.getById(projId);
+  if (!proj) return sendError(res, 'Project not found', 404);
+
+  const effectiveRole = req.user ? getUserRoleInProject(req.user.id, projId) : null;
+  if (!effectiveRole || !['Project Admin', 'PM / Project Lead'].includes(effectiveRole)) {
+    return sendError(res, `Permission denied: Chỉ Quản trị viên hoặc PM trong dự án "${projId}" mới có quyền gán thành viên.`, 403);
+  }
+
+  const { userId, role } = req.body || {};
+  if (!userId || !role) return sendError(res, 'userId và role là bắt buộc', 400);
+
+  const targetUser = dbRepository.users.getById(userId);
+  if (!targetUser) return sendError(res, 'Người dùng không tồn tại', 404);
+
+  const normRole = normalizeRole(role);
+  if (!normRole) return sendError(res, 'Vai trò không hợp lệ', 400);
+
+  dbRepository.projectMembers.addMember(projId, userId, normRole);
+  sendSuccess(res, { projectId: projId, userId, role: normRole }, 'Thêm thành viên dự án thành công', 201);
+});
+
+/**
+ * DELETE /api/v1/projects/:id/members/:userId
+ * Removes a member from a project (Restricted to Project Admin / PM in target project) (R6-06)
+ */
+projectsRouter.delete('/:id/members/:userId', authenticateUser, requireAuth, (req: Request, res: Response) => {
+  const { id: projId, userId } = req.params;
+  const effectiveRole = req.user ? getUserRoleInProject(req.user.id, projId) : null;
+  if (!effectiveRole || !['Project Admin', 'PM / Project Lead'].includes(effectiveRole)) {
+    return sendError(res, `Permission denied: Chỉ Quản trị viên hoặc PM trong dự án "${projId}" mới có quyền xóa thành viên.`, 403);
+  }
+
+  const deleted = dbRepository.projectMembers.removeMember(projId, userId);
+  if (!deleted) {
+    return sendError(res, 'Thành viên không tồn tại trong dự án.', 404);
+  }
+  sendSuccess(res, { projectId: projId, userId }, 'Xóa thành viên khỏi dự án thành công');
 });

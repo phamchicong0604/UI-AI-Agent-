@@ -81,7 +81,7 @@ export const DocumentUploadModal: React.FC<DocumentUploadModalProps> = ({
     });
 
     if (filtered.length < newFiles.length) {
-      setError(`Một số file không được hỗ trợ. Định dạng hợp lệ: ${validExtensions.join(', ')}`);
+      setError(t('uploadInvalidFiles', { exts: validExtensions.join(', ') }));
     } else {
       setError(null);
     }
@@ -118,7 +118,7 @@ export const DocumentUploadModal: React.FC<DocumentUploadModalProps> = ({
 
   const handleUpload = async () => {
     if (files.length === 0) {
-      setError('Vui lòng chọn ít nhất một file (.md hoặc .zip) để tải lên');
+      setError(t('uploadSelectFile'));
       return;
     }
 
@@ -139,7 +139,7 @@ export const DocumentUploadModal: React.FC<DocumentUploadModalProps> = ({
       const res = await documentsApi.upload(formData);
       await reloadDocuments(activeProject.id);
 
-      setSuccessMessage(`Tải lên thành công! Đã thêm ${res.totalUploaded} tài liệu vào dự án ${activeProject.name}`);
+      setSuccessMessage(t('uploadSuccessCount', { count: res.totalUploaded }));
       setFiles([]);
 
       setTimeout(() => {
@@ -148,7 +148,7 @@ export const DocumentUploadModal: React.FC<DocumentUploadModalProps> = ({
         setSuccessMessage(null);
       }, 1500);
     } catch (err: any) {
-      setError(err.message || 'Lỗi khi tải lên tài liệu');
+      setError(err.message || t('uploadError'));
     } finally {
       setIsUploading(false);
     }
@@ -207,8 +207,8 @@ export const DocumentUploadModal: React.FC<DocumentUploadModalProps> = ({
         {/* Category Choice */}
         <div className="space-y-1.5">
           <label className="text-xs font-semibold text-slate-300 flex items-center justify-between">
-            <span>Phân loại thư mục (Category)</span>
-            <span className="text-[10px] text-slate-400">File ZIP sẽ tự động phân loại theo tên thư mục bên trong</span>
+            <span>{t('uploadCategoryLabel')}</span>
+            <span className="text-[10px] text-slate-400">{t('uploadZipAutoNotice')}</span>
           </label>
           <select
             value={selectedCategory}
@@ -265,7 +265,7 @@ export const DocumentUploadModal: React.FC<DocumentUploadModalProps> = ({
                 onClick={() => setFiles([])}
                 className="text-[11px] text-slate-400 hover:text-red-400 transition-colors"
               >
-                Xóa tất cả
+                {t('uploadClearAll')}
               </button>
             </div>
             <div className="max-h-44 overflow-y-auto space-y-1.5 pr-1">

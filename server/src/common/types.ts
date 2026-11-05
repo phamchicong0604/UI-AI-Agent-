@@ -195,6 +195,7 @@ export type JobStatus = 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCEL
 export interface JobRecord {
   id: string;
   type: JobType;
+  documentId?: string;
   payload: string; // JSON string
   status: JobStatus;
   attempts: number;
@@ -293,6 +294,7 @@ export interface EvidenceLink {
 
 export interface EvidenceItem {
   id: string;
+  projectId?: string;
   title: string;
   description: string;
   type: EvidenceType;
@@ -366,6 +368,7 @@ export interface TestExecutionRecord {
 
 export interface TestRunItem {
   id: string;
+  projectId?: string;
   title: string;
   environment: Environment;
   buildVersion: string;
@@ -381,6 +384,7 @@ export type BugStatus = 'Open' | 'In Progress' | 'Resolved' | 'Closed';
 
 export interface BugItem {
   id: string;
+  projectId?: string;
   title: string;
   description: string;
   severity: BugSeverity;

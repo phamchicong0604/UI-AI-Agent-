@@ -3,7 +3,7 @@ import { sendSuccess, sendError } from '../../common/response.js';
 import { dbRepository } from '../../database/db.js';
 import { defaultWorkflowEngine } from './workflowEngine.js';
 import { defaultJobQueue } from './jobQueue.js';
-import { authenticateUser, requireRole, requireAuth, checkProjectAccess, getUserRoleInProject } from '../../common/auth.js';
+import { authenticateUser, requireAuth, checkProjectAccess, getUserRoleInProject } from '../../common/auth.js';
 
 export const workflowRouter = Router();
 
@@ -46,24 +46,47 @@ workflowRouter.get(
 
 /**
  * POST /api/v1/jobs/:id/cancel or /api/v1/workflow/jobs/:id/cancel
- * Cancel a pending or running job with role enforcement and project isolation (NEW-13, R3-05)
+ * Cancel a pending or running job with role enforcement and project isolation (NEW-13, R3-05, R6-01)
  */
 workflowRouter.post(
   ['/jobs/:id/cancel', '/workflow/jobs/:id/cancel'],
   authenticateUser,
-  requireRole(['QA', 'Reviewer / Approver', 'Project Admin', 'PM / Project Lead']),
+  requireAuth,
   (req: Request, res: Response) => {
     const job = dbRepository.jobs.getById(req.params.id);
     if (!job) return sendError(res, 'Job not found', 404);
 
-    try {
-      const parsedPayload = job.payload ? JSON.parse(job.payload) : null;
-      if (parsedPayload?.projectId && req.user && !checkProjectAccess(req.user, parsedPayload.projectId)) {
-        return sendError(res, `Bạn không có quyền hủy công việc của dự án "${parsedPayload.projectId}".`, 403);
-      }
-    } catch {}
+    let targetProjectId: string | undefined;
+    if (job.documentId) {
+      const jobDoc = dbRepository.documents.getById(job.documentId);
+      if (jobDoc) targetProjectId = jobDoc.projectId;
+    }
+    if (!targetProjectId) {
+      try {
+        const parsedPayload = job.payload ? JSON.parse(job.payload) : null;
+        if (parsedPayload?.projectId) targetProjectId = parsedPayload.projectId;
+      } catch {}
+    }
 
-    const reason = (req.body.reason as string) || `Cancelled by ${req.user?.name || req.user?.role || 'user'}`;
+    if (!targetProjectId) {
+      if (req.user?.role === 'Project Admin') {
+        targetProjectId = 'PRJ-01';
+      } else {
+        return sendError(res, 'Công việc không xác định được dự án nguồn. Truy cập bị từ chối (R6-03).', 403);
+      }
+    }
+
+    if (req.user && !checkProjectAccess(req.user, targetProjectId)) {
+      return sendError(res, `Bạn không có quyền hủy công việc của dự án "${targetProjectId}".`, 403);
+    }
+
+    const effectiveRole = req.user ? getUserRoleInProject(req.user.id, targetProjectId) : null;
+    const allowedRoles = ['Project Admin', 'PM / Project Lead'];
+    if (!effectiveRole || !allowedRoles.includes(effectiveRole)) {
+      return sendError(res, `Permission denied: Vai trò "${effectiveRole || 'None'}" trong dự án "${targetProjectId}" không có quyền hủy công việc (R6-01).`, 403);
+    }
+
+    const reason = (req.body.reason as string) || `Cancelled by ${req.user?.name || effectiveRole || 'user'}`;
     const success = defaultJobQueue.cancelJob(req.params.id, reason);
     if (!success) {
       return sendError(res, 'Job could not be cancelled (either not found or already completed/failed)', 400);
@@ -74,22 +97,45 @@ workflowRouter.post(
 
 /**
  * POST /api/v1/jobs/:id/retry or /api/v1/workflow/jobs/:id/retry
- * Re-trigger a failed job with role enforcement and project isolation (BUG-011, NEW-13, R3-05)
+ * Re-trigger a failed job with role enforcement and project isolation (BUG-011, NEW-13, R3-05, R6-01)
  */
 workflowRouter.post(
   ['/jobs/:id/retry', '/workflow/jobs/:id/retry'],
   authenticateUser,
-  requireRole(['QA', 'Reviewer / Approver', 'Project Admin', 'PM / Project Lead']),
+  requireAuth,
   (req: Request, res: Response) => {
     const job = dbRepository.jobs.getById(req.params.id);
     if (!job) return sendError(res, 'Job not found', 404);
 
-    try {
-      const parsedPayload = job.payload ? JSON.parse(job.payload) : null;
-      if (parsedPayload?.projectId && req.user && !checkProjectAccess(req.user, parsedPayload.projectId)) {
-        return sendError(res, `Bạn không có quyền chạy lại công việc của dự án "${parsedPayload.projectId}".`, 403);
+    let targetProjectId: string | undefined;
+    if (job.documentId) {
+      const jobDoc = dbRepository.documents.getById(job.documentId);
+      if (jobDoc) targetProjectId = jobDoc.projectId;
+    }
+    if (!targetProjectId) {
+      try {
+        const parsedPayload = job.payload ? JSON.parse(job.payload) : null;
+        if (parsedPayload?.projectId) targetProjectId = parsedPayload.projectId;
+      } catch {}
+    }
+
+    if (!targetProjectId) {
+      if (req.user?.role === 'Project Admin') {
+        targetProjectId = 'PRJ-01';
+      } else {
+        return sendError(res, 'Công việc không xác định được dự án nguồn. Truy cập bị từ chối (R6-03).', 403);
       }
-    } catch {}
+    }
+
+    if (req.user && !checkProjectAccess(req.user, targetProjectId)) {
+      return sendError(res, `Bạn không có quyền chạy lại công việc của dự án "${targetProjectId}".`, 403);
+    }
+
+    const effectiveRole = req.user ? getUserRoleInProject(req.user.id, targetProjectId) : null;
+    const allowedRoles = ['Project Admin', 'PM / Project Lead'];
+    if (!effectiveRole || !allowedRoles.includes(effectiveRole)) {
+      return sendError(res, `Permission denied: Vai trò "${effectiveRole || 'None'}" trong dự án "${targetProjectId}" không có quyền chạy lại công việc (R6-01).`, 403);
+    }
 
     if (job.status !== 'FAILED') {
       return sendError(res, 'Chỉ có thể retry công việc ở trạng thái FAILED', 400);
@@ -107,12 +153,12 @@ workflowRouter.post(
 
 /**
  * POST /api/v1/workflow/transition
- * Perform a state machine transition with audit trail & role verification (BUG-005, R3-05)
+ * Perform a state machine transition with audit trail & role verification (BUG-005, R3-05, R6-01)
  */
 workflowRouter.post(
   ['/workflow/transition', '/transition'],
   authenticateUser,
-  requireRole(['Project Admin', 'Reviewer / Approver', 'PM / Project Lead', 'BA', 'Lead BA', 'QA Lead', 'QA', 'Tech Lead / DEV']),
+  requireAuth,
   async (req: Request, res: Response) => {
     const { documentId, versionNo, fromState, toState, reason, metadata } = req.body;
     if (!documentId || !toState) {
@@ -126,7 +172,15 @@ workflowRouter.post(
       return sendError(res, `Bạn không có quyền chuyển đổi trạng thái tài liệu thuộc dự án "${doc.projectId}".`, 403);
     }
 
-    const authenticatedRole = req.user ? (getUserRoleInProject(req.user.id, doc.projectId || 'PRJ-01') || req.user.role) : 'Reviewer / Approver';
+    const authenticatedRole = req.user ? getUserRoleInProject(req.user.id, doc.projectId || 'PRJ-01') : null;
+    if (!authenticatedRole) {
+      return sendError(res, `Permission denied: Bạn không phải thành viên của dự án "${doc.projectId}" (Condition 3).`, 403);
+    }
+
+    const allowedTransitionRoles = ['Project Admin', 'Reviewer / Approver', 'PM / Project Lead'];
+    if (['Approved', 'Rejected'].includes(toState) && (!authenticatedRole || !allowedTransitionRoles.includes(authenticatedRole))) {
+      return sendError(res, `Permission denied: Vai trò "${authenticatedRole}" trong dự án "${doc.projectId}" không có quyền phê duyệt/từ chối tài liệu (Condition 3, R6-01).`, 403);
+    }
     const authenticatedActor = req.user?.name || req.user?.id || 'Reviewer';
 
     try {
@@ -151,12 +205,12 @@ workflowRouter.post(
 
 /**
  * PATCH /api/v1/workflow/documents/:id/category
- * Reclassify document category with stage isolation (preserves Stage 2 Understanding)
+ * Reclassify document category with stage isolation (preserves Stage 2 Understanding) (R6-01)
  */
 workflowRouter.patch(
   ['/workflow/documents/:id/category', '/documents/:id/category'],
   authenticateUser,
-  requireRole(['Project Admin', 'Reviewer / Approver', 'PM / Project Lead', 'BA']),
+  requireAuth,
   async (req: Request, res: Response) => {
     const { category, actor } = req.body;
     if (!category) return sendError(res, 'category là bắt buộc', 400);
@@ -166,6 +220,13 @@ workflowRouter.patch(
 
     if (req.user && !checkProjectAccess(req.user, doc.projectId)) {
       return sendError(res, `Bạn không có quyền phân loại tài liệu thuộc dự án "${doc.projectId}".`, 403);
+    }
+
+    // Role dynamic evaluation per project (Condition 3, R6-01): User must be Admin, Approver, PM or BA specifically in doc.projectId
+    const effectiveRole = req.user ? getUserRoleInProject(req.user.id, doc.projectId || 'PRJ-01') : null;
+    const allowedRoles = ['Project Admin', 'Reviewer / Approver', 'PM / Project Lead', 'BA'];
+    if (!effectiveRole || !allowedRoles.includes(effectiveRole)) {
+      return sendError(res, `Permission denied: Vai trò "${effectiveRole || 'None'}" trong dự án "${doc.projectId}" không có quyền phân loại tài liệu (Condition 3, R6-01).`, 403);
     }
 
     const userActor = req.user?.name || actor || 'Reviewer';

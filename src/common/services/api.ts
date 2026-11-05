@@ -120,6 +120,17 @@ function dispatchUnauthorizedEvent(): void {
   }
 }
 
+export function handleResponseStatus(res: Response, json: any): void {
+  if (res.status === 401) {
+    setAuthToken(null);
+    dispatchUnauthorizedEvent();
+  } else if (res.status === 403 && (json?.code === 'MUST_CHANGE_PASSWORD' || json?.error?.includes('đổi mật khẩu'))) {
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('docqa:must-change-password'));
+    }
+  }
+}
+
 async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -138,10 +149,7 @@ async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
   const json = await res.json().catch(() => ({}));
 
   if (!res.ok) {
-    if (res.status === 401) {
-      setAuthToken(null);
-      dispatchUnauthorizedEvent();
-    }
+    handleResponseStatus(res, json);
     throw new Error(json.error || json.message || `HTTP ${res.status}`);
   }
 
@@ -204,6 +212,7 @@ export const documentsApi = {
     });
     const json = await res.json().catch(() => ({}));
     if (!res.ok) {
+      handleResponseStatus(res, json);
       throw new Error(json.error || json.message || `HTTP ${res.status}`);
     }
     return (json.data !== undefined ? json.data : json);
@@ -625,6 +634,7 @@ export async function syncAccountModels(params: {
   if (res.ok) {
     return { ok: true, message: json.message || '', data: json.data };
   }
+  handleResponseStatus(res, json);
   return {
     ok: false,
     message: json.error || `HTTP ${res.status}`,

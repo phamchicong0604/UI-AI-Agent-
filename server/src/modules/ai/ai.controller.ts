@@ -7,6 +7,7 @@ import { modelFetcher } from './model.fetcher.js';
 import { accountModelsService, resolveSource, ModelSyncError } from './account-models.service.js';
 import { db, dbRepository } from '../../database/db.js';
 import { sendSuccess, sendError } from '../../common/response.js';
+import { DocumentItem } from '../../common/types.js';
 import { ObservabilityService } from './observabilityService.js';
 import { authenticateUser, requireAuth, requireRole, requireSystemAdmin, checkProjectAccess } from '../../common/auth.js';
 
@@ -333,7 +334,7 @@ aiRouter.post('/generate-testcases', authenticateUser, requireAuth, async (req: 
       return sendError(res, 'Missing required field: requirement', 400);
     }
 
-    // Resolve true projectId strictly from DB entity to prevent spoofing (BUG-001, R2-03)
+    // Resolve true projectId strictly from DB entity to prevent spoofing (BUG-001, R2-03, R6-05)
     let actualProjectId: string | undefined;
     const dbReq = dbRepository.requirements.getById(requirement.id);
     if (!dbReq) {
@@ -341,28 +342,39 @@ aiRouter.post('/generate-testcases', authenticateUser, requireAuth, async (req: 
     }
     actualProjectId = (dbReq as any).projectId;
 
-    if (!actualProjectId && (requirement.sourceReferences?.[0]?.documentId || sourceDoc?.id)) {
-      const docId = requirement.sourceReferences?.[0]?.documentId || sourceDoc?.id;
+    // R6-05: Only inspect sourceReferences from the verified database record, NEVER from client payload
+    if (!actualProjectId && (dbReq as any).sourceReferences?.[0]?.documentId) {
+      const docId = (dbReq as any).sourceReferences[0].documentId;
       const dbDoc = dbRepository.documents.getById(docId);
       if (dbDoc && dbDoc.projectId) {
         actualProjectId = dbDoc.projectId;
       }
     }
 
-    // Fail-closed: Never fall back to unverified client headers or request body when requirement exists
+    // Fail-closed: Never fall back to unverified client headers or request body (R6-05)
     const projectId = actualProjectId;
     if (!projectId) {
-      return sendError(res, 'Không thể xác thực dự án nguồn cho requirement này.', 403);
+      return sendError(res, 'Không thể xác thực dự án nguồn cho requirement này (R6-05).', 403);
     }
 
     if (req.user && !checkProjectAccess(req.user, projectId)) {
-      return sendError(res, `Bạn không có quyền sinh test case cho yêu cầu thuộc dự án "${projectId}" (BUG-001).`, 403);
+      return sendError(res, `Bạn không có quyền sinh test case cho yêu cầu thuộc dự án "${projectId}" (BUG-001, R6-05).`, 403);
     }
 
-    // Construct prompt strictly from trusted DB requirement to prevent client data poisoning/leakage (BUG-001)
+    // R6-05: Retrieve trusted source document directly from database based on DB requirement linkage
+    let trustedSourceDoc: DocumentItem | undefined;
+    const linkedDocId = (dbReq as any).sourceReferences?.[0]?.documentId;
+    if (linkedDocId) {
+      const dbDoc = dbRepository.documents.getById(linkedDocId);
+      if (dbDoc && dbDoc.projectId === projectId) {
+        trustedSourceDoc = dbDoc;
+      }
+    }
+
+    // Construct prompt strictly from trusted DB requirement and DB document to prevent client data poisoning/leakage (BUG-001, R6-05)
     const result = await aiService.generateGroundedDrafts({
       requirement: dbReq,
-      sourceDoc,
+      sourceDoc: trustedSourceDoc,
       userPrompt,
       projectId
     });

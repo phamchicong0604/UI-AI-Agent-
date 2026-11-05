@@ -63,9 +63,9 @@ requirementsRouter.patch('/:id/status', authenticateUser, requireAuth, (req: Req
     return sendError(res, `Bạn không có quyền cập nhật yêu cầu thuộc dự án "${reqItem.projectId}".`, 403);
   }
 
-  // BR-AUTH-01: Only Approver/Admin roles in the target project can approve/reject requirements (Condition 3, NEW-11)
+  // BR-AUTH-01: Only Approver/Admin roles in the target project can approve/reject requirements (Condition 3, NEW-11, R6-01)
   const targetProj = reqItem.projectId || 'PRJ-01';
-  const effectiveRole = req.user ? (getUserRoleInProject(req.user.id, targetProj) || req.user.role) : null;
+  const effectiveRole = req.user ? getUserRoleInProject(req.user.id, targetProj) : null;
   if (status === 'Approved' || status === 'Rejected') {
     if (!effectiveRole || !['Project Admin', 'Reviewer / Approver', 'PM / Project Lead'].includes(effectiveRole)) {
       return sendError(res, `Permission denied: Vai trò "${effectiveRole || 'QA'}" trong dự án "${targetProj}" không có quyền phê duyệt/từ chối yêu cầu (Condition 3).`, 403);

@@ -30,7 +30,7 @@ export const MarkdownPreviewModal: React.FC<MarkdownPreviewModalProps> = ({
 
   if (!document) return null;
 
-  const content = document.contentMarkdown || document.description || 'Không có nội dung chi tiết.';
+  const content = document.contentMarkdown || document.description || t('docNoContentFallback');
   const latestVersion = document.versions?.[0];
   const checksum = latestVersion?.checksum || '';
 

@@ -72,7 +72,7 @@ export const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({
         syncWithBackend().catch(() => {});
       }, 900);
     } catch (err: any) {
-      setError(err?.message || 'Lỗi khi cập nhật mật khẩu');
+      setError(err?.message || t('changePasswordError'));
     } finally {
       setIsSubmitting(false);
     }

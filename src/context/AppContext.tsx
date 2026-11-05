@@ -176,7 +176,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const [authUser, setAuthUser] = useState<{ id: string; username: string; name: string; role: string; projectId?: string; mustChangePassword?: boolean | number } | null>(null);
   const [currentRole, setCurrentRole] = useState<UserRole>('QA');
-  const [currentUser, setCurrentUser] = useState<string>('Khách');
+  const [currentUser, setCurrentUser] = useState<string>('Guest');
   const [isLoginModalOpen, setIsLoginModalOpen] = useState<boolean>(false);
   const [isChangePasswordModalOpen, setIsChangePasswordModalOpen] = useState<boolean>(false);
   const [isOriginalAdmin, setIsOriginalAdmin] = useState<boolean>(() => {
@@ -207,14 +207,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return () => { isMounted = false; };
   }, []);
 
-  // Listen for unauthorized events to trigger immediate logout and login prompt (R4-13)
+  // Listen for unauthorized events to trigger immediate logout and login prompt (R4-13, R6-09)
   useEffect(() => {
     const onUnauthorized = () => {
       logout();
       setIsLoginModalOpen(true);
     };
+    const onMustChangePassword = () => {
+      setIsChangePasswordModalOpen(true);
+    };
     window.addEventListener('docqa:unauthorized', onUnauthorized);
-    return () => window.removeEventListener('docqa:unauthorized', onUnauthorized);
+    window.addEventListener('docqa:must-change-password', onMustChangePassword);
+    return () => {
+      window.removeEventListener('docqa:unauthorized', onUnauthorized);
+      window.removeEventListener('docqa:must-change-password', onMustChangePassword);
+    };
   }, []);
 
   const login = async (username: string, password: string, projectId?: string) => {
@@ -242,10 +249,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       syncAbortControllerRef.current = null;
     }
     syncRequestIdRef.current++;
+    setIsSyncing(false);
     authApi.logout();
     setAuthUser(null);
     setCurrentRole('QA');
-    setCurrentUser('Khách');
+    setCurrentUser('Guest');
     setIsOriginalAdmin(false);
     saveToStorage('docqa_is_admin', false);
     // Clear in-memory collections so data from previous user is purged (R4-13)
@@ -296,6 +304,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       syncAbortControllerRef.current.abort();
       syncAbortControllerRef.current = null;
     }
+    setIsSyncing(false);
     setActiveProject(projOrFn);
   }, []);
 
@@ -427,7 +436,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setBackendConnected(false);
       }
     } finally {
-      if (syncRequestIdRef.current === currentRequestId) {
+      if (syncRequestIdRef.current === currentRequestId || controller.signal.aborted) {
         setIsSyncing(false);
       }
     }

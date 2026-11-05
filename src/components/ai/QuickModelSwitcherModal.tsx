@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useApp } from '../../context/AppContext';
+import { useI18n } from '../../common/i18n/I18nContext';
 import { selectAiModel, saveAiModelEffort } from '../../common/services/api';
 import { ReasoningEffortLevel } from '../../types';
 import { Terminal, Check, X, Sparkles, Cpu, Layers } from 'lucide-react';
@@ -43,6 +44,7 @@ export const QuickModelSwitcherModal: React.FC<QuickModelSwitcherModalProps> = (
   onModelSelected
 }) => {
   const { logAudit, reloadAiConfig, aiConfig } = useApp();
+  const { t } = useI18n();
   const [filterText, setFilterText] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [isApplying, setIsApplying] = useState(false);
@@ -108,7 +110,7 @@ export const QuickModelSwitcherModal: React.FC<QuickModelSwitcherModalProps> = (
         'Switch AI Model',
         'Document',
         item.id,
-        `Kích hoạt mô hình "${item.name}" (Effort: ${item.effort.toUpperCase()}) qua /model`
+        t('quickModelActivated', { name: item.name, effort: item.effort.toUpperCase() })
       );
 
       if (reloadAiConfig) {
@@ -119,7 +121,7 @@ export const QuickModelSwitcherModal: React.FC<QuickModelSwitcherModalProps> = (
         onModelSelected(item.id, item.effort);
       }
 
-      setSuccessToast(`Đã chuyển sang ${item.name}!`);
+      setSuccessToast(t('settingsModelSavedDb', { model: item.name }));
       setTimeout(() => {
         setSuccessToast(null);
         onClose();
@@ -197,7 +199,7 @@ export const QuickModelSwitcherModal: React.FC<QuickModelSwitcherModalProps> = (
                 setFilterText(e.target.value);
                 setSelectedIndex(0);
               }}
-              placeholder="[gõ để tìm model hoặc nhấn phím ↑/↓]..."
+              placeholder={t('modelSearchPlaceholder')}
               className="w-full bg-transparent border-none outline-none text-white placeholder-slate-600 font-mono text-xs sm:text-sm pl-1"
             />
           </div>
@@ -221,7 +223,7 @@ export const QuickModelSwitcherModal: React.FC<QuickModelSwitcherModalProps> = (
         >
           {filteredModels.length === 0 ? (
             <div className="p-6 text-center text-slate-500 text-xs font-sans">
-              Không tìm thấy model nào khớp với từ khóa "{filterText}".
+              {t('modelNotFound', { filter: filterText })}
             </div>
           ) : (
             filteredModels.map((item, idx) => {
@@ -261,7 +263,7 @@ export const QuickModelSwitcherModal: React.FC<QuickModelSwitcherModalProps> = (
                     {/* Badge for Current Active */}
                     {isCurrent && (
                       <span className="px-1.5 py-0.5 rounded text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-sans shrink-0">
-                        Đang dùng
+                        {t('modelInUse')}
                       </span>
                     )}
 
