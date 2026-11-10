@@ -259,4 +259,25 @@ describe('M0-T2: Deterministic classification in the upload pipeline', () => {
     expect(doc.classification).toBeUndefined();
     expect(reclassifyAudits(created.id).length).toBe(0);
   });
+
+  it('rejects a category outside the 8 standard folders on PATCH /documents/:id/category (PR 4 review O-3)', async () => {
+    const created = await uploadFile('style_guide_mobile.md', '# Mobile style guide\n## Colors\nPrimary colour and typography.', '04_UI_UX');
+    for (const bad of ['99_Not_A_Folder', '', 4, { a: 1 }]) {
+      const res = await fetch(`${baseUrl}/api/v1/documents/${created.id}/category`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` },
+        body: JSON.stringify({ category: bad })
+      });
+      expect(res.status, JSON.stringify(bad)).toBe(400);
+    }
+    expect(dbRepository.documents.getById(created.id)!.category).toBe('04_UI_UX');
+
+    const ok = await fetch(`${baseUrl}/api/v1/documents/${created.id}/category`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify({ category: '06_QA' })
+    });
+    expect(ok.status).toBe(200);
+    expect(dbRepository.documents.getById(created.id)!.category).toBe('06_QA');
+  });
 });

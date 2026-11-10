@@ -582,6 +582,13 @@ describe('Round 6 Bug Verification Test Suite (R6-01 to R6-10)', () => {
       const prj2Events = await getProjectEvents(tokenAdmin, prj2);
       expect(prj2Events.some(e => e.action === 'ADMIN_ROLE_SWITCH' && e.entityId === prj2)).toBe(true);
     });
+    it('rejects a non-string projectId with 400 instead of a server error (PR 4 review F-09)', async () => {
+      for (const badProjectId of [{ a: 1 }, ['PRJ-X'], 42, true]) {
+        const res = await postAudit(tokenQa, { action: 'DOCUMENT_UPDATED', entityType: 'Document', entityId: docP1, projectId: badProjectId });
+        expect(res.status, JSON.stringify(badProjectId)).toBe(400);
+        expect(await res.text()).not.toContain('RangeError');
+      }
+    });
   });
 
   // =========================================================================

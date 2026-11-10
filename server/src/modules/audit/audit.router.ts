@@ -128,6 +128,10 @@ auditRouter.post('/events', authenticateUser, requireAuth, (req: Request, res: R
     return sendError(res, 'details must be a string', 400);
   }
 
+  if (projectId !== undefined && projectId !== null && typeof projectId !== 'string') {
+    return sendError(res, 'projectId must be a string', 400);
+  }
+
   if (projectId !== undefined && projectId !== null && !checkProjectAccess(req.user, projectId)) {
     return sendError(res, `Bạn không có quyền ghi sự kiện kiểm toán cho dự án "${projectId}".`, 403);
   }
