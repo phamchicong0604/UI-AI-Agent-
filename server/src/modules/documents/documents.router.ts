@@ -276,8 +276,12 @@ documentsRouter.get('/review-queue', authenticateUser, (req: Request, res: Respo
     };
   });
 
-  // AC-E8-1: Sort strictly descending by riskScore (highest risk first)
-  reviewItems.sort((a, b) => b.riskResult.riskScore - a.riskResult.riskScore);
+  // Ambiguous documents awaiting category confirmation come first (DOCUMENT-TAXONOMY.md section 3, M0-T2),
+  // then AC-E8-1: descending by riskScore (highest risk first)
+  reviewItems.sort((a, b) =>
+    Number(!!b.document.needsHumanReview) - Number(!!a.document.needsHumanReview) ||
+    b.riskResult.riskScore - a.riskResult.riskScore
+  );
 
   let filtered = reviewItems;
   if (riskFilter && riskFilter !== 'ALL') {
@@ -509,6 +513,8 @@ documentsRouter.post('/upload', authenticateUser, requireAuth, upload.array('fil
       return sendError(res, `Bạn không có quyền tải tài liệu lên dự án "${projectId}".`, 403);
     }
     const categoryOverride = (req.body.category as string) || 'AUTO';
+    // True only when the uploader picked one of the 8 standard folders; anything else is treated as AUTO (M0-T2)
+    const isExplicitCategory = Object.values(CATEGORY_MAP).includes(categoryOverride as DocumentCategory);
     const author = req.user?.name || (req.body.author as string) || 'System User';
     const timestamp = new Date().toISOString().replace('T', ' ').slice(0, 16);
 
@@ -527,7 +533,8 @@ documentsRouter.post('/upload', authenticateUser, requireAuth, upload.array('fil
       name: string, 
       buffer: Buffer, 
       mimeType: string, 
-      isZipMember = false
+      isZipMember = false,
+      sourcePath: string = name
     ): Promise<{ success: boolean; document?: DocumentItem; duplicate?: boolean; duplicateOfId?: string; error?: string; statusCode?: number }> => {
       // 1. Security Check (E2-T1)
       const sec = validateFileContent(name, buffer);
@@ -586,7 +593,10 @@ documentsRouter.post('/upload', authenticateUser, requireAuth, upload.array('fil
         id: docId,
         projectId,
         title,
+        // Provisional value only: when categorySource is AUTO the pipeline's ClassificationScorer decides (M0-T2)
         category: detectedCat,
+        categorySource: isExplicitCategory ? 'USER' : 'AUTO',
+        sourcePath,
         currentVersion: 'v1.0',
         status: 'Draft',
         author,
@@ -715,7 +725,7 @@ documentsRouter.post('/upload', authenticateUser, requireAuth, upload.array('fil
               });
               continue;
             }
-            const result = await processItemBuffer(entryName, entryBuffer, '', true);
+            const result = await processItemBuffer(entryName, entryBuffer, '', true, entry.entryName);
 
             if (!result.success) {
               failedFiles++;

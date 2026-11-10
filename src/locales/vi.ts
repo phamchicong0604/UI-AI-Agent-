@@ -800,4 +800,10 @@ export const vi = {
   settingsDbPathLabel: "Đường dẫn: server/data/docqa.sqlite",
   quickModelActivated: "Kích hoạt mô hình \"{name}\" (Effort: {effort}) qua /model",
   allDocuments: 'Tất cả tài liệu',
+  classificationNeedsConfirmation: 'Cần xác nhận',
+  classificationSecondaryTag: 'Nhãn phụ: {category}',
+  classificationSuggested: 'Đề xuất: {category}',
+  classificationCategorySelectLabel: 'Danh mục',
+  classificationConfirmBtn: 'Xác nhận danh mục',
+  classificationConfirmError: 'Không thể cập nhật danh mục tài liệu',
 };
