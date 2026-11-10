@@ -14,18 +14,29 @@ export const migration014BackfillRequirementsProjectId: Migration = {
         CREATE INDEX IF NOT EXISTS idx_requirements_project_id ON requirements (project_id);
       `);
     }
+    // project_id references projects(id) and foreign keys are enforced, so every candidate is only used when
+    // that project still exists. A requirement whose project cannot be resolved stays NULL: the routes deny
+    // access to it (fail-closed) until an administrator assigns it. Assigning a missing project would make
+    // this migration fail and stop the server at start-up.
+    const orphanIds = (db.prepare('SELECT id FROM requirements WHERE project_id IS NULL').all() as Array<{ id: string }>).map(r => r.id);
     db.exec(`
       UPDATE requirements
       SET project_id = coalesce(
-        json_extract(data, '$.projectId'),
-        (SELECT d.project_id FROM documents d WHERE d.id = json_extract(requirements.data, '$.sourceReferences[0].documentId')),
-        'PRJ-01'
+        (SELECT p.id FROM projects p WHERE p.id = json_extract(requirements.data, '$.projectId')),
+        (SELECT d.project_id FROM documents d JOIN projects p ON p.id = d.project_id
+          WHERE d.id = json_extract(requirements.data, '$.sourceReferences[0].documentId')),
+        (SELECT p.id FROM projects p WHERE p.id = 'PRJ-01')
       )
       WHERE project_id IS NULL;
-
+    `);
+    // Keep the JSON payload in line with the column for the rows this migration assigned
+    const syncJson = db.prepare(`UPDATE requirements SET data = json_set(data, '$.projectId', project_id) WHERE id = ? AND project_id IS NOT NULL`);
+    for (const id of orphanIds) syncJson.run(id);
+    // Rows that already had a project but no projectId in the payload get the payload filled in as well
+    db.exec(`
       UPDATE requirements
       SET data = json_set(data, '$.projectId', project_id)
-      WHERE json_extract(data, '$.projectId') IS NULL;
+      WHERE project_id IS NOT NULL AND json_extract(data, '$.projectId') IS NULL;
     `);
   },
   down: (_db: Database.Database) => {

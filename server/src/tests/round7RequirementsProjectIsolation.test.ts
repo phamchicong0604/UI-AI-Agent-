@@ -6,6 +6,8 @@ import { app } from '../app.js';
 import { db } from '../database/db.js';
 import { signUserSession, computePbkdf2Hash } from '../common/auth.js';
 import { migration014BackfillRequirementsProjectId } from '../database/migrations/014_backfill_requirements_project_id.js';
+import { DatabaseMigrator } from '../database/migrator.js';
+import { allMigrations } from '../database/migrations/index.js';
 
 describe('Round 7 R7-02: Requirements fail-closed project isolation', () => {
   let server: http.Server;
@@ -210,6 +212,34 @@ describe('Round 7 R7-02: Requirements fail-closed project isolation', () => {
         expect(r.project_id).not.toBeNull();
         expect(r.json_project).toBe(r.project_id);
       }
+      memDb.close();
+    });
+
+    it('never violates the projects foreign key on a schema built by the real migrations (PR 4 review F-02)', () => {
+      const memDb = new Database(':memory:');
+      new DatabaseMigrator(memDb, allMigrations.filter(m => m.version <= '013')).runPendingMigrations();
+      expect(memDb.pragma('foreign_keys', { simple: true })).toBe(1);
+
+      memDb.prepare(`
+        INSERT OR REPLACE INTO projects (id, name, key, description, version, author, members_count, data, created_at, updated_at)
+        VALUES ('PRJ-01', 'Default', 'P1', 'Desc', 'v1.0', 'Admin', 1, '{}', datetime('now'), datetime('now'))
+      `).run();
+      const insert = memDb.prepare(`INSERT INTO requirements (id, project_id, type, priority, status, data, updated_at) VALUES (?, NULL, 'Functional', 'High', 'Draft', ?, '2026-11-01')`);
+      const projectOf = (id: string) =>
+        memDb.prepare(`SELECT project_id, json_extract(data, '$.projectId') AS json_project FROM requirements WHERE id = ?`).get(id) as { project_id: string | null; json_project: string | null };
+
+      // JSON names a project that no longer exists: must not throw; falls back to an existing project
+      insert.run('REQ-FK-GHOST', JSON.stringify({ id: 'REQ-FK-GHOST', projectId: 'PRJ-GHOST' }));
+      expect(() => migration014BackfillRequirementsProjectId.up(memDb)).not.toThrow();
+      expect(projectOf('REQ-FK-GHOST')).toEqual({ project_id: 'PRJ-01', json_project: 'PRJ-01' });
+
+      // No resolvable project at all (PRJ-01 was deleted): must not throw; the requirement stays unassigned
+      memDb.prepare(`DELETE FROM projects WHERE id = 'PRJ-01'`).run();
+      insert.run('REQ-FK-NONE', JSON.stringify({ id: 'REQ-FK-NONE' }));
+      insert.run('REQ-FK-GHOST2', JSON.stringify({ id: 'REQ-FK-GHOST2', projectId: 'PRJ-GHOST' }));
+      expect(() => migration014BackfillRequirementsProjectId.up(memDb)).not.toThrow();
+      expect(projectOf('REQ-FK-NONE').project_id).toBeNull();
+      expect(projectOf('REQ-FK-GHOST2').project_id).toBeNull();
       memDb.close();
     });
   });
