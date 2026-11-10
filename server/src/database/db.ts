@@ -349,6 +349,7 @@ Hệ thống **Evidence Lifecycle Management** chịu trách nhiệm thu thập,
     const initialReqs: RequirementItem[] = [
       {
         id: 'REQ-001',
+        projectId: 'PRJ-01',
         title: 'Role-Based Access Control and Strict Approval Gates',
         description: 'The platform must enforce strict RBAC permissions across Project Admin, PM, BA, Tech Lead, QA, and Approver.',
         type: 'Functional',
@@ -377,9 +378,10 @@ Hệ thống **Evidence Lifecycle Management** chịu trách nhiệm thu thập,
       }
     ];
 
-    const insertReq = db.prepare('INSERT INTO requirements (id, type, priority, status, data, updated_at) VALUES (?, ?, ?, ?, ?, ?)');
+    // Seed requirements must carry project_id so project isolation stays fail-closed (R7-02)
+    const insertReq = db.prepare('INSERT INTO requirements (id, project_id, type, priority, status, data, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)');
     for (const req of initialReqs) {
-      insertReq.run(req.id, req.type, req.priority, req.status, JSON.stringify(req), req.updatedAt);
+      insertReq.run(req.id, req.projectId || 'PRJ-01', req.type, req.priority, req.status, JSON.stringify(req), req.updatedAt);
     }
 
     // Seed Evidence

@@ -8,18 +8,30 @@ export const requirementsRouter = Router();
 
 requirementsRouter.get('/', authenticateUser, (req: Request, res: Response) => {
   const projectId = (req.query.projectId as string) || (req.user as any)?.projectId;
-  if (req.user && projectId && !checkProjectAccess(req.user, projectId)) {
-    return sendError(res, `Bạn không có quyền truy cập yêu cầu của dự án "${projectId}".`, 403);
+  if (projectId) {
+    if (!checkProjectAccess(req.user, projectId)) {
+      return sendError(res, `Bạn không có quyền truy cập yêu cầu của dự án "${projectId}".`, 403);
+    }
+    return sendSuccess(res, dbRepository.requirements.getAll(projectId));
   }
-  const reqs = dbRepository.requirements.getAll(projectId);
-  sendSuccess(res, reqs);
+
+  // Fail-closed without a target project: only a global Project Admin sees everything,
+  // other users only see requirements of projects they are a member of (R7-02)
+  const isSysAdmin = req.user ? dbRepository.users.getById(req.user.id)?.role === 'Project Admin' : false;
+  if (isSysAdmin) {
+    return sendSuccess(res, dbRepository.requirements.getAll());
+  }
+  const allowedProjects = req.user ? dbRepository.projectMembers.getProjectsForUser(req.user.id) : [];
+  sendSuccess(res, allowedProjects.flatMap(pId => dbRepository.requirements.getAll(pId)));
 });
 
 requirementsRouter.get('/:id', authenticateUser, (req: Request, res: Response) => {
   const reqItem = dbRepository.requirements.getById(req.params.id);
   if (!reqItem) return sendError(res, 'Requirement not found', 404);
-  if (req.user && reqItem.projectId && !checkProjectAccess(req.user, reqItem.projectId)) {
-    return sendError(res, `Bạn không có quyền truy cập yêu cầu thuộc dự án "${reqItem.projectId}".`, 403);
+  // Fail-closed project isolation (R7-02)
+  const projId = reqItem.projectId;
+  if (!projId || !checkProjectAccess(req.user, projId)) {
+    return sendError(res, `Bạn không có quyền truy cập yêu cầu thuộc dự án "${projId || 'không xác định'}" (R7-02).`, 403);
   }
   sendSuccess(res, reqItem);
 });
@@ -29,7 +41,7 @@ requirementsRouter.post('/', authenticateUser, requireAuth, (req: Request, res: 
   if (!title) return sendError(res, 'Title is required', 400);
 
   const projId = projectId || (req.user as any)?.projectId || 'PRJ-01';
-  if (req.user && !checkProjectAccess(req.user, projId)) {
+  if (!checkProjectAccess(req.user, projId)) {
     return sendError(res, `Bạn không có quyền tạo yêu cầu trong dự án "${projId}".`, 403);
   }
 
@@ -59,12 +71,13 @@ requirementsRouter.patch('/:id/status', authenticateUser, requireAuth, (req: Req
   const reqItem = dbRepository.requirements.getById(req.params.id);
   if (!reqItem) return sendError(res, 'Requirement not found', 404);
 
-  if (req.user && reqItem.projectId && !checkProjectAccess(req.user, reqItem.projectId)) {
-    return sendError(res, `Bạn không có quyền cập nhật yêu cầu thuộc dự án "${reqItem.projectId}".`, 403);
+  // Fail-closed project isolation (R7-02)
+  const targetProj = reqItem.projectId;
+  if (!targetProj || !checkProjectAccess(req.user, targetProj)) {
+    return sendError(res, `Bạn không có quyền cập nhật yêu cầu thuộc dự án "${targetProj || 'không xác định'}" (R7-02).`, 403);
   }
 
   // BR-AUTH-01: Only Approver/Admin roles in the target project can approve/reject requirements (Condition 3, NEW-11, R6-01)
-  const targetProj = reqItem.projectId || 'PRJ-01';
   const effectiveRole = req.user ? getUserRoleInProject(req.user.id, targetProj) : null;
   if (status === 'Approved' || status === 'Rejected') {
     if (!effectiveRole || !['Project Admin', 'Reviewer / Approver', 'PM / Project Lead'].includes(effectiveRole)) {
