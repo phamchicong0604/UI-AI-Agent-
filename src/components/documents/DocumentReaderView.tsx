@@ -36,6 +36,7 @@ import {
   Tag
 } from 'lucide-react';
 import { Badge, Button } from '../../common/components';
+import { ClassificationBadges } from './ClassificationBadges';
 import { formatHashCode } from '../../common/utils/hash';
 
 interface DocumentReaderViewProps {
@@ -617,6 +618,7 @@ export const DocumentReaderView: React.FC<DocumentReaderViewProps> = ({
             <div className="flex flex-wrap items-center gap-2.5">
               <h1 className="text-xl font-bold text-white tracking-tight">{doc.title}</h1>
               {getStatusBadge(doc.status)}
+              <ClassificationBadges doc={doc} />
               <span className="font-mono text-xs text-slate-300 bg-slate-800 px-2 py-0.5 rounded-md border border-slate-700">
                 {doc.currentVersion}
               </span>

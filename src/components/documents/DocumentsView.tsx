@@ -39,6 +39,7 @@ import { ProjectModal } from './ProjectModal';
 import { MarkdownPreviewModal } from './MarkdownPreviewModal';
 import { DocumentReaderView } from './DocumentReaderView';
 import { ReviewQueueView } from './ReviewQueueView';
+import { ClassificationBadges } from './ClassificationBadges';
 import { Button, Badge, Modal } from '../../common/components';
 import { formatHashCode } from '../../common/utils/hash';
 
@@ -783,6 +784,7 @@ export const DocumentsView: React.FC = () => {
                             {doc.title}
                           </h3>
                           {getStatusBadge(doc.status)}
+                          <ClassificationBadges doc={doc} />
                           <span className="font-mono text-[11px] font-medium text-slate-300 bg-slate-800 px-2 py-0.5 rounded-md border border-slate-700 shrink-0">
                             {doc.currentVersion}
                           </span>

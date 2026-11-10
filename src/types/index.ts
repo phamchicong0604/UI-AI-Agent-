@@ -53,6 +53,23 @@ export interface DocumentItem {
   tags: string[];
   versions: DocumentVersion[];
   linkedRequirementsCount: number;
+  /** 'AUTO' when the uploader left the category to the system, 'USER' when a person picked it */
+  categorySource?: 'AUTO' | 'USER';
+  sourcePath?: string;
+  /** Result of the deterministic classification scorer run by the pipeline */
+  classification?: DocumentClassification;
+  /** Non-primary categories scoring >= 0.50 */
+  secondaryCategories?: DocumentCategory[];
+  /** True while an Ambiguous document waits for a person to confirm its category */
+  needsHumanReview?: boolean;
+}
+
+export interface DocumentClassification {
+  suggestedCategory: DocumentCategory;
+  score: number;
+  isAmbiguous: boolean;
+  versionNo: string;
+  classifiedAt: string;
 }
 
 export interface AcceptanceCriterion {
