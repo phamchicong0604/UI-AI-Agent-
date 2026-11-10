@@ -12,6 +12,7 @@ import { registerPipelineHandlers } from '../../modules/workflow/pipelineWorker.
 import { defaultStage2Runner } from '../../modules/ai/stage2Runner.js';
 import { signUserSession } from '../../common/auth.js';
 import { HELDOUT_CLASSIFICATION_V1 } from './heldoutClassification.v1.js';
+import { HELDOUT_CLASSIFICATION_V2 } from './heldoutClassification.v2.js';
 
 /**
  * With/without comparison for M0-T2 through the real upload route and the real PIPELINE_RUN handler.
@@ -74,12 +75,13 @@ describe.runIf(!!OUT)('Eval: upload classification with vs without Classificatio
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
 
-  it('measures both arms on the held-out set and on dataset.v1', async () => {
+  it('measures both arms on the held-out sets and on dataset.v1', async () => {
     const here = path.dirname(fileURLToPath(import.meta.url));
     const v1 = JSON.parse(fs.readFileSync(path.join(here, 'dataset.v1.json'), 'utf8')) as any[];
 
     const cases = [
-      ...HELDOUT_CLASSIFICATION_V1.map(d => ({ set: 'heldout', ...d })),
+      ...HELDOUT_CLASSIFICATION_V1.map(d => ({ set: 'heldout.v1', ...d })),
+      ...HELDOUT_CLASSIFICATION_V2.map(d => ({ set: 'heldout.v2', ...d })),
       ...v1.map(d => ({
         set: 'dataset.v1', id: d.id, fileName: path.basename(d.filePath), nameType: 'descriptive', language: d.language,
         expected: d.groundTruth.primaryCategory,
