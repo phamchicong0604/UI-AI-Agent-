@@ -10,6 +10,8 @@ export interface AuthUser {
   name: string;
   role: UserRole;
   projectId?: string;
+  /** users.token_version the token was issued against (R7-04) */
+  tokenVersion?: number;
   iat?: number;
   exp?: number;
 }
@@ -97,6 +99,11 @@ export function normalizeRole(roleInput?: string): UserRole | undefined {
  */
 export function signUserSession(user: AuthUser): string {
   const secret = getAuthSecret();
+  // R7-04: Bind the token to the user's current token_version so it can be revoked exactly,
+  // independent of clock resolution. Always read from the DB, never from caller input.
+  // If the account does not exist yet, fall back to 1 (the initial token_version of a new user);
+  // authenticateUser still rejects the token unless the account exists and the versions match.
+  const tokenVersion = dbRepository.users.getById(user.id)?.tokenVersion ?? 1;
   const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
   const payload = Buffer.from(JSON.stringify({
     id: user.id,
@@ -104,6 +111,7 @@ export function signUserSession(user: AuthUser): string {
     name: user.name,
     role: user.role,
     projectId: user.projectId,
+    tv: tokenVersion,
     iat: Math.floor(Date.now() / 1000),
     exp: Math.floor(Date.now() / 1000) + 86400 * 7 // 7 days
   })).toString('base64url');
@@ -147,6 +155,7 @@ export function verifyUserSession(token: string): AuthUser | null {
       name: decoded.name || role,
       role,
       projectId: decoded.projectId,
+      tokenVersion: typeof decoded.tv === 'number' ? decoded.tv : undefined,
       iat: decoded.iat,
       exp: decoded.exp
     };
@@ -190,6 +199,13 @@ export function authenticateUser(req: Request, res: Response, next: NextFunction
   // R6-08: Revoke tokens issued before the most recent password change
   if (verified.iat && dbUser.passwordChangedAt && verified.iat < dbUser.passwordChangedAt) {
     sendError(res, 'Unauthorized: Token has been revoked due to password change. Please log in again (R6-08).', 401);
+    return;
+  }
+
+  // R7-04: Revoke tokens whose token_version does not match the DB (bumped on every password change).
+  // Fail-closed: tokens without a version claim (issued before this check existed) are rejected.
+  if (verified.tokenVersion === undefined || verified.tokenVersion !== dbUser.tokenVersion) {
+    sendError(res, 'Unauthorized: Token has been revoked. Please log in again (R7-04).', 401);
     return;
   }
 
