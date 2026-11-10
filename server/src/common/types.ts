@@ -243,6 +243,26 @@ export interface DocumentItem {
   tags: string[];
   versions: DocumentVersion[];
   linkedRequirementsCount: number;
+  /** 'AUTO' when the uploader left the category to the system, 'USER' when a person picked it (M0-T2) */
+  categorySource?: 'AUTO' | 'USER';
+  /** Original file name, or path inside the ZIP archive, used as classification input */
+  sourcePath?: string;
+  /** Result of the deterministic ClassificationScorer run by the pipeline */
+  classification?: DocumentClassification;
+  /** Non-primary categories scoring >= 0.50 (DOCUMENT-TAXONOMY.md section 2) */
+  secondaryCategories?: DocumentCategory[];
+  /** True while an Ambiguous document waits for a person to confirm its category */
+  needsHumanReview?: boolean;
+}
+
+export interface DocumentClassification {
+  /** Highest-scoring category according to the scorer */
+  suggestedCategory: DocumentCategory;
+  score: number;
+  /** Top score < 0.40 */
+  isAmbiguous: boolean;
+  versionNo: string;
+  classifiedAt: string;
 }
 
 export interface AcceptanceCriterion {

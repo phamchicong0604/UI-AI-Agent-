@@ -265,13 +265,27 @@ export class WorkflowEngine {
   /**
    * Granular stage isolation (E3-T3 AC):
    * When reviewer modifies only the Document Type/Category, update metadata without re-triggering Understanding.
+   *
+   * source 'USER' (default) records a human decision: it clears needsHumanReview and pins the category so the
+   * pipeline will not overwrite it. source 'AUTO' is the pipeline applying the scorer's result (M0-T2).
+   * This method never enqueues a job.
    */
-  public async updateDocumentCategory(documentId: string, newCategory: any, actor: string): Promise<void> {
+  public async updateDocumentCategory(
+    documentId: string,
+    newCategory: any,
+    actor: string,
+    options: { source?: 'AUTO' | 'USER'; role?: string; details?: Record<string, any> } = {}
+  ): Promise<void> {
     const doc = dbRepository.documents.getById(documentId);
     if (!doc) throw new Error(`Document ${documentId} not found`);
 
+    const source = options.source || 'USER';
     const oldCategory = doc.category;
     doc.category = newCategory;
+    if (source === 'USER') {
+      doc.categorySource = 'USER';
+      doc.needsHumanReview = false;
+    }
     doc.updatedAt = new Date().toISOString().replace('T', ' ').slice(0, 16);
     dbRepository.documents.upsert(doc);
 
@@ -280,9 +294,12 @@ export class WorkflowEngine {
       entityId: documentId,
       action: 'CATEGORY_RECLASSIFIED',
       actor,
+      role: options.role,
       details: {
         oldCategory,
         newCategory,
+        source,
+        ...(options.details || {}),
         note: 'Stage Understanding is preserved (stage isolation)'
       },
       timestamp: new Date().toISOString()
