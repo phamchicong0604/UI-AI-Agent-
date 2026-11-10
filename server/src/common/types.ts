@@ -411,6 +411,8 @@ export interface AuditEvent {
   action: string;
   entityType: 'Document' | 'Requirement' | 'TestCase' | 'Evidence' | 'TestRun' | 'Bug' | 'Conflict' | 'User';
   entityId: string;
+  /** Project owning the entity, resolved server-side when the event is written via POST /audit/events (R7-03) */
+  projectId?: string;
   details: string;
   timestamp: string;
   eventHash: string;

@@ -1,10 +1,13 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import http from 'http';
 import net from 'net';
 import crypto from 'crypto';
 import { app } from '../app.js';
-import { db } from '../database/db.js';
-import { signUserSession, computePbkdf2Hash } from '../common/auth.js';
+import { db, dbRepository } from '../database/db.js';
+import { signUserSession, computePbkdf2Hash, getAuthSecret } from '../common/auth.js';
+import { computeAuditEventHash } from '../common/crypto.js';
+import { allMigrations } from '../database/migrations/index.js';
+import { migration012RemoveSeedUsersAndEnforceAdminSecurity } from '../database/migrations/012_remove_seed_users_and_enforce_admin_security.js';
 import Database from 'better-sqlite3';
 
 describe('Round 6 Bug Verification Test Suite (R6-01 to R6-10)', () => {
@@ -429,6 +432,159 @@ describe('Round 6 Bug Verification Test Suite (R6-01 to R6-10)', () => {
   });
 
   // =========================================================================
+  // R7-03: Forged audit events in another project's log
+  // =========================================================================
+  describe('R7-03: Audit events are bound to the project that owns the entity', () => {
+    // QA user who is a member of PRJ-R6-01 only
+    const qaUser = { id: 'usr_r7_qa_prj1', username: 'r7_qa_prj1', name: 'R7 QA', role: 'QA' as const };
+    const docP1 = `DOC-R7-P1-${Date.now()}`;
+    const docP2 = `DOC-R7-P2-${Date.now()}`;
+    let tokenQa: string;
+
+    const postAudit = (token: string, body: Record<string, unknown>) =>
+      fetch(`${baseUrl}/api/v1/audit/events`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(body)
+      });
+
+    const getProjectEvents = async (token: string, projectId: string): Promise<any[]> => {
+      const res = await fetch(`${baseUrl}/api/v1/audit/events?projectId=${projectId}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      expect(res.status).toBe(200);
+      return ((await res.json()) as any).data;
+    };
+
+    beforeAll(() => {
+      const now = new Date().toISOString();
+      db.prepare(`
+        INSERT OR REPLACE INTO users (id, username, password_hash, password_salt, name, role, must_change_password, password_changed_at, token_version, created_at)
+        VALUES (?, ?, 'unused', 'unused', ?, ?, 0, 0, 1, ?)
+      `).run(qaUser.id, qaUser.username, qaUser.name, qaUser.role, now);
+      db.prepare(`INSERT OR REPLACE INTO project_members (id, project_id, user_id, role, created_at) VALUES (?, ?, ?, 'QA', ?)`)
+        .run(`pm_${prj1}_${qaUser.id}`, prj1, qaUser.id, now);
+      for (const [docId, pid] of [[docP1, prj1], [docP2, prj2]]) {
+        db.prepare(`
+          INSERT INTO documents (id, project_id, category, status, data, updated_at)
+          VALUES (?, ?, '01_Project_Overview', 'Draft', '{}', ?)
+        `).run(docId, pid, now);
+      }
+      tokenQa = signUserSession({ id: qaUser.id, username: qaUser.username, name: qaUser.name, role: 'QA', projectId: prj1 });
+    });
+
+    it('rejects the R7-03 reproduction (entityType "Other", entityId = foreign project) and nothing reaches the foreign log', async () => {
+      const res = await postAudit(tokenQa, {
+        action: 'CONFLICT_RESOLVED',
+        entityType: 'Other',
+        entityId: prj2,
+        details: `Forged entry for ${prj2}`
+      });
+      expect(res.status).toBe(400);
+
+      const prj2Events = await getProjectEvents(tokenAdmin, prj2);
+      expect(prj2Events.some(e => e.user === qaUser.username)).toBe(false);
+    });
+
+    it('rejects every entityType outside the fixed allowlist with 400', async () => {
+      for (const entityType of ['Project', 'Conflict', 'User', 'KnowledgeUnit', 'document', '__proto__', 'constructor']) {
+        const res = await postAudit(tokenQa, { action: 'DOCUMENT_UPDATED', entityType, entityId: prj1, projectId: prj1 });
+        expect(res.status, `entityType ${entityType}`).toBe(400);
+      }
+      // Non-string entity fields are rejected as well
+      const resArray = await postAudit(tokenQa, { action: 'DOCUMENT_UPDATED', entityType: ['Document'], entityId: docP1 });
+      expect(resArray.status).toBe(400);
+    });
+
+    it('rejects allowed entity types that do not resolve to a project the caller belongs to', async () => {
+      // Entity of a foreign project, no projectId claimed
+      const resForeign = await postAudit(tokenQa, { action: 'DOCUMENT_UPDATED', entityType: 'Document', entityId: docP2 });
+      expect(resForeign.status).toBe(400);
+
+      // Entity of a foreign project, caller claims own project
+      const resMismatch = await postAudit(tokenQa, { action: 'DOCUMENT_UPDATED', entityType: 'Document', entityId: docP2, projectId: prj1 });
+      expect(resMismatch.status).toBe(400);
+
+      // Caller claims the foreign project directly
+      const resClaimForeign = await postAudit(tokenQa, { action: 'DOCUMENT_UPDATED', entityType: 'Document', entityId: docP2, projectId: prj2 });
+      expect(resClaimForeign.status).toBe(403);
+
+      // Entity that does not exist
+      const resMissing = await postAudit(tokenQa, { action: 'DOCUMENT_UPDATED', entityType: 'Document', entityId: 'DOC-R7-DOES-NOT-EXIST' });
+      expect(resMissing.status).toBe(400);
+
+      // Project id passed off as a document id
+      const resProjectAsDoc = await postAudit(tokenQa, { action: 'DOCUMENT_UPDATED', entityType: 'Document', entityId: prj2 });
+      expect(resProjectAsDoc.status).toBe(400);
+
+      const prj2Events = await getProjectEvents(tokenAdmin, prj2);
+      expect(prj2Events.some(e => e.user === qaUser.username)).toBe(false);
+    });
+
+    it('accepts an event on an entity of the caller\'s project; details naming another project do not leak it there', async () => {
+      const res = await postAudit(tokenQa, {
+        action: 'DOCUMENT_UPDATED',
+        entityType: 'Document',
+        entityId: docP1,
+        details: `Mentions ${prj2} in free text`
+      });
+      expect(res.status).toBe(201);
+      const created = ((await res.json()) as any).data;
+      expect(created.projectId).toBe(prj1);
+      expect(created.user).toBe(qaUser.username);
+
+      const prj1Events = await getProjectEvents(tokenQa, prj1);
+      expect(prj1Events.some(e => e.id === created.id)).toBe(true);
+
+      const prj2Events = await getProjectEvents(tokenAdmin, prj2);
+      expect(prj2Events.some(e => e.id === created.id)).toBe(false);
+    });
+
+    it('does not show previously forged rows (no stamped project, unresolvable entity) in the foreign project log', async () => {
+      // Simulates a row written through the pre-fix endpoint
+      const previousEventHash = dbRepository.auditEvents.getLatestHash();
+      const id = `AUD-R7-LEGACY-${Date.now()}`;
+      const timestamp = new Date().toISOString();
+      const eventHash = computeAuditEventHash(previousEventHash, id, qaUser.username, 'QA', 'CONFLICT_RESOLVED', 'Other', prj2, timestamp);
+      dbRepository.auditEvents.add({
+        id,
+        user: qaUser.username,
+        role: 'QA',
+        action: 'CONFLICT_RESOLVED',
+        entityType: 'Other',
+        entityId: prj2,
+        details: `Forged entry for ${prj2}`,
+        timestamp,
+        eventHash,
+        previousEventHash
+      } as any);
+
+      const prj2Events = await getProjectEvents(tokenAdmin, prj2);
+      expect(prj2Events.some(e => e.id === id)).toBe(false);
+
+      const verifyRes = await fetch(`${baseUrl}/api/v1/audit/verify-chain?projectId=${prj2}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${tokenAdmin}` }
+      });
+      expect(verifyRes.status).toBe(200);
+      const verifyJson = await verifyRes.json() as any;
+      expect(verifyJson.data.verificationLog.some((v: any) => v.event === id)).toBe(false);
+    });
+
+    it('still shows server-generated project events (ADMIN_ROLE_SWITCH) in the project log', async () => {
+      const res = await fetch(`${baseUrl}/api/v1/auth/session`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenAdmin}` },
+        body: JSON.stringify({ role: 'Project Admin', projectId: prj2 })
+      });
+      expect(res.status).toBe(200);
+
+      const prj2Events = await getProjectEvents(tokenAdmin, prj2);
+      expect(prj2Events.some(e => e.action === 'ADMIN_ROLE_SWITCH' && e.entityId === prj2)).toBe(true);
+    });
+  });
+
+  // =========================================================================
   // R6-05: AI Prompt Grounding Bypass Protection
   // =========================================================================
   describe('R6-05: AI Grounding Bypass Protection (BUG-001 Hardening)', () => {
@@ -569,59 +725,53 @@ describe('Round 6 Bug Verification Test Suite (R6-01 to R6-10)', () => {
   // =========================================================================
   describe('R6-07: Migration Deduplication Collision Resistance', () => {
     it('renumbers duplicates collision-resistantly when 1.0-dup1 already exists', () => {
+      // R7-06 (a): run the REAL migration 012 up() on a schema built by the real migrations 001-011,
+      // so this test fails if the deduplication in migration 012 is reverted or weakened.
       const memDb = new Database(':memory:');
-      memDb.exec(`
-        CREATE TABLE document_versions (
-          id TEXT PRIMARY KEY,
-          document_id TEXT NOT NULL,
-          version_no TEXT NOT NULL,
-          file_id TEXT,
-          checksum TEXT,
-          change_summary TEXT,
-          author TEXT,
-          created_at TEXT
-        );
-        -- Insert two '1.0' and one pre-existing '1.0-dup1'
-        INSERT INTO document_versions VALUES
-          ('v1', 'DOC-01', '1.0', NULL, 'chk1', 'initial', 'dev', datetime('now')),
-          ('v2', 'DOC-01', '1.0', NULL, 'chk2', 'duplicate', 'dev', datetime('now')),
-          ('v3', 'DOC-01', '1.0-dup1', NULL, 'chk3', 'existing-dup', 'dev', datetime('now'));
-      `);
-
-      // Run deduplication logic with collision-resistant loop
-      const rows = memDb.prepare(`
-        SELECT id, document_id, version_no
-        FROM document_versions
-        ORDER BY document_id, id
-      `).all() as Array<{ id: string; document_id: string; version_no: string }>;
-
-      const seen = new Set<string>();
-      for (const row of rows) {
-        const key = `${row.document_id}::${row.version_no}`;
-        if (seen.has(key)) {
-          let counter = 1;
-          let candidate = `${row.version_no}-dup${counter}`;
-          while (memDb.prepare('SELECT 1 FROM document_versions WHERE document_id = ? AND version_no = ?').get(row.document_id, candidate)) {
-            counter++;
-            candidate = `${row.version_no}-dup${counter}`;
-          }
-          memDb.prepare('UPDATE document_versions SET version_no = ? WHERE id = ?').run(candidate, row.id);
-          seen.add(`${row.document_id}::${candidate}`);
-        } else {
-          seen.add(key);
+      try {
+        const idx012 = allMigrations.indexOf(migration012RemoveSeedUsersAndEnforceAdminSecurity);
+        expect(idx012).toBe(11);
+        for (const m of allMigrations.slice(0, idx012)) {
+          m.up(memDb);
         }
+
+        // Pre-012 state: no unique index yet, so duplicate version numbers can exist
+        const docId = 'DOC-R6-07';
+        memDb.prepare(`
+          INSERT INTO documents (id, project_id, category, status, data, updated_at)
+          VALUES (?, 'PRJ-01', '01_Project_Overview', 'Draft', '{}', '2026-01-01T00:00:00.000Z')
+        `).run(docId);
+        const insertVersion = memDb.prepare(`
+          INSERT INTO document_versions (id, document_id, version_no, file_id, extracted_content, status, change_summary, created_by, created_at)
+          VALUES (?, ?, ?, NULL, ?, 'Draft', ?, 'dev', ?)
+        `);
+        // Two '1.0' rows plus a pre-existing '1.0-dup1' that the renumbering must not collide with
+        insertVersion.run('v1', docId, '1.0', 'content-1', 'initial', '2026-01-01T00:00:01.000Z');
+        insertVersion.run('v2', docId, '1.0', 'content-2', 'duplicate', '2026-01-01T00:00:02.000Z');
+        insertVersion.run('v3', docId, '1.0-dup1', 'content-3', 'existing-dup', '2026-01-01T00:00:03.000Z');
+
+        migration012RemoveSeedUsersAndEnforceAdminSecurity.up(memDb);
+
+        // Zero data loss: all 3 rows survive with their content, the original keeps '1.0',
+        // the duplicate skips the taken '1.0-dup1' and becomes '1.0-dup2'
+        const rows = memDb.prepare(`
+          SELECT id, version_no, extracted_content FROM document_versions WHERE document_id = ? ORDER BY id
+        `).all(docId);
+        expect(rows).toEqual([
+          { id: 'v1', version_no: '1.0', extracted_content: 'content-1' },
+          { id: 'v2', version_no: '1.0-dup2', extracted_content: 'content-2' },
+          { id: 'v3', version_no: '1.0-dup1', extracted_content: 'content-3' }
+        ]);
+
+        // The migration created the UNIQUE index, and it is enforced
+        const indexes = memDb.prepare("PRAGMA index_list('document_versions')").all() as Array<{ name: string; unique: number }>;
+        expect(indexes.some(i => i.name === 'idx_doc_versions_doc_ver' && i.unique === 1)).toBe(true);
+        expect(() => {
+          insertVersion.run('v4', docId, '1.0', 'content-4', 'new-duplicate', '2026-01-01T00:00:04.000Z');
+        }).toThrow(/UNIQUE constraint failed/);
+      } finally {
+        memDb.close();
       }
-
-      // Now create UNIQUE index: MUST succeed without UNIQUE constraint failed error
-      expect(() => {
-        memDb.exec('CREATE UNIQUE INDEX idx_doc_ver_unique ON document_versions (document_id, version_no);');
-      }).not.toThrow();
-
-      // Verify all 3 rows exist and have distinct versions
-      const finalVersions = memDb.prepare('SELECT version_no FROM document_versions WHERE document_id = ? ORDER BY version_no').all('DOC-01') as Array<{ version_no: string }>;
-      expect(finalVersions.length).toBe(3);
-      expect(finalVersions.map(v => v.version_no)).toEqual(['1.0', '1.0-dup1', '1.0-dup2']);
-      memDb.close();
     });
   });
 
@@ -651,6 +801,81 @@ describe('Round 6 Bug Verification Test Suite (R6-01 to R6-10)', () => {
         headers: { Authorization: `Bearer ${tokenRevoke}` }
       });
       expect(resAfter.status).toBe(401);
+    });
+
+    it('rejects a token issued in the same second as the password change (R7-04)', async () => {
+      const sameSecUser = { id: 'usr_r7_same_second', username: 'r7_same_second', name: 'R7 Same Second' };
+      const salt = 'r7_salt_16bytes_long';
+      db.prepare(`
+        INSERT OR REPLACE INTO users (id, username, password_hash, password_salt, name, role, must_change_password, password_changed_at, token_version, created_at)
+        VALUES (?, ?, ?, ?, ?, 'QA', 0, 0, 1, ?)
+      `).run(sameSecUser.id, sameSecUser.username, computePbkdf2Hash('password123', salt), salt, sameSecUser.name, new Date().toISOString());
+      db.prepare(`INSERT OR REPLACE INTO project_members (id, project_id, user_id, role, created_at) VALUES (?, ?, ?, 'QA', ?)`)
+        .run(`pm_${prj1}_${sameSecUser.id}`, prj1, sameSecUser.id, new Date().toISOString());
+
+      const login = async (password: string) => fetch(`${baseUrl}/api/v1/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: sameSecUser.username, password, projectId: prj1 })
+      });
+
+      // Freeze the clock so the token and the password change are guaranteed to share one second
+      const frozenNow = Date.now();
+      const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(frozenNow);
+      let oldToken: string;
+      try {
+        const loginRes = await login('password123');
+        expect(loginRes.status).toBe(200);
+        oldToken = ((await loginRes.json()) as any).data.token;
+
+        const changeRes = await fetch(`${baseUrl}/api/v1/auth/change-password`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${oldToken}` },
+          body: JSON.stringify({ currentPassword: 'password123', newPassword: 'NewPassword456!' })
+        });
+        expect(changeRes.status).toBe(200);
+      } finally {
+        nowSpy.mockRestore();
+      }
+
+      // Precondition of R7-04: iat is NOT earlier than password_changed_at, so the iat check alone cannot revoke it
+      const payload = JSON.parse(Buffer.from(oldToken.split('.')[1], 'base64url').toString('utf-8'));
+      const row = db.prepare('SELECT password_changed_at, token_version FROM users WHERE id = ?').get(sameSecUser.id) as any;
+      expect(payload.iat).toBe(row.password_changed_at);
+      expect(payload.tv).toBe(1);
+      expect(row.token_version).toBe(2);
+
+      // The old token is rejected everywhere
+      for (const path of ['/api/v1/auth/me', '/api/v1/projects']) {
+        const res = await fetch(`${baseUrl}${path}`, { headers: { Authorization: `Bearer ${oldToken}` } });
+        expect(res.status, path).toBe(401);
+      }
+
+      // A token from a fresh login with the new password is accepted
+      const reloginRes = await login('NewPassword456!');
+      expect(reloginRes.status).toBe(200);
+      const newToken = ((await reloginRes.json()) as any).data.token;
+      const meRes = await fetch(`${baseUrl}/api/v1/auth/me`, { headers: { Authorization: `Bearer ${newToken}` } });
+      expect(meRes.status).toBe(200);
+    });
+
+    it('rejects a correctly signed token that carries no token_version claim (R7-04)', async () => {
+      const nowSec = Math.floor(Date.now() / 1000);
+      const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
+      const payload = Buffer.from(JSON.stringify({
+        id: yuser.id, username: yuser.username, name: yuser.name, role: 'PM / Project Lead', projectId: prj1,
+        iat: nowSec, exp: nowSec + 3600
+      })).toString('base64url');
+      const signature = crypto.createHmac('sha256', getAuthSecret()).update(`${header}.${payload}`).digest('base64url');
+
+      const res = await fetch(`${baseUrl}/api/v1/auth/me`, {
+        headers: { Authorization: `Bearer ${header}.${payload}.${signature}` }
+      });
+      expect(res.status).toBe(401);
+
+      // Control: the same user with a versioned token is accepted
+      const control = await fetch(`${baseUrl}/api/v1/auth/me`, { headers: { Authorization: `Bearer ${tokenYuserPrj1}` } });
+      expect(control.status).toBe(200);
     });
 
     it('rejects token of deleted user with 401', async () => {
