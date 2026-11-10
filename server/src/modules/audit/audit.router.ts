@@ -3,7 +3,7 @@ import crypto from 'crypto';
 import { sendSuccess, sendError } from '../../common/response.js';
 import { computeAuditEventHash } from '../../common/crypto.js';
 import { AuditEvent } from '../../common/types.js';
-import { dbRepository } from '../../database/db.js';
+import { db, dbRepository } from '../../database/db.js';
 import { authenticateUser, requireAuth, checkProjectAccess } from '../../common/auth.js';
 
 export const auditRouter = Router();
@@ -16,6 +16,67 @@ const ALLOWED_AUDIT_ACTIONS = new Set([
   'KNOWLEDGE_PROMOTED', 'KNOWLEDGE_REJECTED', 'CONFLICT_RESOLVED'
 ]);
 
+/**
+ * R7-03: Fixed allowlist of entity types a client may attach to an audit event.
+ * Each type maps to the table whose project_id column decides which project the event belongs to.
+ * Table names are constants here and are never taken from request input.
+ */
+const AUDIT_ENTITY_TABLES: Record<string, string> = {
+  Document: 'documents',
+  Requirement: 'requirements',
+  TestCase: 'test_cases',
+  Evidence: 'evidence',
+  TestRun: 'test_runs',
+  Bug: 'bugs'
+};
+
+/**
+ * Resolves an entity to the project that owns it, strictly from the database (R7-03).
+ * Returns null when the type is not resolvable or the entity does not exist / has no project.
+ * 'Conflict' is resolvable for reading server-generated events only; it is not accepted on POST.
+ */
+function resolveEntityProjectId(entityType: string, entityId: string): string | null {
+  if (typeof entityType !== 'string' || typeof entityId !== 'string') return null;
+  try {
+    if (entityType === 'Conflict') {
+      return dbRepository.conflicts.getById(entityId)?.projectId || null;
+    }
+    if (!Object.prototype.hasOwnProperty.call(AUDIT_ENTITY_TABLES, entityType)) return null;
+    const row = db.prepare(`SELECT project_id, data FROM ${AUDIT_ENTITY_TABLES[entityType]} WHERE id = ?`)
+      .get(entityId) as { project_id?: string | null; data?: string } | undefined;
+    if (!row) return null;
+    if (row.project_id) return row.project_id;
+    const parsed = JSON.parse(row.data || '{}');
+    return typeof parsed.projectId === 'string' && parsed.projectId ? parsed.projectId : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Builds a per-request resolver deciding which project an audit event belongs to (R7-03).
+ * Never inspects the free-text `details` field, which is caller-controlled on POST /audit/events.
+ *  1. projectId stamped on the event by POST /audit/events (verified against the entity at write time);
+ *  2. otherwise the project that owns the referenced entity today;
+ *  3. otherwise, only for server-generated actions that a client cannot post (e.g. ADMIN_ROLE_SWITCH,
+ *     PROJECT_CASCADE_DELETED), the entityId when it is itself the project id.
+ */
+function createEventProjectResolver(): (e: AuditEvent) => string | null {
+  const cache = new Map<string, string | null>();
+  return (e: AuditEvent) => {
+    if (e.projectId) return e.projectId;
+    if (!e.entityId) return null;
+    const key = `${e.entityType}\u0000${e.entityId}`;
+    if (!cache.has(key)) {
+      cache.set(key, resolveEntityProjectId(e.entityType, e.entityId));
+    }
+    const resolved = cache.get(key);
+    if (resolved) return resolved;
+    if (!ALLOWED_AUDIT_ACTIONS.has(e.action)) return e.entityId;
+    return null;
+  };
+}
+
 auditRouter.get('/events', authenticateUser, (req: Request, res: Response) => {
   const projectId = req.query.projectId as string | undefined;
   if (projectId) {
@@ -26,16 +87,17 @@ auditRouter.get('/events', authenticateUser, (req: Request, res: Response) => {
 
   const allEvents = dbRepository.auditEvents.getAll();
   const targetProjectId = projectId || req.user?.projectId || 'PRJ-01';
+  const canViewTarget = checkProjectAccess(req.user, targetProjectId);
+  const eventProject = createEventProjectResolver();
 
   // Strict project isolation: Only return events belonging to projects the user is explicitly authorized to view (R5-05)
+  // R7-03: The project of an event is resolved from the DB, not from a substring match on `details`.
   const filtered = allEvents.filter(e => {
     if (projectId) {
-      return e.details.includes(projectId) || e.entityId === projectId;
+      return eventProject(e) === projectId;
     }
     // If no project specified, only include events matching user's accessible projects or actions performed by user
-    return e.user === req.user?.username || 
-           (e.details.includes(targetProjectId) && checkProjectAccess(req.user, targetProjectId)) || 
-           (e.entityId === targetProjectId && checkProjectAccess(req.user, targetProjectId));
+    return e.user === req.user?.username || (canViewTarget && eventProject(e) === targetProjectId);
   });
 
   sendSuccess(res, filtered);
@@ -45,6 +107,7 @@ auditRouter.get('/events', authenticateUser, (req: Request, res: Response) => {
  * POST /api/v1/audit/events
  * Appends a new tamper-evident audit event chained to the previous block hash.
  * R4-04 & R5-05: User and role are strictly derived from verified session credentials; action must belong to governed whitelist.
+ * R7-03: entityType must belong to a fixed allowlist and the entity must resolve to a project the caller is a member of.
  */
 auditRouter.post('/events', authenticateUser, requireAuth, (req: Request, res: Response) => {
   const { action, entityType, entityId, details, projectId } = req.body || {};
@@ -56,41 +119,25 @@ auditRouter.post('/events', authenticateUser, requireAuth, (req: Request, res: R
     return sendError(res, `Hành động kiểm toán "${action}" không hợp lệ hoặc không thuộc danh mục được phép (R5-05).`, 400);
   }
 
-  const targetProjectId = projectId || req.user?.projectId || 'PRJ-01';
-  if (!checkProjectAccess(req.user, targetProjectId)) {
-    return sendError(res, `Bạn không có quyền ghi sự kiện kiểm toán cho dự án "${targetProjectId}".`, 403);
+  if (typeof entityType !== 'string' || typeof entityId !== 'string' ||
+      !Object.prototype.hasOwnProperty.call(AUDIT_ENTITY_TABLES, entityType)) {
+    return sendError(res, 'Loại thực thể kiểm toán không hợp lệ hoặc không thuộc danh mục được phép (R7-03).', 400);
   }
 
-  // R6-04: Bind entityId strictly to targetProjectId to prevent cross-project audit forgery
-  let entityBelongsToProject = true;
-  if (entityType === 'Document') {
-    const doc = dbRepository.documents.getById(entityId);
-    entityBelongsToProject = Boolean(doc && doc.projectId === targetProjectId);
-  } else if (entityType === 'Requirement') {
-    const reqItem = dbRepository.requirements.getById(entityId);
-    entityBelongsToProject = Boolean(reqItem && (reqItem as any).projectId === targetProjectId);
-  } else if (entityType === 'TestCase') {
-    const tc = dbRepository.testCases.getById(entityId);
-    const tcProj = (tc as any)?.projectId || (tc as any)?.project_id;
-    entityBelongsToProject = Boolean(tc && tcProj === targetProjectId);
-  } else if (entityType === 'Evidence') {
-    const evd = dbRepository.evidence.getById(entityId);
-    const evdProj = (evd as any)?.projectId || (evd as any)?.project_id;
-    entityBelongsToProject = Boolean(evd && evdProj === targetProjectId);
-  } else if (entityType === 'TestRun') {
-    const run = dbRepository.testRuns.getById(entityId);
-    const runProj = (run as any)?.projectId || (run as any)?.project_id;
-    entityBelongsToProject = Boolean(run && runProj === targetProjectId);
-  } else if (entityType === 'Bug') {
-    const bug = dbRepository.bugs.getById(entityId);
-    const bugProj = (bug as any)?.projectId || (bug as any)?.project_id;
-    entityBelongsToProject = Boolean(bug && bugProj === targetProjectId);
-  } else if (entityType === 'Project') {
-    entityBelongsToProject = (entityId === targetProjectId);
+  if (details !== undefined && details !== null && typeof details !== 'string') {
+    return sendError(res, 'details must be a string', 400);
   }
 
-  if (!entityBelongsToProject) {
-    return sendError(res, `Thực thể "${entityId}" (${entityType}) không thuộc dự án "${targetProjectId}" hoặc không tồn tại (R6-04).`, 400);
+  if (projectId !== undefined && projectId !== null && !checkProjectAccess(req.user, projectId)) {
+    return sendError(res, `Bạn không có quyền ghi sự kiện kiểm toán cho dự án "${projectId}".`, 403);
+  }
+
+  // R6-04 & R7-03: The event's project is the project that owns the entity in the DB (never client input).
+  // Fail-closed with one uniform answer when the entity does not exist, has no project, belongs to a
+  // project the caller is not a member of, or does not match the projectId the caller claimed.
+  const targetProjectId = resolveEntityProjectId(entityType, entityId);
+  if (!targetProjectId || !checkProjectAccess(req.user, targetProjectId) || (projectId && projectId !== targetProjectId)) {
+    return sendError(res, `Thực thể "${entityId}" (${entityType}) không tồn tại hoặc không thuộc dự án mà bạn có quyền ghi nhật ký kiểm toán (R6-04, R7-03).`, 400);
   }
 
   // Enforce authentic user and role from cryptographically signed token (R4-04)
@@ -109,8 +156,9 @@ auditRouter.post('/events', authenticateUser, requireAuth, (req: Request, res: R
     user,
     role,
     action,
-    entityType,
+    entityType: entityType as AuditEvent['entityType'],
     entityId,
+    projectId: targetProjectId,
     details: details || '',
     timestamp,
     eventHash,
@@ -134,15 +182,18 @@ auditRouter.post('/verify-chain', authenticateUser, requireAuth, (req: Request, 
     }
   }
 
+  // R7-03: Same DB-resolved project scoping as GET /audit/events (no substring match on `details`)
+  const eventProject = createEventProjectResolver();
   let auditStore = dbRepository.auditEvents.getAll();
   if (targetProjectId) {
-    auditStore = auditStore.filter(e => e.details.includes(targetProjectId) || e.entityId === targetProjectId);
+    auditStore = auditStore.filter(e => eventProject(e) === targetProjectId);
   } else if (req.user) {
     const isSysAdmin = dbRepository.users.getById(req.user.id)?.role === 'Project Admin';
     if (!isSysAdmin) {
       const allowedProjects = new Set(dbRepository.projectMembers.getProjectsForUser(req.user.id));
       auditStore = auditStore.filter(e => {
-        return Array.from(allowedProjects).some(p => e.details.includes(p) || e.entityId === p);
+        const eventProjectId = eventProject(e);
+        return Boolean(eventProjectId && allowedProjects.has(eventProjectId));
       });
     }
   }
