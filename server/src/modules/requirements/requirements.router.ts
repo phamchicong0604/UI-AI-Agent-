@@ -33,9 +33,7 @@ requirementsRouter.post('/', authenticateUser, requireAuth, (req: Request, res: 
     return sendError(res, `Bạn không có quyền tạo yêu cầu trong dự án "${projId}".`, 403);
   }
 
-  const existing = dbRepository.requirements.getAll();
-  const newReq: RequirementItem = {
-    id: `REQ-00${existing.length + 1}`,
+  const fields: Omit<RequirementItem, 'id'> = {
     title,
     description: description || '',
     type: type || 'Functional',
@@ -50,8 +48,10 @@ requirementsRouter.post('/', authenticateUser, requireAuth, (req: Request, res: 
     updatedAt: new Date().toISOString().replace('T', ' ').slice(0, 16)
   };
 
-  dbRepository.requirements.upsert({ ...newReq, projectId: projId });
-  sendSuccess(res, newReq, 'Requirement created and persisted to SQLite', 201);
+  // The repository issues the id and inserts without overwriting an existing requirement
+  const id = dbRepository.requirements.create({ ...fields, projectId: projId });
+  const newReq: RequirementItem = { id, ...fields };
+  sendSuccess(res, newReq,'Requirement created and persisted to SQLite', 201);
 });
 
 requirementsRouter.patch('/:id/status', authenticateUser, requireAuth, (req: Request, res: Response) => {

@@ -1356,6 +1356,31 @@ export const dbRepository = {
       `);
       stmt.run(req.id, projId, req.type, req.priority, req.status, JSON.stringify(reqWithProj), req.updatedAt);
     },
+    /** Plain INSERT: throws on an existing id instead of overwriting it, unlike upsert. */
+    insert(req: RequirementItem & { projectId: string }): void {
+      db.prepare(`
+        INSERT INTO requirements (id, project_id, type, priority, status, data, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(req.id, req.projectId, req.type, req.priority, req.status, JSON.stringify(req), req.updatedAt);
+    },
+    /**
+     * Creates a requirement under a new id and returns that id.
+     * Ids are a global primary key shared by all projects, so the next number is taken
+     * from the highest existing REQ-<number> across projects, not from a row count.
+     */
+    create(req: Omit<RequirementItem, 'id'> & { projectId: string }): string {
+      return db.transaction(() => {
+        const rows = db.prepare("SELECT id FROM requirements WHERE id GLOB 'REQ-[0-9]*'").all() as { id: string }[];
+        let highest = 0;
+        for (const { id } of rows) {
+          const match = /^REQ-(\d+)$/.exec(id);
+          if (match) highest = Math.max(highest, Number(match[1]));
+        }
+        const id = `REQ-${String(highest + 1).padStart(3, '0')}`;
+        this.insert({ ...req, id });
+        return id;
+      })();
+    },
     delete(id: string): boolean {
       const result = db.prepare('DELETE FROM requirements WHERE id = ?').run(id);
       return result.changes > 0;
