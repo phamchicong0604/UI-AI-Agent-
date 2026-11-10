@@ -259,7 +259,7 @@ export interface DocumentClassification {
   /** Highest-scoring category according to the scorer */
   suggestedCategory: DocumentCategory;
   score: number;
-  /** Top score < 0.40 */
+  /** Top score < 0.40, or the runner-up folder is within 0.10 of the top one */
   isAmbiguous: boolean;
   versionNo: string;
   classifiedAt: string;

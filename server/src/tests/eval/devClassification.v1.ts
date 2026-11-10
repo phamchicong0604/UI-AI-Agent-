@@ -1,12 +1,13 @@
 /**
- * Held-out classification set for the with/without comparison of M0-T2.
+ * Development set 1 for the with/without comparison of M0-T2.
  *
  * Synthetic documents written for this evaluation (not customer data). Labels follow the definitions in
- * docs/DOCUMENT-TAXONOMY.md. The author had not read TAXONOMY_RULES in classificationScorer.ts when writing it.
+ * docs/DOCUMENT-TAXONOMY.md. The scorer vocabulary was tuned against this set, by the same author.
  * nameType: 'descriptive' = a person could guess the folder from the file name; 'generic' = the name says nothing.
- * This is NOT an acceptance dataset: it is small and was not labelled by BA/QA.
+ * This is NOT an acceptance dataset and NOT a held-out set: results on it only guard against regressions.
+ * An acceptance set must be labelled by BA/QA on real documents (E17-T1).
  */
-export interface HeldoutDoc {
+export interface ClassificationSample {
   id: string;
   fileName: string;
   nameType: 'descriptive' | 'generic';
@@ -15,7 +16,7 @@ export interface HeldoutDoc {
   content: string;
 }
 
-export const HELDOUT_CLASSIFICATION_V1: HeldoutDoc[] = [
+export const DEV_CLASSIFICATION_V1: ClassificationSample[] = [
   // ---------- 01_Project_Overview ----------
   {
     id: 'H01', fileName: 'project_charter_loyalty_app.md', nameType: 'descriptive', language: 'en', expected: '01_Project_Overview',

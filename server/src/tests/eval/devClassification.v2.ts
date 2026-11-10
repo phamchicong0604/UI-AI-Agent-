@@ -1,14 +1,15 @@
-import type { HeldoutDoc } from './heldoutClassification.v1.js';
+import type { ClassificationSample } from './devClassification.v1.js';
 
 /**
- * Second held-out classification set.
+ * Development set 2.
  *
- * Written BEFORE the scorer rules were read or changed, and first run only AFTER the scorer was tuned on
- * heldoutClassification.v1. Use v1 as the development set and this file as the check that tuning generalises.
- * Do not tune the scorer against this file; once it is used for tuning it stops being a held-out set.
+ * It was intended as a held-out check, but an independent review of PR 4 found that it is not one: it was
+ * written by the same author as the new scorer vocabulary, in the same working session, and 22 of the new
+ * heading terms are verbatim headings of documents in this file. Treat it as a second development set.
+ * Results on it only guard against regressions; they are not evidence that the scorer generalises.
  * Synthetic documents, not customer data, not labelled by BA/QA.
  */
-export const HELDOUT_CLASSIFICATION_V2: HeldoutDoc[] = [
+export const DEV_CLASSIFICATION_V2: ClassificationSample[] = [
   {
     id: 'V01', fileName: 'gioi_thieu_du_an_erp.md', nameType: 'descriptive', language: 'vi', expected: '01_Project_Overview',
     content: `# Giới thiệu dự án ERP cho nhà máy

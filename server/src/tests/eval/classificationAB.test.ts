@@ -11,19 +11,24 @@ import { defaultJobQueue } from '../../modules/workflow/jobQueue.js';
 import { registerPipelineHandlers } from '../../modules/workflow/pipelineWorker.js';
 import { defaultStage2Runner } from '../../modules/ai/stage2Runner.js';
 import { signUserSession } from '../../common/auth.js';
-import { HELDOUT_CLASSIFICATION_V1 } from './heldoutClassification.v1.js';
-import { HELDOUT_CLASSIFICATION_V2 } from './heldoutClassification.v2.js';
+import { DEV_CLASSIFICATION_V1 } from './devClassification.v1.js';
+import { DEV_CLASSIFICATION_V2 } from './devClassification.v2.js';
 
 /**
  * With/without comparison for M0-T2 through the real upload route and the real PIPELINE_RUN handler.
  *  - "without": the folder right after upload (detectCategory on the file name). Before M0-T2 this was final.
  *  - "with": the folder after the pipeline ran ClassificationScorer.
  *  - "stage2": recommended_category of the Stage 2 fallback generator (existed before, never written to the doc).
- * Only runs when CLASSIFICATION_AB_OUT is set; it is a measurement, not a pass/fail gate.
+ * Always runs as a regression guard on the two development sets. When CLASSIFICATION_AB_OUT is set it also
+ * writes every row to that file for the eval report.
  */
 const OUT = process.env.CLASSIFICATION_AB_OUT;
 
-describe.runIf(!!OUT)('Eval: upload classification with vs without ClassificationScorer', () => {
+// Regression floors on the development sets. They are NOT accuracy claims: both sets are synthetic and were
+// written by the author of the scorer vocabulary. Values at the time of writing: dev.v1 31/32, dev.v2 16/16.
+const MIN_CORRECT_UNFLAGGED: Record<string, number> = { 'dev.v1': 30, 'dev.v2': 15 };
+
+describe('Eval: upload classification with vs without ClassificationScorer', () => {
   let server: http.Server;
   let baseUrl: string;
   const projectId = `PRJ-AB-${Date.now()}`;
@@ -75,13 +80,13 @@ describe.runIf(!!OUT)('Eval: upload classification with vs without Classificatio
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
 
-  it('measures both arms on the held-out sets and on dataset.v1', async () => {
+  it('measures both arms on the development sets and on dataset.v1', async () => {
     const here = path.dirname(fileURLToPath(import.meta.url));
     const v1 = JSON.parse(fs.readFileSync(path.join(here, 'dataset.v1.json'), 'utf8')) as any[];
 
     const cases = [
-      ...HELDOUT_CLASSIFICATION_V1.map(d => ({ set: 'heldout.v1', ...d })),
-      ...HELDOUT_CLASSIFICATION_V2.map(d => ({ set: 'heldout.v2', ...d })),
+      ...DEV_CLASSIFICATION_V1.map(d => ({ set: 'dev.v1', ...d })),
+      ...DEV_CLASSIFICATION_V2.map(d => ({ set: 'dev.v2', ...d })),
       ...v1.map(d => ({
         set: 'dataset.v1', id: d.id, fileName: path.basename(d.filePath), nameType: 'descriptive', language: d.language,
         expected: d.groundTruth.primaryCategory,
@@ -114,8 +119,23 @@ describe.runIf(!!OUT)('Eval: upload classification with vs without Classificatio
       });
     }
 
-    fs.mkdirSync(path.dirname(OUT!), { recursive: true });
-    fs.writeFileSync(OUT!, JSON.stringify(rows, null, 2));
+    if (OUT) {
+      fs.mkdirSync(path.dirname(OUT), { recursive: true });
+      fs.writeFileSync(OUT, JSON.stringify(rows, null, 2));
+    }
     expect(rows.length).toBe(cases.length);
+
+    for (const [set, floor] of Object.entries(MIN_CORRECT_UNFLAGGED)) {
+      const rs = rows.filter(r => r.set === set);
+      const unflagged = rs.filter(r => !r.needsHumanReview);
+      // A document in the wrong folder with no flag is the failure that matters most
+      const silentlyWrong = unflagged.filter(r => r.withScorer !== r.expected).map(r => r.id);
+      expect(silentlyWrong, `${set}: silently wrong`).toEqual([]);
+      // Nothing that file-name matching got right may become silently wrong
+      const regressions = unflagged.filter(r => r.without === r.expected && r.withScorer !== r.expected).map(r => r.id);
+      expect(regressions, `${set}: regressions against file-name matching`).toEqual([]);
+      const correct = unflagged.filter(r => r.withScorer === r.expected).length;
+      expect(correct, `${set}: correct and not flagged`).toBeGreaterThanOrEqual(floor);
+    }
   }, 120000);
 });
