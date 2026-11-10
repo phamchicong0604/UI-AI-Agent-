@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach, vi } from 'vitest';
 import http from 'http';
 import net from 'net';
 import { app } from '../app.js';
@@ -76,8 +76,15 @@ describe('Requirement creation never overwrites an existing requirement', () => 
     tokenB = signUserSession({ ...memberB, projectId: prjB });
   });
 
-  afterAll(async () => {
+  // Each test starts without requirements of the two test projects, so no test depends on another
+  const clearTestRequirements = () =>
     db.prepare('DELETE FROM requirements WHERE project_id IN (?, ?)').run(prjA, prjB);
+
+  beforeEach(clearTestRequirements);
+  afterEach(() => vi.restoreAllMocks());
+
+  afterAll(async () => {
+    clearTestRequirements();
     db.prepare('DELETE FROM project_members WHERE user_id = ?').run(memberB.id);
     db.prepare('DELETE FROM users WHERE id = ?').run(memberB.id);
     db.prepare('DELETE FROM projects WHERE id IN (?, ?)').run(prjA, prjB);
@@ -133,5 +140,50 @@ describe('Requirement creation never overwrites an existing requirement', () => 
 
     expect(() => dbRepository.requirements.insert({ ...JSON.parse(before.data), title: 'Overwrite attempt', projectId: prjB })).toThrow(/UNIQUE constraint/);
     expect(readRow('REQ-REPO-GUARD')).toEqual(before);
+  });
+
+  it('ignores ids whose number is too large to count safely', async () => {
+    seedInA('REQ-9007199254740993', 'Beyond the safe integer range');
+    seedInA(`REQ-${'9'.repeat(400)}`, 'Absurdly long number');
+    seedInA('REQ-7001', 'Highest countable requirement');
+
+    const first = await createInB('First after oversized ids');
+    const second = await createInB('Second after oversized ids');
+
+    expect([first.status, second.status]).toEqual([201, 201]);
+    expect([first.body.data.id, second.body.data.id]).toEqual(['REQ-7002', 'REQ-7003']);
+  });
+
+  describe('when the issued id is taken by the time of the insert (another process won the race)', () => {
+    const takenId = 'REQ-RACE-TAKEN';
+
+    beforeEach(() => {
+      seedInA(takenId, 'Created first by the other process');
+      vi.spyOn(dbRepository.requirements, 'nextId').mockReturnValue(takenId);
+    });
+
+    it('create() throws instead of overwriting', () => {
+      const before = readRow(takenId)!;
+
+      expect(() => dbRepository.requirements.create({ ...JSON.parse(before.data), title: 'Loser of the race', projectId: prjB }))
+        .toThrow(/UNIQUE constraint/);
+      expect(readRow(takenId)).toEqual(before);
+    });
+
+    it('the route answers 409 as JSON without database details', async () => {
+      const before = readRow(takenId)!;
+      const res = await fetch(`${baseUrl}/api/v1/requirements`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenB}` },
+        body: JSON.stringify({ title: 'Loser of the race', projectId: prjB })
+      });
+      const text = await res.text();
+
+      expect(res.status).toBe(409);
+      expect(res.headers.get('content-type')).toContain('application/json');
+      expect(JSON.parse(text).success).toBe(false);
+      expect(text).not.toMatch(/SqliteError|UNIQUE|\.ts|\/Users/);
+      expect(readRow(takenId)).toEqual(before);
+    });
   });
 });

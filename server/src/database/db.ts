@@ -1370,16 +1370,20 @@ export const dbRepository = {
      */
     create(req: Omit<RequirementItem, 'id'> & { projectId: string }): string {
       return db.transaction(() => {
-        const rows = db.prepare("SELECT id FROM requirements WHERE id GLOB 'REQ-[0-9]*'").all() as { id: string }[];
-        let highest = 0;
-        for (const { id } of rows) {
-          const match = /^REQ-(\d+)$/.exec(id);
-          if (match) highest = Math.max(highest, Number(match[1]));
-        }
-        const id = `REQ-${String(highest + 1).padStart(3, '0')}`;
+        const id = this.nextId();
         this.insert({ ...req, id });
         return id;
       })();
+    },
+    /** Next free REQ-<number>. Ids with more than 15 digits are ignored: they are not safe integers. */
+    nextId(): string {
+      const rows = db.prepare("SELECT id FROM requirements WHERE id GLOB 'REQ-[0-9]*'").all() as { id: string }[];
+      let highest = 0;
+      for (const { id } of rows) {
+        const match = /^REQ-(\d{1,15})$/.exec(id);
+        if (match) highest = Math.max(highest, Number(match[1]));
+      }
+      return `REQ-${String(highest + 1).padStart(3, '0')}`;
     },
     delete(id: string): boolean {
       const result = db.prepare('DELETE FROM requirements WHERE id = ?').run(id);

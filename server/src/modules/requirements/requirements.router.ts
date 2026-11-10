@@ -49,9 +49,18 @@ requirementsRouter.post('/', authenticateUser, requireAuth, (req: Request, res: 
   };
 
   // The repository issues the id and inserts without overwriting an existing requirement
-  const id = dbRepository.requirements.create({ ...fields, projectId: projId });
+  let id: string;
+  try {
+    id = dbRepository.requirements.create({ ...fields, projectId: projId });
+  } catch (err) {
+    if ((err as { code?: string })?.code === 'SQLITE_CONSTRAINT_PRIMARYKEY') {
+      return sendError(res, 'Mã yêu cầu vừa được cấp cho một yêu cầu khác. Vui lòng thử lại.', 409);
+    }
+    console.error('[requirements] create failed:', err);
+    return sendError(res, 'Không thể tạo yêu cầu.', 500);
+  }
   const newReq: RequirementItem = { id, ...fields };
-  sendSuccess(res, newReq,'Requirement created and persisted to SQLite', 201);
+  sendSuccess(res, newReq, 'Requirement created and persisted to SQLite', 201);
 });
 
 requirementsRouter.patch('/:id/status', authenticateUser, requireAuth, (req: Request, res: Response) => {
