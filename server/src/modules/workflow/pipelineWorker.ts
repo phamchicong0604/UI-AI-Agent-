@@ -45,9 +45,12 @@ async function classifyDocument(documentId: string, versionNo: string, documentT
 
   // Only documents uploaded with AUTO follow the scorer; an explicit (or legacy/unknown) choice is kept.
   const isAuto = doc.categorySource === 'AUTO';
+  // Suggest only, do not file (M0-T5): a winner backed by content keywords alone, with no support from the
+  // file path or the headings, is handled like an Ambiguous result and waits for a person to confirm it.
+  const suggestOnly = result.isAmbiguous || result.isKeywordOnly;
   const targetCategory: DocumentCategory = !isAuto
     ? doc.category
-    : result.isAmbiguous ? AMBIGUOUS_PROVISIONAL_CATEGORY : result.primaryCategory;
+    : suggestOnly ? AMBIGUOUS_PROVISIONAL_CATEGORY : result.primaryCategory;
 
   doc.classification = {
     suggestedCategory: result.primaryCategory,
@@ -57,7 +60,7 @@ async function classifyDocument(documentId: string, versionNo: string, documentT
     classifiedAt: new Date().toISOString()
   };
   doc.secondaryCategories = secondaryCategories;
-  doc.needsHumanReview = isAuto && result.isAmbiguous;
+  doc.needsHumanReview = isAuto && suggestOnly;
   dbRepository.documents.upsert(doc);
 
   if (targetCategory !== doc.category) {
@@ -65,7 +68,7 @@ async function classifyDocument(documentId: string, versionNo: string, documentT
     await defaultWorkflowEngine.updateDocumentCategory(documentId, targetCategory, 'System Worker', {
       source: 'AUTO',
       role: 'System Worker',
-      details: { score: result.primaryScore, isAmbiguous: result.isAmbiguous, secondaryCategories }
+      details: { score: result.primaryScore, isAmbiguous: result.isAmbiguous, isKeywordOnly: result.isKeywordOnly, secondaryCategories }
     });
   }
 
@@ -74,6 +77,7 @@ async function classifyDocument(documentId: string, versionNo: string, documentT
     suggestedCategory: result.primaryCategory,
     score: result.primaryScore,
     isAmbiguous: result.isAmbiguous,
+    isKeywordOnly: result.isKeywordOnly,
     secondaryCategories,
     needsHumanReview: doc.needsHumanReview
   };

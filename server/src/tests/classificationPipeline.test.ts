@@ -248,6 +248,81 @@ describe('M0-T2: Deterministic classification in the upload pipeline', () => {
     expect(reclassifyAudits(created.id).length).toBe(0);
   });
 
+  describe('M0-T5: suggest only when the decision rests on content keywords alone', () => {
+    // No heading, and a file name the scorer has no path token for: only content keywords point to 05.
+    // detectCategory() guesses 06_QA from "plan", so a move by the pipeline is visible.
+    const KEYWORD_ONLY_FILE = 'weekend_plan.md';
+    const KEYWORD_ONLY_CONTENT =
+      'The database runs on sqlite in wal mode. Every endpoint returns json over http and needs a token. ' +
+      'Each migration adds a foreign key to the schema.';
+
+    it('AUTO upload backed by keywords alone is not filed: suggestion kept, provisional folder, needsHumanReview set', async () => {
+      const created = await uploadFile(KEYWORD_ONLY_FILE, KEYWORD_ONLY_CONTENT);
+      expect(created.category).toBe('06_QA');
+      expect(created.categorySource).toBe('AUTO');
+
+      await drainQueue();
+
+      const doc = dbRepository.documents.getById(created.id)!;
+      expect(doc.classification?.suggestedCategory).toBe('05_Technical_Documents');
+      // Not Ambiguous by score: the keyword-only rule is what holds it back
+      expect(doc.classification?.isAmbiguous).toBe(false);
+      expect(doc.category).toBe('01_Project_Overview');
+      expect(doc.categorySource).toBe('AUTO');
+      expect(doc.needsHumanReview).toBe(true);
+
+      // Same audit trail as the Ambiguous path: one system move into the provisional folder, with the reason
+      const audits = reclassifyAudits(created.id);
+      expect(audits.length).toBe(1);
+      expect(audits[0].user).toBe('System Worker');
+      const details = JSON.parse(audits[0].details as string);
+      expect(details.newCategory).toBe('01_Project_Overview');
+      expect(details.source).toBe('AUTO');
+      expect(details.isAmbiguous).toBe(false);
+      expect(details.isKeywordOnly).toBe(true);
+      expect(pipelineJobCount(created.id)).toBe(1);
+
+      // It waits in the review queue like an Ambiguous document
+      const res = await fetch(`${baseUrl}/api/v1/documents/review-queue?projectId=${testProjectId}`, {
+        headers: { Authorization: `Bearer ${adminToken}` }
+      });
+      const queue = ((await res.json()) as any).data as any[];
+      expect(queue[0].document.id).toBe(created.id);
+      expect(queue[0].document.needsHumanReview).toBe(true);
+    });
+
+    it('AUTO upload with the same content plus a supporting heading is still filed automatically', async () => {
+      const created = await uploadFile(KEYWORD_ONLY_FILE, `# Database architecture\n${KEYWORD_ONLY_CONTENT}`);
+      await drainQueue();
+
+      const doc = dbRepository.documents.getById(created.id)!;
+      expect(doc.classification?.suggestedCategory).toBe('05_Technical_Documents');
+      expect(doc.category).toBe('05_Technical_Documents');
+      expect(doc.needsHumanReview).toBe(false);
+    });
+
+    it('AUTO upload with the same content plus a supporting file name is still filed automatically', async () => {
+      const created = await uploadFile('architecture_notes.md', KEYWORD_ONLY_CONTENT);
+      await drainQueue();
+
+      const doc = dbRepository.documents.getById(created.id)!;
+      expect(doc.category).toBe('05_Technical_Documents');
+      expect(doc.needsHumanReview).toBe(false);
+    });
+
+    it('uploader-chosen category is untouched by the keyword-only rule', async () => {
+      const created = await uploadFile(KEYWORD_ONLY_FILE, KEYWORD_ONLY_CONTENT, '04_UI_UX');
+      await drainQueue();
+
+      const doc = dbRepository.documents.getById(created.id)!;
+      expect(doc.category).toBe('04_UI_UX');
+      expect(doc.categorySource).toBe('USER');
+      expect(doc.classification?.suggestedCategory).toBe('05_Technical_Documents');
+      expect(doc.needsHumanReview).toBe(false);
+      expect(reclassifyAudits(created.id).length).toBe(0);
+    });
+  });
+
   it('does not classify a version that was superseded before the worker ran', async () => {
     const created = await uploadFile(QA_FILE_NAME, QA_CONTENT);
     db.prepare("UPDATE document_versions SET status = 'SUPERSEDED' WHERE document_id = ?").run(created.id);

@@ -251,7 +251,7 @@ export interface DocumentItem {
   classification?: DocumentClassification;
   /** Non-primary categories scoring >= 0.50 (DOCUMENT-TAXONOMY.md section 2) */
   secondaryCategories?: DocumentCategory[];
-  /** True while an Ambiguous document waits for a person to confirm its category */
+  /** True while an Ambiguous or keyword-only (M0-T5) document waits for a person to confirm its category */
   needsHumanReview?: boolean;
 }
 
