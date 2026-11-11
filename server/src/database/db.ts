@@ -1534,6 +1534,38 @@ export const dbRepository = {
       `);
       stmt.run(tc.id, projId, tc.requirementId, tc.status, tc.type, tc.priority, JSON.stringify(tcWithProj), tc.updatedAt);
     },
+    /** Plain INSERT: throws on an existing id instead of overwriting it, unlike upsert. */
+    insert(tc: TestCaseItem & { projectId: string }): void {
+      db.prepare(`
+        INSERT INTO test_cases (id, project_id, requirement_id, status, type, priority, data, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(tc.id, tc.projectId, tc.requirementId, tc.status, tc.type, tc.priority, JSON.stringify(tc), tc.updatedAt);
+    },
+    /**
+     * Creates a test case under a new id and returns that id.
+     * Ids are a global primary key shared by all projects, so the next number is taken
+     * from the highest existing TC-CUSTOM-<number> across projects, not from a row count.
+     */
+    create(tc: Omit<TestCaseItem, 'id'> & { projectId: string }): string {
+      return db.transaction(() => {
+        const id = this.nextId();
+        this.insert({ id, ...tc });
+        return id;
+      })();
+    },
+    /**
+     * Next free TC-CUSTOM-<number>. Only this id family is counted (not TC-AI-*, TC-AUTH-* ...).
+     * Ids with more than 15 digits are ignored: they are not safe integers.
+     */
+    nextId(): string {
+      const rows = db.prepare("SELECT id FROM test_cases WHERE id GLOB 'TC-CUSTOM-[0-9]*'").all() as { id: string }[];
+      let highest = 0;
+      for (const { id } of rows) {
+        const match = /^TC-CUSTOM-(\d{1,15})$/.exec(id);
+        if (match) highest = Math.max(highest, Number(match[1]));
+      }
+      return `TC-CUSTOM-${String(highest + 1).padStart(3, '0')}`;
+    },
     delete(id: string): boolean {
       const result = db.prepare('DELETE FROM test_cases WHERE id = ?').run(id);
       return result.changes > 0;

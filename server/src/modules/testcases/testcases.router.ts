@@ -74,9 +74,7 @@ testcasesRouter.post('/', authenticateUser, requireAuth, (req: Request, res: Res
     return sendError(res, `Bạn không có quyền tạo test case trong dự án "${projId}".`, 403);
   }
 
-  const existing = dbRepository.testCases.getAll();
-  const newTc: TestCaseItem & { projectId?: string } = {
-    id: `TC-CUSTOM-00${existing.length + 1}`,
+  const fields: Omit<TestCaseItem, 'id'> & { projectId: string } = {
     projectId: projId,
     requirementId,
     requirementTitle: requirementTitle || requirementId,
@@ -97,7 +95,18 @@ testcasesRouter.post('/', authenticateUser, requireAuth, (req: Request, res: Res
     updatedAt: new Date().toISOString().replace('T', ' ').slice(0, 16)
   };
 
-  dbRepository.testCases.upsert(newTc as any);
+  // The repository issues the id and inserts without overwriting an existing test case
+  let id: string;
+  try {
+    id = dbRepository.testCases.create(fields);
+  } catch (err) {
+    if ((err as { code?: string })?.code === 'SQLITE_CONSTRAINT_PRIMARYKEY') {
+      return sendError(res, 'Mã test case vừa được cấp cho một test case khác. Vui lòng thử lại.', 409);
+    }
+    console.error('[testcases] create failed:', err);
+    return sendError(res, 'Không thể tạo test case.', 500);
+  }
+  const newTc: TestCaseItem & { projectId: string } = { id, ...fields };
   sendSuccess(res, newTc, 'Test case created and persisted to SQLite', 201);
 });
 
