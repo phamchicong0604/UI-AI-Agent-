@@ -288,7 +288,12 @@ erDiagram
 - Phần văn bản trước tiêu đề đầu tiên là một section cấp 0, `heading_path` rỗng, `stable_key = preamble`. Nếu phần đó chỉ có khoảng trắng thì không thành section riêng mà thuộc section của tiêu đề đầu tiên.
 - Văn bản không có tiêu đề nào được chia theo đoạn (các khối cách nhau bằng dòng trống; khối code có rào không bị cắt). Mỗi section đoạn gồm cả các dòng trống theo sau nó.
 - Văn bản rỗng hoặc `NULL` thì không có section nào (không tạo section giữ chỗ).
-- **Không nhận diện**: tiêu đề kiểu Setext (dòng gạch dưới bằng `===` hoặc `---`), tiêu đề HTML, dòng in đậm dùng làm tiêu đề. Chỉ `\n` và `\r\n` được coi là xuống dòng. Văn bản trích từ PDF/DOCX nếu không có dòng `#` sẽ được chia theo đoạn.
+- **Không nhận diện**: tiêu đề kiểu Setext (dòng gạch dưới bằng `===` hoặc `---`), tiêu đề HTML, dòng in đậm dùng làm tiêu đề. `\n`, `\r\n` và `\r` đứng lẻ đều được coi là xuống dòng, cùng quy tắc với `content_hash`.
+- **Nhận nhầm đã biết (review độc lập PR #10, chưa xử lý, chờ quyết định)**:
+  - File văn bản có BOM UTF-8: dòng tiêu đề đầu tiên không được nhận và rơi vào phần mở đầu; hai phiên bản chỉ khác BOM không ghép được mục nào.
+  - Dòng bắt đầu bằng `# ` nằm trong chú thích HTML, trong `<pre>`, hoặc là một đoạn thân bài DOCX (ví dụ "# of users: 5") bị coi là tiêu đề cấp 1 và làm đổi khóa của các mục phía sau.
+  - PDF: bộ đọc PDF hiện tại biến dòng danh sách đánh số và dòng IN HOA thành dòng `#` và giữ dòng đánh dấu trang (`-- 1 of 3 --`) trong văn bản. Mục của PDF vì thế không đáng tin, tiêu đề đầu trang lặp lại sinh khóa trùng, và thêm hoặc bớt một trang làm các mục không ai sửa bị báo là đổi nội dung.
+  - Thân bài chuyển giữa dạng Unicode NFC và NFD làm `content_hash` đổi (khóa thì không đổi).
 
 **Quy tắc `stable_key`.**
 - *Section có tiêu đề*: `h-` + 16 ký tự hex đầu của SHA-256 trên `heading_path` đã chuẩn hóa. Chuẩn hóa từng tiêu đề: Unicode NFC, gộp khoảng trắng, bỏ khoảng trắng hai đầu, chuyển chữ thường. Dấu tiếng Việt được giữ: "Mục tiêu" và "Mục tiếu" cho hai key khác nhau; "Mục tiêu" viết ở dạng NFC hay NFD, hoa hay thường, cho cùng một key. Key không phụ thuộc vị trí hay nội dung, nên đổi thứ tự section hoặc sửa nội dung thì key giữ nguyên.
@@ -406,9 +411,9 @@ erDiagram
   | `section_id` | `TEXT` | `NULLABLE, FK -> document_sections(id) ON DELETE SET NULL` | Section của phiên bản chứa vị trí neo (E11-T3). Các cột offset vẫn được giữ |
 
 **Xác định `section_id` (E11-T3).** Khi pipeline lưu một nguồn, và khi bước khởi động gặp nguồn chưa có `section_id`:
-1. Nếu `char_offset_start`/`char_offset_end` là một khoảng hợp lệ trong văn bản của phiên bản và đoạn văn bản tại đó đúng bằng `exact_quote` (hoặc không có quote), lấy section chứa vị trí bắt đầu. Neo trải qua nhiều section thì tính cho section chứa điểm đầu.
+1. Nếu `char_offset_start`/`char_offset_end` là một khoảng hợp lệ trong văn bản của phiên bản và đoạn văn bản tại đó đúng bằng `exact_quote`, lấy section chứa vị trí bắt đầu. Neo trải qua nhiều section thì tính cho section chứa điểm đầu.
 2. Nếu offset thiếu hoặc sai, tìm `exact_quote` trong văn bản. Chỉ nhận khi mọi vị trí xuất hiện đều nằm trong cùng một section.
-3. Còn lại để `NULL`, không đoán. Ví dụ: quote xuất hiện ở hai section mà offset không dùng được; quote không có trong văn bản.
+3. Còn lại để `NULL`, không đoán. Ví dụ: quote xuất hiện ở hai section mà offset không dùng được; quote không có trong văn bản; nguồn không có quote (offset không kiểm tra được với văn bản).
 
 Khi section của một phiên bản bị ghi lại (văn bản đổi), `section_id` của các nguồn thuộc phiên bản đó được xác định lại theo cùng quy tắc.
 
