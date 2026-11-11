@@ -236,6 +236,22 @@ describe('E11-T3: splitIntoSections', () => {
     expect(fromCr.map(s => s.contentHash)).toEqual(fromLf.map(s => s.contentHash));
   });
 
+  it('ignores headings on request and splits on paragraphs instead', () => {
+    const text = '# Title\nBody.\n\n## Part\nMore.\n';
+    const sections = splitIntoSections(text, { headings: false });
+    expectCoverage(text, sections);
+    expect(sections.map(s => s.level)).toEqual([0, 0]);
+    expect(sections.every(s => s.stableKey.startsWith('p-'))).toBe(true);
+  });
+
+  it('gives the same content hash for NFC and NFD text and with or without a byte order mark', () => {
+    const body = '## Mục tiêu\nNội dung tiếng Việt có dấu.\n';
+    expect(body.normalize('NFD')).not.toBe(body.normalize('NFC'));
+    expect(sectionContentHash(body.normalize('NFD'))).toBe(sectionContentHash(body.normalize('NFC')));
+    expect(sectionContentHash(`\uFEFF${body}`)).toBe(sectionContentHash(body));
+    expect(sectionContentHash(body.replace('có dấu', 'không dấu'))).not.toBe(sectionContentHash(body));
+  });
+
   it('survives one very long line without headings', () => {
     const text = `${' '.repeat(200_000)}x${'#'.repeat(200_000)}`;
     const sections = splitIntoSections(text);

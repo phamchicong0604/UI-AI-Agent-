@@ -64,8 +64,12 @@ export const PREAMBLE_STABLE_KEY = 'preamble';
  * section moved from the end of a document to the middle would get another hash although nobody edited it.
  */
 export function sectionContentHash(sectionText: string): string {
-  return `sha256:${computeSha256(sectionText.replace(/\r\n?/g, '\n').trimEnd())}`;
+  // A byte order mark and the Unicode form (NFC or NFD) are how the text was saved, not what it says
+  const withoutBom = sectionText.charCodeAt(0) === BYTE_ORDER_MARK ? sectionText.slice(1) : sectionText;
+  return `sha256:${computeSha256(withoutBom.normalize('NFC').replace(/\r\n?/g, '\n').trimEnd())}`;
 }
+
+const BYTE_ORDER_MARK = 0xfeff;
 
 interface HeadingLine {
   offset: number;
@@ -108,6 +112,20 @@ function parseHeading(line: string): { level: number; rawTitle: string } | null 
   return { level, rawTitle: line.slice(end) };
 }
 
+/**
+ * A line that opens an HTML comment or a <pre> block without closing it: returns the text that closes it.
+ * Lines inside such a block are not headings ("# TODO" in a comment, "# apt-get install" in <pre>).
+ */
+function opensHtmlBlock(line: string): '-->' | '</pre>' | null {
+  if (!line.includes('<')) return null;
+  const comment = line.lastIndexOf('<!--');
+  if (comment >= 0 && line.indexOf('-->', comment + 4) === -1) return '-->';
+  const lower = line.toLowerCase();
+  const pre = lower.lastIndexOf('<pre');
+  if (pre >= 0 && lower.indexOf('</pre>', pre) === -1) return '</pre>';
+  return null;
+}
+
 // A line ends at "\n", "\r\n" or a lone "\r": the same rule sectionContentHash uses
 const LINE_BREAK = /\r\n?|\n/g;
 
@@ -131,6 +149,7 @@ function scanLines(text: string): { headings: HeadingLine[]; paragraphStarts: nu
   const headings: HeadingLine[] = [];
   const paragraphStarts: number[] = [];
   let fence: { char: string; length: number } | null = null;
+  let htmlBlock: '-->' | '</pre>' | null = null;
   let previousBlank = false;
   let seenContent = false;
   let pos = 0;
@@ -151,12 +170,20 @@ function scanLines(text: string): { headings: HeadingLine[]; paragraphStarts: nu
       previousBlank = false;
     } else {
       if (!blank && previousBlank && seenContent) paragraphStarts.push(pos);
-      const open = parseFence(line);
-      if (open && !(open.char === '`' && open.rest.includes('`'))) {
-        fence = { char: open.char, length: open.length };
+      // A byte order mark at the start of the text is not part of the first line's content. It stays in
+      // the text (offsets are unchanged) but must not hide a heading on the first line.
+      const content = pos === 0 && line.charCodeAt(0) === BYTE_ORDER_MARK ? line.slice(1) : line;
+      if (htmlBlock) {
+        if (content.toLowerCase().includes(htmlBlock)) htmlBlock = null;
       } else {
-        const heading = parseHeading(line);
-        if (heading) headings.push({ offset: pos, level: heading.level, title: headingTitle(heading.rawTitle) });
+        const open = parseFence(content);
+        if (open && !(open.char === '`' && open.rest.includes('`'))) {
+          fence = { char: open.char, length: open.length };
+        } else {
+          const heading = parseHeading(content);
+          if (heading) headings.push({ offset: pos, level: heading.level, title: headingTitle(heading.rawTitle) });
+          htmlBlock = opensHtmlBlock(content);
+        }
       }
       previousBlank = blank;
     }
@@ -167,10 +194,20 @@ function scanLines(text: string): { headings: HeadingLine[]; paragraphStarts: nu
   return { headings, paragraphStarts };
 }
 
-export function splitIntoSections(text: string | null | undefined): SectionDraft[] {
+export interface SectionSplitOptions {
+  /**
+   * false: ignore heading lines and split on paragraphs only. Used for text whose "#" lines are a guess of
+   * the parser rather than the author's headings (PDF).
+   */
+  headings?: boolean;
+}
+
+export function splitIntoSections(text: string | null | undefined, options: SectionSplitOptions = {}): SectionDraft[] {
   if (!text) return [];
 
-  const { headings, paragraphStarts } = scanLines(text);
+  const scanned = scanLines(text);
+  const headings = options.headings === false ? [] : scanned.headings;
+  const paragraphStarts = scanned.paragraphStarts;
   const sections: SectionDraft[] = [];
   const seenKeys = new Map<string, number>();
 

@@ -9,7 +9,7 @@ import { DatabaseMigrator } from '../database/migrator.js';
 import { allMigrations } from '../database/migrations/index.js';
 import { migration016DocumentSections } from '../database/migrations/016_document_sections.js';
 import { listVersionSections, syncAllDocumentSections, syncVersionSections } from '../database/documentSectionStore.js';
-import { stableKeyForHeadingPath } from '../modules/documents/documentSections.js';
+import { mapSections, stableKeyForHeadingPath } from '../modules/documents/documentSections.js';
 import { defaultJobQueue } from '../modules/workflow/jobQueue.js';
 import { registerPipelineHandlers } from '../modules/workflow/pipelineWorker.js';
 import { RetentionService } from '../modules/documents/retentionService.js';
@@ -295,6 +295,90 @@ describe('E11-T3: document_sections', () => {
         if ((await defaultJobQueue.processNext(5)) === 0) break;
       }
     };
+
+    // Minimal text PDF (uncompressed, Helvetica), enough for the real PdfParser to extract its lines
+    const buildPdf = (pages: string[][]): Buffer => {
+      const objects: string[] = [];
+      objects[1] = '<< /Type /Catalog /Pages 2 0 R >>';
+      objects[2] = `<< /Type /Pages /Kids [${pages.map((_, i) => `${4 + i * 2} 0 R`).join(' ')}] /Count ${pages.length} >>`;
+      objects[3] = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>';
+      pages.forEach((lines, i) => {
+        const stream = `BT /F1 12 Tf 72 720 Td 16 TL ${lines.map(l => `(${l.replace(/[()\\]/g, '\\$&')}) Tj T*`).join(' ')} ET`;
+        objects[4 + i * 2] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents ${5 + i * 2} 0 R >>`;
+        objects[5 + i * 2] = `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`;
+      });
+      let out = '%PDF-1.4\n';
+      const offsets: number[] = [];
+      for (let n = 1; n < objects.length; n++) {
+        offsets[n] = out.length;
+        out += `${n} 0 obj\n${objects[n]}\nendobj\n`;
+      }
+      const xref = out.length;
+      out += `xref\n0 ${objects.length}\n0000000000 65535 f \n${offsets.slice(1).map(o => `${String(o).padStart(10, '0')} 00000 n \n`).join('')}`;
+      out += `trailer\n<< /Size ${objects.length} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+      return Buffer.from(out, 'latin1');
+    };
+    const uploadFile = async (name: string, body: Buffer, type: string) => {
+      const form = new FormData();
+      form.append('projectId', projA);
+      form.append('files', new Blob([body], { type }), name);
+      const res = await fetch(`${baseUrl}/api/v1/documents/upload`, { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: form });
+      expect(res.status).toBeLessThan(300);
+      return (await res.json() as any).data.documents[0] as { id: string };
+    };
+
+    it('a byte order mark does not hide the first heading, and does not break the mapping to a version without it', async () => {
+      const body = '# Đặc tả thanh toán\n\n## Mục tiêu\nMô tả mục tiêu.\n\n## Phạm vi\nMô tả phạm vi.\n';
+      const doc = await createDoc(`BOM ${stamp}`, `\uFEFF${body}`);
+      await addVersion(doc.id, body);
+
+      const withBom = sectionsOf(`${doc.id}-v1.0`);
+      expect(textOfVersion(`${doc.id}-v1.0`).charCodeAt(0)).toBe(0xfeff); // the stored text is not altered
+      expect(withBom[0].charStart).toBe(0);
+      expect(paths(withBom)).toEqual([['Đặc tả thanh toán'], ['Đặc tả thanh toán', 'Mục tiêu'], ['Đặc tả thanh toán', 'Phạm vi']]);
+
+      const mapping = dbRepository.documentSections.mapVersions(`${doc.id}-v1.0`, `${doc.id}-v1.1`);
+      expect([mapping.unchanged.length, mapping.changed.length, mapping.onlyInOld.length, mapping.onlyInNew.length]).toEqual([3, 0, 0, 0]);
+    });
+
+    it('a "# " line inside an HTML comment or a <pre> block is not a heading', async () => {
+      const control = '# Guide\n\n## Install\nRun the installer.\n\n## Usage\nOpen the app.\n';
+      const withBlocks = '# Guide\n\n## Install\nRun the installer.\n\n<!--\n# TODO remove before release\n-->\n\n<pre>\n# apt-get install foo\n</pre>\n\n## Usage\nOpen the app.\n';
+      const doc = await createDoc(`HTML blocks ${stamp}`, control);
+      await addVersion(doc.id, withBlocks);
+
+      expect(paths(sectionsOf(`${doc.id}-v1.1`))).toEqual([['Guide'], ['Guide', 'Install'], ['Guide', 'Usage']]);
+      const mapping = dbRepository.documentSections.mapVersions(`${doc.id}-v1.0`, `${doc.id}-v1.1`);
+      // Only the section that received the two blocks has new content; no key was lost or invented
+      expect([mapping.unchanged.length, mapping.changed.length, mapping.onlyInOld.length, mapping.onlyInNew.length]).toEqual([2, 1, 0, 0]);
+      expect(mapping.changed[0].stableKey).toBe(sectionsOf(`${doc.id}-v1.0`)[1].stableKey);
+    });
+
+    it('a PDF is split on paragraphs only, because its "#" lines are guessed by the parser', async () => {
+      const pageOne = ['SERVICE HANDBOOK', '1. Customer sends a request.', '2. Staff logs the request.', 'Plain paragraph text here.'];
+      const pageTwo = ['SERVICE HANDBOOK', '2.1 Priority codes', 'Codes are A, B and C.'];
+      const original = await uploadFile(`handbook-${stamp}.pdf`, buildPdf([pageOne, pageTwo]), 'application/pdf');
+      const withCover = await uploadFile(`handbook-cover-${stamp}.pdf`, buildPdf([['Cover page of the handbook'], pageOne, pageTwo]), 'application/pdf');
+
+      const text = textOfVersion(`${original.id}-v1.0`);
+      // The parser did turn list items and the running header into "#" lines: that is what must not be trusted
+      expect(text).toContain('# 1. Customer sends a request.');
+      expect(text).toContain('## SERVICE HANDBOOK');
+
+      const sections = sectionsOf(`${original.id}-v1.0`);
+      expect(sections.length).toBeGreaterThan(1);
+      expect(sections.every(s => s.level === 0 && s.headingPath === '[]' && s.stableKey.startsWith('p-'))).toBe(true);
+
+      // Adding a cover page: no section is reported as changed. What differs is the cover and the page markers
+      const coverText = textOfVersion(`${withCover.id}-v1.0`);
+      const mapping = mapSections(sections, sectionsOf(`${withCover.id}-v1.0`));
+      expect(mapping.changed).toEqual([]);
+      expect(mapping.unchanged).toHaveLength(2);
+      expect(mapping.onlyInOld.map(s => text.slice(s.charStart, s.charEnd).trim())).toEqual(['-- 1 of 2 --', '-- 2 of 2 --']);
+      expect(mapping.onlyInNew.map(s => coverText.slice(s.charStart, s.charEnd).trim())).toEqual(
+        ['Cover page of the handbook', '-- 1 of 3 --', '-- 2 of 3 --', '-- 3 of 3 --']
+      );
+    });
 
     beforeAll(async () => {
       registerPipelineHandlers();

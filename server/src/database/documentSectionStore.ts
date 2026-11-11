@@ -2,6 +2,7 @@ import type Database from 'better-sqlite3';
 import { DocumentSectionRecord } from '../common/types.js';
 import {
   SectionMapping,
+  SectionSplitOptions,
   SourceAnchor,
   findSectionForAnchor,
   mapSections,
@@ -36,6 +37,20 @@ function versionText(db: Database.Database, documentVersionId: string): string |
   const row = db.prepare('SELECT extracted_content FROM document_versions WHERE id = ?').get(documentVersionId) as
     { extracted_content: string | null } | undefined;
   return row ? row.extracted_content : undefined;
+}
+
+/**
+ * How the text of a version is split. The PDF parser guesses headings (numbered list items and upper-case
+ * lines become "#" lines), so for a version whose stored file is a PDF only paragraphs are used.
+ */
+export function splitOptionsForVersion(db: Database.Database, documentVersionId: string): SectionSplitOptions {
+  const row = db.prepare(`
+    SELECT sf.original_name AS originalName, sf.mime_type AS mimeType
+    FROM document_versions dv JOIN stored_files sf ON sf.id = dv.file_id
+    WHERE dv.id = ?
+  `).get(documentVersionId) as { originalName: string | null; mimeType: string | null } | undefined;
+  const isPdf = !!row && (/\.pdf$/i.test(row.originalName ?? '') || row.mimeType === 'application/pdf');
+  return isPdf ? { headings: false } : {};
 }
 
 /**
@@ -75,7 +90,7 @@ function rewriteVersionSections(db: Database.Database, documentVersionId: string
     const text = versionText(db, documentVersionId);
     if (text === undefined) return { rewritten: false, linkedSources: 0 };
 
-    const wanted: DocumentSectionRecord[] = splitIntoSections(text).map(s => ({
+    const wanted: DocumentSectionRecord[] = splitIntoSections(text, splitOptionsForVersion(db, documentVersionId)).map(s => ({
       id: documentSectionId(documentVersionId, s.stableKey),
       documentVersionId,
       headingPath: JSON.stringify(s.headingPath),

@@ -289,11 +289,14 @@ erDiagram
 - Văn bản không có tiêu đề nào được chia theo đoạn (các khối cách nhau bằng dòng trống; khối code có rào không bị cắt). Mỗi section đoạn gồm cả các dòng trống theo sau nó.
 - Văn bản rỗng hoặc `NULL` thì không có section nào (không tạo section giữ chỗ).
 - **Không nhận diện**: tiêu đề kiểu Setext (dòng gạch dưới bằng `===` hoặc `---`), tiêu đề HTML, dòng in đậm dùng làm tiêu đề. `\n`, `\r\n` và `\r` đứng lẻ đều được coi là xuống dòng, cùng quy tắc với `content_hash`.
-- **Nhận nhầm đã biết (review độc lập PR #10, chưa xử lý, chờ quyết định)**:
-  - File văn bản có BOM UTF-8: dòng tiêu đề đầu tiên không được nhận và rơi vào phần mở đầu; hai phiên bản chỉ khác BOM không ghép được mục nào.
-  - Dòng bắt đầu bằng `# ` nằm trong chú thích HTML, trong `<pre>`, hoặc là một đoạn thân bài DOCX (ví dụ "# of users: 5") bị coi là tiêu đề cấp 1 và làm đổi khóa của các mục phía sau.
-  - PDF: bộ đọc PDF hiện tại biến dòng danh sách đánh số và dòng IN HOA thành dòng `#` và giữ dòng đánh dấu trang (`-- 1 of 3 --`) trong văn bản. Mục của PDF vì thế không đáng tin, tiêu đề đầu trang lặp lại sinh khóa trùng, và thêm hoặc bớt một trang làm các mục không ai sửa bị báo là đổi nội dung.
-  - Thân bài chuyển giữa dạng Unicode NFC và NFD làm `content_hash` đổi (khóa thì không đổi).
+- **Quy tắc bổ sung sau review độc lập PR #10** (khuyến nghị đã áp dụng, Tech Lead xác nhận trước khi gộp):
+  - BOM UTF-8 ở đầu văn bản không thuộc nội dung dòng đầu: tiêu đề ở dòng đầu vẫn được nhận. Văn bản lưu không bị sửa và offset không đổi; ký tự BOM nằm trong mục đầu tiên và bị bỏ qua khi tính `content_hash`.
+  - Dòng nằm trong chú thích HTML nhiều dòng (`<!--` tới `-->`) hoặc trong `<pre>` tới `</pre>` không phải tiêu đề.
+  - `content_hash` chuẩn hóa Unicode về NFC, giống `stable_key`.
+  - Phiên bản có file gốc là PDF chỉ được chia theo đoạn, không theo dòng `#`. Lý do: bộ đọc PDF hiện tại đoán tiêu đề (dòng danh sách đánh số và dòng IN HOA thành dòng `#`). Khi bộ đọc được sửa và đo trên PDF thật, quy tắc này cần xem lại.
+- **Nhận nhầm đã biết, chưa xử lý**:
+  - Đoạn thân bài DOCX bắt đầu bằng `# ` (ví dụ "# of users: 5") bị coi là tiêu đề cấp 1 và làm đổi khóa của các mục phía sau. Bộ đọc DOCX trả danh sách tiêu đề đúng nhưng không thoát ký tự `#` trong thân bài.
+  - PDF: dòng đánh dấu trang (`-- 1 of 3 --`) là một đoạn riêng, nên thêm hoặc bớt trang làm các đoạn đánh dấu trang hiện là "bớt" và "thêm". Các đoạn nội dung không bị ảnh hưởng.
 
 **Quy tắc `stable_key`.**
 - *Section có tiêu đề*: `h-` + 16 ký tự hex đầu của SHA-256 trên `heading_path` đã chuẩn hóa. Chuẩn hóa từng tiêu đề: Unicode NFC, gộp khoảng trắng, bỏ khoảng trắng hai đầu, chuyển chữ thường. Dấu tiếng Việt được giữ: "Mục tiêu" và "Mục tiếu" cho hai key khác nhau; "Mục tiêu" viết ở dạng NFC hay NFD, hoa hay thường, cho cùng một key. Key không phụ thuộc vị trí hay nội dung, nên đổi thứ tự section hoặc sửa nội dung thì key giữ nguyên.
