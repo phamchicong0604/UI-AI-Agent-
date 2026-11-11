@@ -296,4 +296,38 @@ describe('ClassificationScorer (Epic E7-T2)', () => {
       expect(clear.isAmbiguous).toBe(false);
     });
   });
+
+  describe('keyword-only winner (M0-T5)', () => {
+    const KEYWORD_ONLY_CONTENT =
+      'The database runs on sqlite in wal mode. Every endpoint returns json over http and needs a token. ' +
+      'Each migration adds a foreign key to the schema.';
+
+    it('reports isKeywordOnly when neither the file path nor a heading supports the winning folder', () => {
+      const result = ClassificationScorer.score({ filePath: 'weekend_plan.md', headings: [], content: KEYWORD_ONLY_CONTENT });
+      const top = result.allScores[result.primaryCategory];
+      expect(result.primaryCategory).toBe('05_Technical_Documents');
+      expect(top.pathScore).toBe(0);
+      expect(top.headingScore).toBe(0);
+      expect(top.keywordScore).toBeGreaterThan(0);
+      expect(result.isKeywordOnly).toBe(true);
+      // A separate reason: the result is clear enough not to be Ambiguous
+      expect(result.isAmbiguous).toBe(false);
+    });
+
+    it('does not report isKeywordOnly when a heading or the file path supports the winning folder', () => {
+      const withHeading = ClassificationScorer.score({ filePath: 'weekend_plan.md', headings: ['Database architecture'], content: KEYWORD_ONLY_CONTENT });
+      expect(withHeading.primaryCategory).toBe('05_Technical_Documents');
+      expect(withHeading.isKeywordOnly).toBe(false);
+
+      const withPath = ClassificationScorer.score({ filePath: 'architecture_notes.md', headings: [], content: KEYWORD_ONLY_CONTENT });
+      expect(withPath.primaryCategory).toBe('05_Technical_Documents');
+      expect(withPath.isKeywordOnly).toBe(false);
+    });
+
+    it('does not report isKeywordOnly when there is no signal at all', () => {
+      const empty = ClassificationScorer.score({ filePath: 'weekend_plan.md', headings: [], content: 'Nothing here.' });
+      expect(empty.isKeywordOnly).toBe(false);
+      expect(empty.isAmbiguous).toBe(true);
+    });
+  });
 });

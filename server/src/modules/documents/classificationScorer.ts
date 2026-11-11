@@ -139,6 +139,12 @@ export interface ClassificationResult {
   primaryCategory: StandardTaxonomyCategory;
   primaryScore: number;
   isAmbiguous: boolean;
+  /**
+   * True when the winning folder is supported by content keywords alone: neither the file path nor any
+   * heading points to it. Independent of isAmbiguous. Callers should treat the result as a suggestion to
+   * be confirmed by a person rather than file the document on it (M0-T5).
+   */
+  isKeywordOnly: boolean;
   canAutoClassifyWithoutLLM: boolean;
   secondaryCategories: Array<{ category: StandardTaxonomyCategory; score: number }>;
   allScores: Record<StandardTaxonomyCategory, CategoryScoreResult>;
@@ -300,6 +306,8 @@ export class ClassificationScorer {
 
     // Ambiguous when the best folder is weak, or when the runner-up is too close to call without a person
     const isAmbiguous = top.score < 0.40 || top.score - sorted[1].score < AMBIGUITY_MARGIN;
+    // The winner rests on content keywords alone when neither the file path nor a heading supports it
+    const isKeywordOnly = top.keywordScore > 0 && top.pathScore === 0 && top.headingScore === 0;
     const canAutoClassifyWithoutLLM = top.score >= 0.75;
 
     const secondaryCategories = sorted
@@ -311,6 +319,7 @@ export class ClassificationScorer {
       primaryCategory: top.category,
       primaryScore: top.score,
       isAmbiguous,
+      isKeywordOnly,
       canAutoClassifyWithoutLLM,
       secondaryCategories,
       allScores: allScores as Record<StandardTaxonomyCategory, CategoryScoreResult>,
