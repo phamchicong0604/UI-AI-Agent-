@@ -133,16 +133,20 @@ export const DocumentReaderView: React.FC<DocumentReaderViewProps> = ({
   }, [allProjectDocs, doc.category]);
 
   // Text of the current version; fallback rich markdown content if none stored
-  const { content: versionContent, loading: contentLoading } = useDocumentContent(doc);
+  const { content: versionContent, loading: contentLoading, unavailable: contentUnavailable } = useDocumentContent(doc);
   const content = useMemo(() => {
     if (contentLoading) {
       return t('docContentLoading');
+    }
+    if (contentUnavailable) {
+      // Never show substitute text as the document when its text could not be read
+      return '';
     }
     if (versionContent.trim().length > 0) {
       return versionContent;
     }
     return getDefaultDocumentMarkdown(doc, activeProject, language);
-  }, [doc, activeProject, language, versionContent, contentLoading]);
+  }, [doc, activeProject, language, versionContent, contentLoading, contentUnavailable]);
 
   // Extract Table of Contents (Headings) from markdown
   const tableOfContents = useMemo(() => {
@@ -182,6 +186,7 @@ export const DocumentReaderView: React.FC<DocumentReaderViewProps> = ({
   };
 
   const copyMarkdownContent = async () => {
+    if (contentLoading || contentUnavailable) return;
     try {
       await navigator.clipboard.writeText(content);
       setCopiedContent(true);
@@ -585,6 +590,7 @@ export const DocumentReaderView: React.FC<DocumentReaderViewProps> = ({
             variant="secondary"
             size="sm"
             onClick={copyMarkdownContent}
+            disabled={contentLoading || contentUnavailable}
             icon={copiedContent ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
           >
             {copiedContent ? t('docReaderCopiedMd') : t('docReaderCopyMd')}
@@ -726,7 +732,13 @@ export const DocumentReaderView: React.FC<DocumentReaderViewProps> = ({
         <div className="grid grid-cols-1 xl:grid-cols-12 gap-5 items-start">
           {/* Markdown Content Canvas (9 cols) */}
           <div className="xl:col-span-9 p-6 rounded-2xl bg-slate-900 border border-slate-800 shadow-sm space-y-2 text-slate-200 min-h-[500px]">
-            {renderMarkdown(content)}
+            {contentUnavailable ? (
+              <div role="alert" className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+                {t('docContentUnavailable')}
+              </div>
+            ) : (
+              renderMarkdown(content)
+            )}
 
             {/* In-Article Bottom Navigation (Previous & Next Document) */}
             <div className="mt-12 pt-6 border-t border-slate-800 grid grid-cols-1 sm:grid-cols-2 gap-4">

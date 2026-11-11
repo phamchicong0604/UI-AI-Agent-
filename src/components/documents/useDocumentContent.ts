@@ -7,10 +7,18 @@ import { demoDocumentContents } from '../../data/mockData';
 /**
  * Text of a document's current version, read through the version content API (E11-T1).
  * Without a backend connection only the bundled demo documents have text.
+ * `unavailable` means the text could not be read (request failed, or no connection and no bundled text):
+ * callers must say so instead of showing substitute text as if it were the document.
  */
-export function useDocumentContent(doc: DocumentItem | null): { content: string; loading: boolean } {
+export interface DocumentContentState {
+  content: string;
+  loading: boolean;
+  unavailable: boolean;
+}
+
+export function useDocumentContent(doc: DocumentItem | null): DocumentContentState {
   const { backendConnected } = useApp();
-  const [loaded, setLoaded] = useState<{ key: string; content: string } | null>(null);
+  const [loaded, setLoaded] = useState<{ key: string; content: string; failed: boolean } | null>(null);
   const docId = doc?.id;
   const key = doc ? `${doc.id}@${doc.currentVersion}` : '';
 
@@ -19,14 +27,19 @@ export function useDocumentContent(doc: DocumentItem | null): { content: string;
     const controller = new AbortController();
     documentsApi
       .getContent(docId, undefined, { signal: controller.signal })
-      .then(res => setLoaded({ key, content: res.content || '' }))
+      .then(res => setLoaded({ key, content: res.content || '', failed: false }))
       .catch(() => {
-        if (!controller.signal.aborted) setLoaded({ key, content: '' });
+        if (!controller.signal.aborted) setLoaded({ key, content: '', failed: true });
       });
     return () => controller.abort();
   }, [docId, key, backendConnected]);
 
-  if (!doc) return { content: '', loading: false };
-  if (!backendConnected) return { content: demoDocumentContents[doc.id] || '', loading: false };
-  return loaded?.key === key ? { content: loaded.content, loading: false } : { content: '', loading: true };
+  if (!doc) return { content: '', loading: false, unavailable: false };
+  if (!backendConnected) {
+    const bundled = demoDocumentContents[doc.id];
+    return { content: bundled || '', loading: false, unavailable: bundled === undefined };
+  }
+  return loaded?.key === key
+    ? { content: loaded.content, loading: false, unavailable: loaded.failed }
+    : { content: '', loading: true, unavailable: false };
 }

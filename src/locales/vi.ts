@@ -504,6 +504,7 @@ export const vi = {
   changePasswordError: 'Lỗi khi cập nhật mật khẩu',
   docNoContentFallback: 'Không có nội dung chi tiết.',
   docContentLoading: 'Đang tải nội dung tài liệu...',
+  docContentUnavailable: 'Không tải được nội dung tài liệu. Hãy kiểm tra kết nối hoặc quyền truy cập rồi thử lại.',
 
   // Traceability Export & Matrix (BUG-034)
   traceExportSourceDoc: 'Tài liệu nguồn (Document)',
