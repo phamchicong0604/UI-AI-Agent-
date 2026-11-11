@@ -288,3 +288,33 @@ Owner: PM + TL. Bổ sung cho D2-1 đến D2-6 của Phase 2.
 - E11-T1, E11-T2 (Phase 2).
 
 Các việc còn lại chờ quyết định ở mục 5 hoặc chờ task phụ thuộc.
+
+## 8. Đợt 2 (bắt đầu 2026-11-11, sau khi gộp PR #4 và PR #5)
+
+M0-T1 (trừ R7-01), M0-T2 và M0-T3 đã gộp vào `develop` qua PR #4. Lỗi tạo requirement ghi đè requirement khác đã sửa qua PR #5.
+
+### Đang làm, không phụ thuộc quyết định
+
+| ID | Việc | Nhánh | Điều kiện xong |
+|---|---|---|---|
+| E11-T1 | Gom về một nguồn nội dung (Phase 2) | `feat/e11-t1-single-content-source` | AC của E11-T1 trong `BACKLOG-PHASE2-KNOWLEDGE-GRAPH.md` |
+| M0-T5 | Chỉ gợi ý, không tự xếp thư mục, khi phân loại chỉ dựa vào từ khóa trong nội dung | `feat/classification-suggest-only` | Tài liệu `AUTO` không có tín hiệu từ tên file hoặc tiêu đề được gắn cờ chờ người xác nhận. Có số đo trước và sau trên các bộ mẫu hiện có, tách số đúng, số gắn cờ và số sai im lặng |
+| M0-T6 | Tái hiện rồi mới sửa: id test case sinh theo số dòng (`testcases.router.ts`), cùng mẫu lỗi đã sửa ở requirement | `fix/testcase-id-collision` | Có test tái hiện chạy qua route thật. Chỉ sửa khi tái hiện được; nếu không thì ghi lại lệnh và kết quả |
+
+### Làm sau khi E11-T1 xong
+
+| ID | Việc | Lý do chờ |
+|---|---|---|
+| E11-T2 | Storage key theo project | Cùng sửa luồng lưu file và cần migration kế tiếp sau E11-T1. Migration di chuyển file cần Tech Lead xem trước khi chạy trên dữ liệu thật |
+| E11-T3 | Bảng `document_sections` | Phụ thuộc E11-T1 |
+
+### Chờ người quyết định
+
+| Việc | Cần ai chốt gì |
+|---|---|
+| Sửa requirement trên giao diện không được lưu (không có route cập nhật) | Chủ sản phẩm và Tech Lead: ai được sửa, requirement đã `Approved` có được sửa không, sửa xong có phải duyệt lại không |
+| M0-T4, E17-T1: bộ tài liệu thật có nhãn | D3-5: dùng tài liệu project nào, ai gán nhãn |
+| Test case tham chiếu requirement của project khác | Tech Lead và BA: có trường hợp hợp lệ nào không |
+| Cấp lại id requirement đã xóa | Tech Lead: chấp nhận hay chuyển sang bộ đếm không lùi, trước khi nối đường xóa vào sử dụng |
+| R7-01 | Quy tắc vai trò theo project |
+| E16-T2 trở đi | D3-1 đến D3-7 ở mục 5 |
