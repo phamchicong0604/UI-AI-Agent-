@@ -477,7 +477,7 @@ export const ReviewQueueView: React.FC<ReviewQueueViewProps> = ({
         <KnowledgeReviewModal
           isOpen={true}
           documentTitle={reviewingItem.document.title}
-          documentContent={reviewingItem.document.contentMarkdown || reviewingItem.document.description || ''}
+          documentContent={reviewingItem.latestVersion?.extractedContent || reviewingItem.document.description || ''}
           units={reviewingItem.units}
           conflicts={reviewingItem.conflicts}
           riskScore={reviewingItem.riskResult.riskScore}

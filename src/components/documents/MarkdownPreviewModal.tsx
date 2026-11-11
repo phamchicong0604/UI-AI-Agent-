@@ -12,6 +12,7 @@ import {
   Hash
 } from 'lucide-react';
 import { formatHashCode } from '../../common/utils/hash';
+import { useDocumentContent } from './useDocumentContent';
 
 interface MarkdownPreviewModalProps {
   document: DocumentItem | null;
@@ -28,9 +29,13 @@ export const MarkdownPreviewModal: React.FC<MarkdownPreviewModalProps> = ({
   const [copied, setCopied] = useState(false);
   const [copiedHash, setCopiedHash] = useState(false);
 
+  const { content: versionContent, loading: contentLoading } = useDocumentContent(document);
+
   if (!document) return null;
 
-  const content = document.contentMarkdown || document.description || t('docNoContentFallback');
+  const content = contentLoading
+    ? t('docContentLoading')
+    : versionContent || document.description || t('docNoContentFallback');
   const latestVersion = document.versions?.[0];
   const checksum = latestVersion?.checksum || '';
 

@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { DocumentCategory, DocumentItem, StatusLifecycle } from '../../types';
 import { getDefaultDocumentMarkdown } from './documentTemplate';
+import { useDocumentContent } from './useDocumentContent';
 import { useApp } from '../../context/AppContext';
 import { useI18n } from '../../common/i18n/I18nContext';
 import {
@@ -131,13 +132,17 @@ export const DocumentReaderView: React.FC<DocumentReaderViewProps> = ({
     return allProjectDocs.filter(d => d.category === doc.category);
   }, [allProjectDocs, doc.category]);
 
-  // Fallback rich markdown content if none stored
+  // Text of the current version; fallback rich markdown content if none stored
+  const { content: versionContent, loading: contentLoading } = useDocumentContent(doc);
   const content = useMemo(() => {
-    if (doc.contentMarkdown && doc.contentMarkdown.trim().length > 0) {
-      return doc.contentMarkdown;
+    if (contentLoading) {
+      return t('docContentLoading');
+    }
+    if (versionContent.trim().length > 0) {
+      return versionContent;
     }
     return getDefaultDocumentMarkdown(doc, activeProject, language);
-  }, [doc, activeProject, language]);
+  }, [doc, activeProject, language, versionContent, contentLoading]);
 
   // Extract Table of Contents (Headings) from markdown
   const tableOfContents = useMemo(() => {
