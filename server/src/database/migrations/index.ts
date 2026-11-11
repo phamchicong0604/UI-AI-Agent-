@@ -14,6 +14,7 @@ import { migration012RemoveSeedUsersAndEnforceAdminSecurity } from './012_remove
 import { migration013BackfillProjectIdsAndTokenVersion } from './013_backfill_project_ids_and_token_version.js';
 import { migration014BackfillRequirementsProjectId } from './014_backfill_requirements_project_id.js';
 import { migration015MoveLegacyContentToVersions } from './015_move_legacy_content_to_versions.js';
+import { migration016DocumentSections } from './016_document_sections.js';
 
 export const allMigrations: Migration[] = [
   migration001InitialSchema,
@@ -30,5 +31,6 @@ export const allMigrations: Migration[] = [
   migration012RemoveSeedUsersAndEnforceAdminSecurity,
   migration013BackfillProjectIdsAndTokenVersion,
   migration014BackfillRequirementsProjectId,
-  migration015MoveLegacyContentToVersions
+  migration015MoveLegacyContentToVersions,
+  migration016DocumentSections
 ];

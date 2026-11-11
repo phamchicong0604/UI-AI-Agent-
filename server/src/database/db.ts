@@ -25,12 +25,21 @@ import {
   JobRecord,
   KnowledgeUnitRecord,
   KnowledgeSourceRecord,
-  ConflictRecord
+  ConflictRecord,
+  DocumentSectionRecord
 } from '../common/types.js';
 import { computeSha256, computeAuditEventHash } from '../common/crypto.js';
 import { defaultFileStore } from '../common/fileStore.js';
 import { DatabaseMigrator } from './migrator.js';
 import { allMigrations } from './migrations/index.js';
+import {
+  listVersionSections,
+  mapVersionSections,
+  sectionResolverForVersion,
+  syncAllDocumentSections,
+  syncVersionSections
+} from './documentSectionStore.js';
+import { SectionMapping, SourceAnchor } from '../modules/documents/documentSections.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -657,15 +666,20 @@ ${doc.description || 'Đặc tả kỹ thuật chuẩn hệ thống.'}
             VALUES (?, ?, ?, ?, ?, ?, ?)
           `).run(fileId, storageKey, `${doc.id}.md`, 'text/markdown', buffer.length, fileSha256, doc.updatedAt || '2026-11-01');
 
-          if (existing) {
-            db.prepare('UPDATE document_versions SET file_id = ?, extracted_content = ? WHERE id = ?').run(fileId, content, existing.id);
-          } else {
-            const vId = `${doc.id}-v1_0`;
-            db.prepare(`
-              INSERT OR REPLACE INTO document_versions (id, document_id, version_no, file_id, extracted_content, status, change_summary, created_by, created_at)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            `).run(vId, doc.id, doc.currentVersion || 'v1.0', fileId, content, doc.status || 'Draft', 'Synchronized baseline version', doc.author || 'System', doc.updatedAt || '2026-11-01');
-          }
+          // The version text and its sections are written together (E11-T3)
+          db.transaction(() => {
+            if (existing) {
+              db.prepare('UPDATE document_versions SET file_id = ?, extracted_content = ? WHERE id = ?').run(fileId, content, existing.id);
+              syncVersionSections(db, existing.id);
+            } else {
+              const vId = `${doc.id}-v1_0`;
+              db.prepare(`
+                INSERT OR REPLACE INTO document_versions (id, document_id, version_no, file_id, extracted_content, status, change_summary, created_by, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+              `).run(vId, doc.id, doc.currentVersion || 'v1.0', fileId, content, doc.status || 'Draft', 'Synchronized baseline version', doc.author || 'System', doc.updatedAt || '2026-11-01');
+              syncVersionSections(db, vId);
+            }
+          })();
         }
       } catch {}
     }
@@ -673,6 +687,10 @@ ${doc.description || 'Đặc tả kỹ thuật chuẩn hệ thống.'}
 }
 
 ensureStoredFilesSynced();
+
+// E11-T3: idempotent backfill and consistency check. Versions written before migration 016, by migration 015
+// or by any writer that bypasses dbRepository.documentVersions.upsert get their sections here.
+syncAllDocumentSections(db);
 
 /* -------------------------------------------------------------
  * REPOSITORY HELPERS FOR ALL ENTITIES
@@ -864,7 +882,31 @@ export const dbRepository = {
           created_by = excluded.created_by,
           created_at = excluded.created_at
       `);
-      stmt.run(v.id, v.documentId, v.versionNo, v.fileId, v.extractedContent, v.status, v.changeSummary, v.createdBy, v.createdAt);
+      // The version text and its sections are written in one transaction, so a version never has text
+      // without sections (E11-T3). Inside a caller's transaction this is a savepoint.
+      db.transaction(() => {
+        stmt.run(v.id, v.documentId, v.versionNo, v.fileId, v.extractedContent, v.status, v.changeSummary, v.createdBy, v.createdAt);
+        syncVersionSections(db, v.id);
+      })();
+    }
+  },
+
+  documentSections: {
+    /** Sections of a version in document order */
+    getByVersionId(documentVersionId: string): DocumentSectionRecord[] {
+      return listVersionSections(db, documentVersionId);
+    },
+    /** Sections of two versions of one document matched by stable_key: unchanged, changed, only in old, only in new */
+    mapVersions(oldVersionId: string, newVersionId: string): SectionMapping<DocumentSectionRecord> {
+      return mapVersionSections(db, oldVersionId, newVersionId);
+    },
+    /** Rebuild the sections of a version from its stored text; returns false when they were already correct */
+    syncVersion(documentVersionId: string): boolean {
+      return syncVersionSections(db, documentVersionId);
+    },
+    /** Function giving the section id of an anchor in this version, or null when it cannot be determined */
+    resolverForVersion(documentVersionId: string): (anchor: SourceAnchor) => string | null {
+      return sectionResolverForVersion(db, documentVersionId);
     }
   },
 
@@ -1238,16 +1280,16 @@ export const dbRepository = {
   knowledgeSources: {
     create(src: KnowledgeSourceRecord): void {
       db.prepare(`
-        INSERT OR REPLACE INTO knowledge_sources (id, unit_id, document_version_id, heading_path, char_offset_start, char_offset_end, page_number, exact_quote, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(src.id, src.unitId, src.documentVersionId, src.headingPath, src.charOffsetStart, src.charOffsetEnd, src.pageNumber || null, src.exactQuote, src.createdAt);
+        INSERT OR REPLACE INTO knowledge_sources (id, unit_id, document_version_id, heading_path, char_offset_start, char_offset_end, page_number, exact_quote, created_at, section_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(src.id, src.unitId, src.documentVersionId, src.headingPath, src.charOffsetStart, src.charOffsetEnd, src.pageNumber || null, src.exactQuote, src.createdAt, src.sectionId ?? null);
     },
     getByUnitId(unitId: string): KnowledgeSourceRecord[] {
       return db.prepare(`
         SELECT id, unit_id as unitId, document_version_id as documentVersionId,
                heading_path as headingPath, char_offset_start as charOffsetStart,
                char_offset_end as charOffsetEnd, page_number as pageNumber,
-               exact_quote as exactQuote, created_at as createdAt
+               exact_quote as exactQuote, created_at as createdAt, section_id as sectionId
         FROM knowledge_sources WHERE unit_id = ?
       `).all(unitId) as KnowledgeSourceRecord[];
     }
