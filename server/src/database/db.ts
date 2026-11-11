@@ -56,6 +56,9 @@ migrator.runPendingMigrations();
  * SEED BASELINE DATA IF TABLES ARE EMPTY
  * ----------------------------------------------------------- */
 
+// Text of the baseline documents, keyed by document id. It is stored in document_versions only (E11-T1).
+const seedDocumentContent = new Map<string, string>();
+
 function seedDatabaseIfEmpty() {
   // 1. Seed Projects if empty
   const projectCount = (db.prepare('SELECT count(*) as count FROM projects').get() as any).count;
@@ -104,7 +107,7 @@ function seedDatabaseIfEmpty() {
   const insertDoc = db.prepare('INSERT OR IGNORE INTO documents (id, project_id, category, status, data, updated_at) VALUES (?, ?, ?, ?, ?, ?)');
 
   // Seed Documents
-  const initialDocs: DocumentItem[] = [
+  const initialDocs: Array<DocumentItem & { seedContent?: string }> = [
       {
         id: 'DOC-01',
         title: 'Project Charter & Stakeholder Matrix',
@@ -161,7 +164,7 @@ function seedDatabaseIfEmpty() {
         author: 'Sarah Le (Lead BA)',
         updatedAt: '2026-11-02 11:45',
         description: 'Functional specs for EVD storage references, multi-entity linking and audit immutability.',
-        contentMarkdown: `# Software Requirements Specification (SRS) - Evidence Lifecycle
+        seedContent: `# Software Requirements Specification (SRS) - Evidence Lifecycle
 
 > **Module**: Lưu trữ Bằng chứng EVD & Chuỗi Truy vết Bất biến  
 > **Phiên bản**: v1.1 (In Review) | **Tác giả**: Sarah Le (Lead BA)
@@ -205,7 +208,7 @@ Hệ thống **Evidence Lifecycle Management** chịu trách nhiệm thu thập,
         author: 'Duc Pham (QA Lead)',
         updatedAt: '2026-11-01 16:20',
         description: 'Component specs, 3-column split view layout, and evidence attachment drawer UI.',
-        contentMarkdown: `# Figma Design System & 3-Column QA Workspace Wireframes
+        seedContent: `# Figma Design System & 3-Column QA Workspace Wireframes
 
 > **Dự án**: AI-Ready QA Platform MVP  
 > **Chủ đề**: Quy chuẩn Giao diện 3 Cột & Bộ màu Dark Theme Slate  
@@ -242,7 +245,7 @@ Hệ thống **Evidence Lifecycle Management** chịu trách nhiệm thu thập,
         author: 'Khoa Dang (Tech Lead)',
         updatedAt: '2026-10-30 18:00',
         description: 'Complete OpenAPI 3.0 schema, webhook contracts, and SQLite JSON persistence layout.',
-        contentMarkdown: `# REST API & Traceability Schema Specifications
+        seedContent: `# REST API & Traceability Schema Specifications
 
 > **Hệ thống**: DocQA Backend Micro-Service  
 > **Giao thức**: RESTful JSON / SSE Streams  
@@ -283,7 +286,7 @@ Hệ thống **Evidence Lifecycle Management** chịu trách nhiệm thu thập,
         author: 'Duc Pham (QA Lead)',
         updatedAt: '2026-11-02 14:00',
         description: 'Regression coverage goals, test levels, defect severity definitions, and release sign-off rules.',
-        contentMarkdown: `# Master Test Strategy & Acceptance Plan
+        seedContent: `# Master Test Strategy & Acceptance Plan
 
 > **Chiến lược**: Kiểm thử Toàn diện & Đối soát Toàn vẹn Yêu cầu  
 > **Mục tiêu**: Bao phủ tối thiểu 95% Ma trận Truy vết  
@@ -312,7 +315,8 @@ Hệ thống **Evidence Lifecycle Management** chịu trách nhiệm thu thập,
       }
     ];
 
-    for (const doc of initialDocs) {
+    for (const { seedContent, ...doc } of initialDocs) {
+      if (seedContent) seedDocumentContent.set(doc.id, seedContent);
       insertDoc.run(doc.id, doc.projectId || 'PRJ-01', doc.category, doc.status, JSON.stringify(doc), doc.updatedAt);
     }
 
@@ -618,15 +622,17 @@ function seedAiConnectionIfEmpty() {
 
 seedAiConnectionIfEmpty();
 
-function ensureStoredFilesSynced() {
+export function ensureStoredFilesSynced() {
   try {
     const docs = db.prepare('SELECT id, data FROM documents').all() as { id: string; data: string }[];
     for (const row of docs) {
       try {
         const doc = JSON.parse(row.data);
-        const versions = db.prepare('SELECT id, file_id FROM document_versions WHERE document_id = ?').all(doc.id) as any[];
+        const versions = db.prepare('SELECT id, file_id, extracted_content FROM document_versions WHERE document_id = ?').all(doc.id) as any[];
         if (versions.length === 0 || !versions[0].file_id) {
-          const content = doc.contentMarkdown || `# ${doc.title}
+          // A version that already holds text keeps it; only its missing file is created (E11-T1)
+          const existing = versions[0];
+          const content = existing?.extracted_content || seedDocumentContent.get(doc.id) || `# ${doc.title}
 
 > **Dự án**: ${doc.projectId || 'PRJ-01'} | **Mã**: \`${doc.id}\` | **Phiên bản**: \`${doc.currentVersion || 'v1.0'}\`  
 > **Tác giả**: ${doc.author || 'System'} | **Cập nhật**: ${doc.updatedAt || '2026-11-01'}
@@ -651,11 +657,15 @@ ${doc.description || 'Đặc tả kỹ thuật chuẩn hệ thống.'}
             VALUES (?, ?, ?, ?, ?, ?, ?)
           `).run(fileId, storageKey, `${doc.id}.md`, 'text/markdown', buffer.length, fileSha256, doc.updatedAt || '2026-11-01');
 
-          const vId = `${doc.id}-v1_0`;
-          db.prepare(`
-            INSERT OR REPLACE INTO document_versions (id, document_id, version_no, file_id, extracted_content, status, change_summary, created_by, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `).run(vId, doc.id, doc.currentVersion || 'v1.0', fileId, content, doc.status || 'Draft', 'Synchronized baseline version', doc.author || 'System', doc.updatedAt || '2026-11-01');
+          if (existing) {
+            db.prepare('UPDATE document_versions SET file_id = ?, extracted_content = ? WHERE id = ?').run(fileId, content, existing.id);
+          } else {
+            const vId = `${doc.id}-v1_0`;
+            db.prepare(`
+              INSERT OR REPLACE INTO document_versions (id, document_id, version_no, file_id, extracted_content, status, change_summary, created_by, created_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `).run(vId, doc.id, doc.currentVersion || 'v1.0', fileId, content, doc.status || 'Draft', 'Synchronized baseline version', doc.author || 'System', doc.updatedAt || '2026-11-01');
+          }
         }
       } catch {}
     }
