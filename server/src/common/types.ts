@@ -239,7 +239,6 @@ export interface DocumentItem {
   author: string;
   updatedAt: string;
   description: string;
-  contentMarkdown?: string;
   tags: string[];
   versions: DocumentVersion[];
   linkedRequirementsCount: number;

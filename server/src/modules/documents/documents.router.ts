@@ -9,6 +9,7 @@ import { defaultFileStore } from '../../common/fileStore.js';
 import { 
   DocumentCategory, 
   DocumentItem, 
+  DocumentVersionRecord,
   UploadBatchRecord, 
   UploadBatchItemDetail, 
   UploadBatchStatus,
@@ -305,6 +306,42 @@ documentsRouter.get('/:id', authenticateUser, (req: Request, res: Response) => {
   sendSuccess(res, doc);
 });
 
+/**
+ * Pick the version a request refers to: ?version= / ?versionNo=, else the document's current version,
+ * else the highest version number. Document text and files are read from this version only (E11-T1).
+ */
+function resolveTargetVersion(doc: DocumentItem, req: Request): DocumentVersionRecord | undefined {
+  const versions = dbRepository.documentVersions.getByDocumentId(doc.id);
+  const targetVersionNo = (req.query.version as string) || (req.query.versionNo as string) || doc.currentVersion;
+  return (targetVersionNo ? versions.find(v => v.versionNo === targetVersionNo) : null) || versions[versions.length - 1];
+}
+
+/**
+ * GET /api/v1/documents/:id/content
+ * Extracted text of one document version, read from document_versions (E11-T1)
+ */
+documentsRouter.get('/:id/content', authenticateUser, (req: Request, res: Response) => {
+  const doc = dbRepository.documents.getById(req.params.id);
+  if (!doc) return sendError(res, 'Document not found', 404);
+
+  if (req.user && !checkProjectAccess(req.user, doc.projectId)) {
+    return sendError(res, `Bạn không có quyền truy cập tài liệu thuộc dự án "${doc.projectId}".`, 403);
+  }
+
+  const targetVersion = resolveTargetVersion(doc, req);
+  // An explicitly requested version that does not exist is not answered with another version's text
+  const requestedVersionNo = (req.query.version as string) || (req.query.versionNo as string);
+  if (requestedVersionNo && targetVersion?.versionNo !== requestedVersionNo) {
+    return sendError(res, `Document version "${requestedVersionNo}" not found`, 404);
+  }
+  sendSuccess(res, {
+    documentId: doc.id,
+    versionId: targetVersion?.id ?? null,
+    versionNo: targetVersion?.versionNo ?? null,
+    content: targetVersion?.extractedContent ?? ''
+  });
+});
+
 export function getSafeMimeType(fileName: string): string {
   const ext = path.extname(fileName).toLowerCase();
   const SAFE_MIME_MAP: Record<string, string> = {
@@ -336,10 +373,8 @@ documentsRouter.get('/:id/file', authenticateUser, async (req: Request, res: Res
     return sendError(res, `Bạn không có quyền tải tệp tin từ dự án "${doc.projectId}".`, 403);
   }
 
-  const versions = dbRepository.documentVersions.getByDocumentId(doc.id);
-  const targetVersionNo = (req.query.version as string) || (req.query.versionNo as string) || doc.currentVersion;
-  const targetVersion = (targetVersionNo ? versions.find(v => v.versionNo === targetVersionNo) : null) || versions[versions.length - 1];
-  
+  const targetVersion = resolveTargetVersion(doc, req);
+
   if (targetVersion && targetVersion.fileId) {
     const stored = dbRepository.storedFiles.getById(targetVersion.fileId);
     if (stored) {
@@ -357,8 +392,8 @@ documentsRouter.get('/:id/file', authenticateUser, async (req: Request, res: Res
     }
   }
 
-  // Fallback if raw stored file missing (BUG-019: prefer target version's extracted content over doc.contentMarkdown)
-  const versionText = targetVersion?.extractedContent || doc.contentMarkdown;
+  // Fallback if raw stored file missing: the target version's extracted content (BUG-019, E11-T1)
+  const versionText = targetVersion?.extractedContent;
   if (versionText) {
     const safeDocName = `${doc.id}.md`.replace(/["\r\n\\]/g, '_');
     const encodedDocName = encodeURIComponent(`${doc.id}.md`);
@@ -376,6 +411,7 @@ documentsRouter.get('/:id/file', authenticateUser, async (req: Request, res: Res
  * Manual creation of a single document (BUG-030: Byte-for-byte SHA-256 and stored file integration)
  */
 documentsRouter.post('/', authenticateUser, requireAuth, async (req: Request, res: Response) => {
+  // contentMarkdown is still accepted as a request field name; the text is stored in the version only (E11-T1)
   const { title, category, currentVersion, description, tags, author, content, contentMarkdown, projectId } = req.body;
   if (!title || !category) {
     return sendError(res, 'Title and category are required', 400);
@@ -432,7 +468,6 @@ documentsRouter.post('/', authenticateUser, requireAuth, async (req: Request, re
     author: author || 'System User',
     updatedAt: timestamp,
     description: description || '',
-    contentMarkdown: mdContent,
     tags: Array.isArray(tags) ? tags : [],
     linkedRequirementsCount: 0,
     versions: [
@@ -602,7 +637,6 @@ documentsRouter.post('/upload', authenticateUser, requireAuth, upload.array('fil
         author,
         updatedAt: timestamp,
         description,
-        contentMarkdown: rawText,
         tags: docTags,
         linkedRequirementsCount: 0,
         versions: [

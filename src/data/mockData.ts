@@ -34,7 +34,8 @@ export const initialProjects: Project[] = [
   }
 ];
 
-export const initialDocuments: DocumentItem[] = [
+// Demo documents for offline use. Their text is kept apart from the document records, as on the server (E11-T1).
+const demoDocuments: Array<DocumentItem & { demoContent?: string }> = [
   {
     id: 'DOC-01',
     projectId: 'PRJ-01',
@@ -45,7 +46,7 @@ export const initialDocuments: DocumentItem[] = [
     author: 'Minh Tran (PM)',
     updatedAt: '2026-11-01 10:30',
     description: 'Executive summary, target milestones, sponsor sign-off, and organizational responsibility matrix.',
-    contentMarkdown: `# Project Charter & Stakeholder Governance Matrix
+    demoContent: `# Project Charter & Stakeholder Governance Matrix
 
 > **Dự án**: AI-Ready QA Platform MVP (v0.1.0-mvp)  
 > **Tác giả**: Minh Tran (PM) | **Trạng thái**: Đã phê duyệt (Approved) | **Mã băm**: SHA-256 Verified
@@ -98,7 +99,7 @@ Nền tảng **DocQA** được xây dựng nhằm giải quyết bài toán c�
     author: 'Sarah Le (Lead BA)',
     updatedAt: '2026-11-02 09:15',
     description: 'Comprehensive business rules for role privileges (Admin, PM, BA, DEV, QA, Approver) and security requirements.',
-    contentMarkdown: `# Business Requirements Document (BRD) - Authentication & RBAC
+    demoContent: `# Business Requirements Document (BRD) - Authentication & RBAC
 
 > **Phân hệ**: Xác thực danh tính & Phân quyền kiểm thử (Auth & RBAC)  
 > **Phiên bản**: v1.2 (Approved) | **Tác giả**: Sarah Le (Lead BA)
@@ -168,7 +169,7 @@ Tài liệu này xác định các yêu cầu nghiệp vụ bắt buộc đối 
     author: 'Sarah Le (Lead BA)',
     updatedAt: '2026-11-02 11:45',
     description: 'Functional specs for EVD storage references, multi-entity linking and audit immutability.',
-    contentMarkdown: `# Software Requirements Specification (SRS) - Evidence Lifecycle
+    demoContent: `# Software Requirements Specification (SRS) - Evidence Lifecycle
 
 > **Module**: Lưu trữ Bằng chứng EVD & Chuỗi Truy vết Bất biến  
 > **Phiên bản**: v1.1 (In Review) | **Tác giả**: Sarah Le (Lead BA)
@@ -216,7 +217,7 @@ Hệ thống **Evidence Lifecycle Management** chịu trách nhiệm thu thập,
     author: 'Elena Vo (Lead UI/UX)',
     updatedAt: '2026-11-01 16:20',
     description: 'High-fidelity wireframes including the specialized 3-column test case workspace and responsive drawer navigation.',
-    contentMarkdown: `# Figma Design System & 3-Column QA Workspace Wireframes
+    demoContent: `# Figma Design System & 3-Column QA Workspace Wireframes
 
 > **Thiết kế**: UI/UX Specification v2.0 (Approved)  
 > **Tác giả**: Elena Vo (Lead UI/UX) | **Công cụ nguồn**: Figma Workspace
@@ -262,7 +263,7 @@ Giao diện DocQA được chuẩn hóa theo tỷ lệ tối ưu cho kỹ sư ki
     author: 'Khoa Dang (Tech Lead)',
     updatedAt: '2026-10-30 18:00',
     description: 'OpenAPI 3.1 definitions for Documents, Requirements, Test Runs, Evidence uploads and Traceability queries.',
-    contentMarkdown: `# REST API & Traceability Schema Specifications
+    demoContent: `# REST API & Traceability Schema Specifications
 
 > **Giao thức**: REST API v1.0 (OpenAPI 3.1)  
 > **Công nghệ**: Express.js, TypeScript, Better-SQLite3, Multer, Adm-Zip
@@ -310,7 +311,7 @@ const checksum = 'sha256:' + crypto.createHash('sha256').update(content).digest(
     author: 'Duc Pham (QA Lead)',
     updatedAt: '2026-11-02 08:30',
     description: 'Quality criteria, pass rate gates (min 95% pass rate), blocking criteria, and regression test matrix.',
-    contentMarkdown: `# Master Test Strategy & Acceptance Plan
+    demoContent: `# Master Test Strategy & Acceptance Plan
 
 > **Chiến lược**: QA Governance & Test Lifecycle Matrix v1.3 (Approved)  
 > **Tác giả**: Duc Pham (QA Lead)
@@ -346,7 +347,7 @@ const checksum = 'sha256:' + crypto.createHash('sha256').update(content).digest(
     author: 'Khoa Dang (Tech Lead)',
     updatedAt: '2026-10-25 15:10',
     description: 'Security policies prohibiting raw secrets/bearer tokens in evidence, masking guidelines, and AWS S3 encryption.',
-    contentMarkdown: `# Evidence Retention & Data Privacy Guide
+    demoContent: `# Evidence Retention & Data Privacy Guide
 
 > **Phân loại**: Bảo mật & Tuân thủ Dữ liệu EVD  
 > **Tác giả**: Khoa Dang (Tech Lead) | **Dự án**: Fintech Core Banking & Payments (FCB)
@@ -382,7 +383,7 @@ const checksum = 'sha256:' + crypto.createHash('sha256').update(content).digest(
     author: 'Minh Tran (PM)',
     updatedAt: '2026-11-02 14:00',
     description: 'Sprint changelog, architectural decisions regarding AI readiness and modular schema.',
-    contentMarkdown: `# Release Notes & Change Decision Log v0.1
+    demoContent: `# Release Notes & Change Decision Log v0.1
 
 > **Ghi chú Phát hành**: Sprint 1 Milestone Baseline  
 > **Tác giả**: Minh Tran (PM) | **Trạng thái**: Draft
@@ -411,6 +412,12 @@ const checksum = 'sha256:' + crypto.createHash('sha256').update(content).digest(
     ]
   }
 ];
+
+export const initialDocuments: DocumentItem[] = demoDocuments.map(({ demoContent, ...doc }) => doc);
+
+export const demoDocumentContents: Record<string, string> = Object.fromEntries(
+  demoDocuments.filter(d => d.demoContent).map(d => [d.id, d.demoContent as string])
+);
 
 export const initialRequirements: RequirementItem[] = [
   {

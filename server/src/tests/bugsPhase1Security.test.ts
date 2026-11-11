@@ -499,7 +499,6 @@ describe('Bug Review Phase 1: Security & Governance (BUG-001 to BUG-006, BUG-009
         author: 'Tester',
         updatedAt: '2026-11-03',
         description: 'Test doc',
-        contentMarkdown: 'Doc content',
         tags: [],
         linkedRequirementsCount: 0,
         versions: []

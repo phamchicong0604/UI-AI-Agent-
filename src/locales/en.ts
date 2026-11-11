@@ -503,6 +503,8 @@ export const en = {
   changePasswordSuccess: 'Password changed successfully!',
   changePasswordError: 'Failed to update password',
   docNoContentFallback: 'No detailed content available.',
+  docContentLoading: 'Loading document content...',
+  docContentUnavailable: 'The document content could not be loaded. Check your connection or access rights and try again.',
 
   // Traceability Export & Matrix (BUG-034)
   traceExportSourceDoc: 'Source Document',

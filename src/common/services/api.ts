@@ -186,6 +186,13 @@ export const projectsApi = {
 /* -------------------------------------------------------------
  * 1. DOCUMENTS API
  * ----------------------------------------------------------- */
+export interface DocumentContent {
+  documentId: string;
+  versionId: string | null;
+  versionNo: string | null;
+  content: string;
+}
+
 export const documentsApi = {
   async getAll(projectId?: string, options?: RequestInit): Promise<DocumentItem[]> {
     const query = projectId && projectId !== 'ALL' ? `?projectId=${encodeURIComponent(projectId)}` : '';
@@ -193,6 +200,11 @@ export const documentsApi = {
   },
   async getById(id: string): Promise<DocumentItem> {
     return fetchJson<DocumentItem>(`${API_BASE_URL}/documents/${id}`);
+  },
+  /** Text of one document version; the document's current version when versionNo is omitted (E11-T1) */
+  async getContent(id: string, versionNo?: string, options?: RequestInit): Promise<DocumentContent> {
+    const query = versionNo ? `?version=${encodeURIComponent(versionNo)}` : '';
+    return fetchJson<DocumentContent>(`${API_BASE_URL}/documents/${encodeURIComponent(id)}/content${query}`, options);
   },
   async create(doc: Partial<DocumentItem>): Promise<DocumentItem> {
     return fetchJson<DocumentItem>(`${API_BASE_URL}/documents`, {

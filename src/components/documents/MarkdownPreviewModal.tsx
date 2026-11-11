@@ -12,6 +12,7 @@ import {
   Hash
 } from 'lucide-react';
 import { formatHashCode } from '../../common/utils/hash';
+import { useDocumentContent } from './useDocumentContent';
 
 interface MarkdownPreviewModalProps {
   document: DocumentItem | null;
@@ -28,13 +29,20 @@ export const MarkdownPreviewModal: React.FC<MarkdownPreviewModalProps> = ({
   const [copied, setCopied] = useState(false);
   const [copiedHash, setCopiedHash] = useState(false);
 
+  const { content: versionContent, loading: contentLoading, unavailable: contentUnavailable } = useDocumentContent(document);
+
   if (!document) return null;
 
-  const content = document.contentMarkdown || document.description || t('docNoContentFallback');
+  const content = contentLoading
+    ? t('docContentLoading')
+    : contentUnavailable
+    ? t('docContentUnavailable')
+    : versionContent || document.description || t('docNoContentFallback');
   const latestVersion = document.versions?.[0];
   const checksum = latestVersion?.checksum || '';
 
   const copyContent = async () => {
+    if (contentLoading || contentUnavailable) return;
     try {
       await navigator.clipboard.writeText(content);
       setCopied(true);
@@ -175,6 +183,7 @@ export const MarkdownPreviewModal: React.FC<MarkdownPreviewModalProps> = ({
             type="button"
             variant="ghost"
             onClick={copyContent}
+            disabled={contentLoading || contentUnavailable}
             icon={copied ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
           >
             {copied ? t('docCopied') : t('docCopyMarkdown')}

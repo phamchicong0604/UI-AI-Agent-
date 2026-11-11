@@ -14,7 +14,6 @@ describe('Traceability Matrix Logic & Verification (TraceabilityView)', () => {
       status: 'Approved',
       author: 'BA Team',
       updatedAt: '2026-11-04',
-      contentMarkdown: '# Auth Spec',
       tags: ['auth'],
       linkedRequirementsCount: 2,
       versions: []
