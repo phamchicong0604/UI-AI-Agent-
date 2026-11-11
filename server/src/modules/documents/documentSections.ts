@@ -73,8 +73,43 @@ interface HeadingLine {
   title: string;
 }
 
-const FENCE_PATTERN = /^ {0,3}(`{3,}|~{3,})(.*)$/;
-const HEADING_PATTERN = /^ {0,3}(#{1,6})(?:[ \t]+(.*))?$/;
+// Lines are parsed by hand, character by character. Regular expressions with two adjacent quantifiers
+// (such as "[ \t]+(.*)$") backtrack quadratically on a long line that cannot match, which let one small
+// crafted document stall the server on upload and again on every start.
+
+/** Number of leading spaces when it is at most 3; -1 when the line is indented further (not a heading or fence) */
+function leadingSpaces(line: string): number {
+  let i = 0;
+  while (i < line.length && line[i] === ' ') i++;
+  return i <= 3 ? i : -1;
+}
+
+/** Fence marker of a line: three or more "`" or "~" after at most 3 spaces, and the rest of the line */
+function parseFence(line: string): { char: string; length: number; rest: string } | null {
+  const start = leadingSpaces(line);
+  if (start < 0) return null;
+  const char = line[start];
+  if (char !== '`' && char !== '~') return null;
+  let end = start;
+  while (end < line.length && line[end] === char) end++;
+  if (end - start < 3) return null;
+  return { char, length: end - start, rest: line.slice(end) };
+}
+
+/** ATX heading of a line: 1 to 6 "#" after at most 3 spaces, followed by a space, a tab or the end of the line */
+function parseHeading(line: string): { level: number; rawTitle: string } | null {
+  const start = leadingSpaces(line);
+  if (start < 0) return null;
+  let end = start;
+  while (end < line.length && line[end] === '#') end++;
+  const level = end - start;
+  if (level < 1 || level > 6) return null;
+  if (end < line.length && line[end] !== ' ' && line[end] !== '\t') return null;
+  return { level, rawTitle: line.slice(end) };
+}
+
+// A line ends at "\n", "\r\n" or a lone "\r": the same rule sectionContentHash uses
+const LINE_BREAK = /\r\n?|\n/g;
 
 function headingTitle(raw: string | undefined): string {
   const title = (raw ?? '').trim();
@@ -101,27 +136,27 @@ function scanLines(text: string): { headings: HeadingLine[]; paragraphStarts: nu
   let pos = 0;
 
   while (pos < text.length) {
-    const newline = text.indexOf('\n', pos);
-    const next = newline === -1 ? text.length : newline + 1;
-    let lineEnd = newline === -1 ? text.length : newline;
-    if (lineEnd > pos && text.charCodeAt(lineEnd - 1) === 13) lineEnd--;
+    LINE_BREAK.lastIndex = pos;
+    const lineBreak = LINE_BREAK.exec(text);
+    const lineEnd = lineBreak ? lineBreak.index : text.length;
+    const next = lineBreak ? lineBreak.index + lineBreak[0].length : text.length;
     const line = text.slice(pos, lineEnd);
     const blank = !/\S/.test(line);
 
     if (fence) {
-      const close = FENCE_PATTERN.exec(line);
-      if (close && close[1][0] === fence.char && close[1].length >= fence.length && close[2].trim() === '') {
+      const close = parseFence(line);
+      if (close && close.char === fence.char && close.length >= fence.length && close.rest.trim() === '') {
         fence = null;
       }
       previousBlank = false;
     } else {
       if (!blank && previousBlank && seenContent) paragraphStarts.push(pos);
-      const open = FENCE_PATTERN.exec(line);
-      if (open && !(open[1][0] === '`' && open[2].includes('`'))) {
-        fence = { char: open[1][0], length: open[1].length };
+      const open = parseFence(line);
+      if (open && !(open.char === '`' && open.rest.includes('`'))) {
+        fence = { char: open.char, length: open.length };
       } else {
-        const heading = HEADING_PATTERN.exec(line);
-        if (heading) headings.push({ offset: pos, level: heading[1].length, title: headingTitle(heading[2]) });
+        const heading = parseHeading(line);
+        if (heading) headings.push({ offset: pos, level: heading.level, title: headingTitle(heading.rawTitle) });
       }
       previousBlank = blank;
     }
@@ -263,11 +298,12 @@ export function findSectionForAnchor<T extends { charStart: number; charEnd: num
     typeof start === 'number' && typeof end === 'number' &&
     Number.isInteger(start) && Number.isInteger(end) &&
     start >= 0 && end > start && end <= text.length;
-  if (offsetsValid && (quote === '' || text.slice(start, end) === quote)) {
+  // Without a quote the offsets cannot be checked against the text, so nothing is resolved rather than guessed
+  if (quote === '') return null;
+  if (offsetsValid && text.slice(start, end) === quote) {
     return sectionAt(sections, start);
   }
 
-  if (quote === '') return null;
   let found: T | null = null;
   for (let at = text.indexOf(quote); at !== -1; at = text.indexOf(quote, at + 1)) {
     const section = sectionAt(sections, at);

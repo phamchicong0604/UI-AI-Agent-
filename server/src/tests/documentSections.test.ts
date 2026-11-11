@@ -200,6 +200,42 @@ describe('E11-T3: splitIntoSections', () => {
     expect(elapsed).toBeLessThan(5000);
   });
 
+  // A heading or fence line that cannot match must not be retried from every position: each of these inputs
+  // made the earlier regular expressions backtrack quadratically (2 s at 40k characters, 51 s at 200k).
+  it.each([
+    ['spaces then a lone CR', (n: number) => `# ${' '.repeat(n)}\rx`],
+    ['tabs then a lone CR', (n: number) => `# ${'\t'.repeat(n)}\rx`],
+    ['spaces then U+2028', (n: number) => `# ${' '.repeat(n)}\u2028x`],
+    ['a long fence marker then a lone CR', (n: number) => `${'`'.repeat(n)}\rx`],
+    ['a long fence marker then U+2028', (n: number) => `${'~'.repeat(n)}\u2028x`]
+  ])('takes linear time on a crafted line: %s', (_label, build) => {
+    const time = (n: number) => {
+      const text = build(n);
+      const started = performance.now();
+      const sections = splitIntoSections(text);
+      const elapsed = performance.now() - started;
+      expectCoverage(text, sections);
+      return elapsed;
+    };
+    time(1_000); // warm-up
+    const small = time(100_000);
+    const large = time(400_000);
+    // Quadratic growth would make the larger input about 16 times slower and take minutes
+    expect(large).toBeLessThan(1_000);
+    expect(large).toBeLessThan(Math.max(small, 1) * 10);
+  });
+
+  it('treats a lone CR as a line break, as the content hash does', () => {
+    const lf = '# Tài liệu\n\n## Mục tiêu\nNội dung.\n';
+    const cr = lf.replace(/\n/g, '\r');
+    const fromLf = splitIntoSections(lf);
+    const fromCr = splitIntoSections(cr);
+    expectCoverage(cr, fromCr);
+    expect(fromCr.map(s => s.headingPath)).toEqual([['Tài liệu'], ['Tài liệu', 'Mục tiêu']]);
+    expect(fromCr.map(s => s.stableKey)).toEqual(fromLf.map(s => s.stableKey));
+    expect(fromCr.map(s => s.contentHash)).toEqual(fromLf.map(s => s.contentHash));
+  });
+
   it('survives one very long line without headings', () => {
     const text = `${' '.repeat(200_000)}x${'#'.repeat(200_000)}`;
     const sections = splitIntoSections(text);
@@ -432,7 +468,8 @@ describe('E11-T3: findSectionForAnchor', () => {
     expect(found?.headingPath).toEqual(['A']);
   });
 
-  it('trusts valid offsets when no quote is given', () => {
-    expect(findSectionForAnchor(text, sections, { charStart: at('Alpha'), charEnd: at('Alpha') + 5 })?.headingPath).toEqual(['A']);
+  it('resolves nothing when no quote is given, because offsets alone cannot be checked', () => {
+    expect(findSectionForAnchor(text, sections, { charStart: at('Alpha'), charEnd: at('Alpha') + 5 })).toBeNull();
+    expect(findSectionForAnchor(text, sections, { charStart: at('Alpha'), charEnd: at('Alpha') + 5, exactQuote: '' })).toBeNull();
   });
 });
