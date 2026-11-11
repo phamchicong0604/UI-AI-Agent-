@@ -3,6 +3,81 @@ import { defaultWorkflowEngine } from './workflowEngine.js';
 import { defaultStage2Runner } from '../ai/stage2Runner.js';
 import { db, dbRepository } from '../../database/db.js';
 import crypto from 'crypto';
+import { ClassificationScorer } from '../documents/classificationScorer.js';
+import { DocumentCategory } from '../../common/types.js';
+
+const SECONDARY_CATEGORY_THRESHOLD = 0.5;
+const AMBIGUOUS_PROVISIONAL_CATEGORY: DocumentCategory = '01_Project_Overview';
+
+/**
+ * Run the deterministic ClassificationScorer and store its result on the document (M0-T2).
+ * Offline only: no LLM or external call. Returns null when the document no longer exists.
+ */
+async function classifyDocument(documentId: string, versionNo: string, documentTitle: string, documentText: string) {
+  const doc = dbRepository.documents.getById(documentId);
+  if (!doc) return null;
+
+  const headings = documentText
+    .split('\n')
+    .map(line => line.trim())
+    .filter(line => /^#{1,2}\s+/.test(line))
+    .map(line => line.replace(/^#+\s*/, '').trim());
+
+  // The title counts as a heading unless it is already one, or it was merely derived from the file name
+  // (the file name is scored separately as the path signal).
+  const title = (documentTitle || '').trim();
+  const fileStem = (doc.sourcePath || '').split(/[\\/]/).pop()!.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
+  if (title && title.toLowerCase() !== fileStem.toLowerCase() && !headings.some(h => h.toLowerCase() === title.toLowerCase())) {
+    headings.unshift(title);
+  }
+
+  const result = ClassificationScorer.score({
+    filePath: doc.sourcePath || '',
+    headings,
+    content: documentText,
+    projectId: doc.projectId
+  });
+
+  const secondaryCategories = Object.values(result.allScores)
+    .filter(s => s.category !== result.primaryCategory && s.score >= SECONDARY_CATEGORY_THRESHOLD)
+    .sort((a, b) => b.score - a.score)
+    .map(s => s.category);
+
+  // Only documents uploaded with AUTO follow the scorer; an explicit (or legacy/unknown) choice is kept.
+  const isAuto = doc.categorySource === 'AUTO';
+  const targetCategory: DocumentCategory = !isAuto
+    ? doc.category
+    : result.isAmbiguous ? AMBIGUOUS_PROVISIONAL_CATEGORY : result.primaryCategory;
+
+  doc.classification = {
+    suggestedCategory: result.primaryCategory,
+    score: result.primaryScore,
+    isAmbiguous: result.isAmbiguous,
+    versionNo,
+    classifiedAt: new Date().toISOString()
+  };
+  doc.secondaryCategories = secondaryCategories;
+  doc.needsHumanReview = isAuto && result.isAmbiguous;
+  dbRepository.documents.upsert(doc);
+
+  if (targetCategory !== doc.category) {
+    // Existing category-change path: writes the CATEGORY_RECLASSIFIED audit event and never enqueues a job
+    await defaultWorkflowEngine.updateDocumentCategory(documentId, targetCategory, 'System Worker', {
+      source: 'AUTO',
+      role: 'System Worker',
+      details: { score: result.primaryScore, isAmbiguous: result.isAmbiguous, secondaryCategories }
+    });
+  }
+
+  return {
+    category: targetCategory,
+    suggestedCategory: result.primaryCategory,
+    score: result.primaryScore,
+    isAmbiguous: result.isAmbiguous,
+    secondaryCategories,
+    needsHumanReview: doc.needsHumanReview
+  };
+}
 
 export interface PipelineRunJobPayload {
   documentId: string;
@@ -147,6 +222,9 @@ export function registerPipelineHandlers(): void {
 
       if (isTerminated()) return { documentId, finalState: getLatestStatus(), skipped: true };
 
+      // 4.5 Deterministic taxonomy classification; never reached for SUPERSEDED / CANCELLED versions (M0-T2)
+      const classification = await classifyDocument(documentId, versionNo, documentTitle, documentText);
+
       // 5. Transition AI_ANALYSIS -> VALIDATION
       status = getLatestStatus();
       if (status === 'AI_ANALYSIS') {
@@ -181,7 +259,8 @@ export function registerPipelineHandlers(): void {
       return {
         documentId,
         extractedUnitsCount: extractedUnits.length,
-        category: stage2Result.output.classification?.recommended_category,
+        category: classification?.category ?? stage2Result.output.classification?.recommended_category,
+        classification,
         finalState: 'REVIEW_REQUIRED'
       };
     } catch (err: any) {

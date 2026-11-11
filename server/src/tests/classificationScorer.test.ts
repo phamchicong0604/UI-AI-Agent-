@@ -249,4 +249,51 @@ describe('ClassificationScorer (Epic E7-T2)', () => {
     expect(categories).toContain('02_Business_Requirements');
     expect(categories).toContain('05_Technical_Documents');
   });
+
+  describe('matching and weighting rules (PR 4 review F-04)', () => {
+    it('matches whole terms only: "ui" is not found inside "require" or "build", "screen" not inside "screenshot"', () => {
+      const result = ClassificationScorer.score({
+        filePath: 'notes.md',
+        headings: [],
+        content: 'We require a build guide and one screenshot of the result.'
+      });
+      const ui = result.allScores['04_UI_UX'];
+      expect(ui.keywordScore).toBe(0);
+      expect(ui.matchedEvidence.topKeywords).toEqual([]);
+    });
+
+    it('matches Vietnamese terms with diacritics as whole terms and tolerates an English plural', () => {
+      const vi = ClassificationScorer.score({ filePath: 'x.md', headings: [], content: 'Hệ thống phải ghi nhận phiếu nhập kho.' });
+      expect(vi.allScores['03_System_Requirements'].matchedEvidence.topKeywords.join(' ')).toContain('hệ thống phải');
+
+      const plural = ClassificationScorer.score({ filePath: 'x.md', headings: [], content: 'All buttons and icons follow the grid.' });
+      const evidence = plural.allScores['04_UI_UX'].matchedEvidence.topKeywords.join(' ');
+      expect(evidence).toContain('button');
+      expect(evidence).toContain('icon');
+    });
+
+    it('moves the path weight to headings and keywords when the file name says nothing about any folder', () => {
+      const generic = ClassificationScorer.score({ filePath: 'final_v3.md', headings: ['Yêu cầu chức năng'], content: '' });
+      expect(generic.effectiveWeights.pathWeight).toBe(0);
+      expect(generic.effectiveWeights.headingWeight + generic.effectiveWeights.keywordWeight).toBeCloseTo(1, 6);
+      expect(generic.usedWeights).toEqual(DEFAULT_CLASSIFICATION_WEIGHTS);
+
+      const named = ClassificationScorer.score({ filePath: 'srs_module.md', headings: ['Yêu cầu chức năng'], content: '' });
+      expect(named.effectiveWeights).toEqual(DEFAULT_CLASSIFICATION_WEIGHTS);
+      // The same heading counts for more when it is the only kind of signal available
+      expect(generic.allScores['03_System_Requirements'].headingScore).toBe(named.allScores['03_System_Requirements'].headingScore);
+      expect(generic.primaryCategory).toBe('03_System_Requirements');
+    });
+
+    it('is ambiguous when the runner-up folder is within 0.10 of the best one, even above 0.40', () => {
+      const weights = { pathWeight: 0, headingWeight: 1, keywordWeight: 0 };
+      const tie = ClassificationScorer.score({ filePath: '', headings: ['Test Plan', 'Business Rule'], content: '', weights });
+      expect(tie.primaryScore).toBeGreaterThanOrEqual(0.4);
+      expect(tie.isAmbiguous).toBe(true);
+
+      const clear = ClassificationScorer.score({ filePath: '', headings: ['Test Plan'], content: '', weights });
+      expect(clear.primaryCategory).toBe('06_QA');
+      expect(clear.isAmbiguous).toBe(false);
+    });
+  });
 });

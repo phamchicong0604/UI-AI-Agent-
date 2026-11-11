@@ -4,6 +4,7 @@ import { dbRepository } from '../../database/db.js';
 import { defaultWorkflowEngine } from './workflowEngine.js';
 import { defaultJobQueue } from './jobQueue.js';
 import { authenticateUser, requireAuth, checkProjectAccess, getUserRoleInProject } from '../../common/auth.js';
+import { ALL_TAXONOMY_CATEGORIES } from '../documents/classificationScorer.js';
 
 export const workflowRouter = Router();
 
@@ -214,6 +215,9 @@ workflowRouter.patch(
   async (req: Request, res: Response) => {
     const { category, actor } = req.body;
     if (!category) return sendError(res, 'category là bắt buộc', 400);
+    if (typeof category !== 'string' || !(ALL_TAXONOMY_CATEGORIES as string[]).includes(category)) {
+      return sendError(res, 'category phải là một trong 8 thư mục chuẩn', 400);
+    }
 
     const doc = dbRepository.documents.getById(req.params.id);
     if (!doc) return sendError(res, 'Document not found', 404);

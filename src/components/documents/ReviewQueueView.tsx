@@ -20,6 +20,7 @@ import { KnowledgeReviewModal, KnowledgeUnitItem } from './KnowledgeReviewModal'
 import { ConflictResolutionModal, ConflictData } from './ConflictResolutionModal';
 import { getAuthToken } from '../../common/services/api';
 import { useI18n } from '../../common/i18n/I18nContext';
+import { ClassificationBadges, CATEGORY_SHORT_LABEL_KEYS } from './ClassificationBadges';
 
 export interface ReviewQueueItem {
   document: DocumentItem;
@@ -66,6 +67,8 @@ export const ReviewQueueView: React.FC<ReviewQueueViewProps> = ({
   const [reviewingItem, setReviewingItem] = useState<ReviewQueueItem | null>(null);
   const [activeConflict, setActiveConflict] = useState<ConflictData | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  // Category picked per document before the reviewer confirms it (M0-T3)
+  const [categoryDrafts, setCategoryDrafts] = useState<Record<string, DocumentCategory>>({});
 
   const fetchQueue = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
@@ -148,6 +151,33 @@ export const ReviewQueueView: React.FC<ReviewQueueViewProps> = ({
       console.error('Error recording unit decision:', err);
       setActionError(err.message || t('reviewQueueErrorDecision'));
       throw err;
+    }
+  };
+
+  // Reviewer confirms or changes the category through the existing category-change API (M0-T3)
+  const handleConfirmCategory = async (docId: string, category: DocumentCategory) => {
+    setActionError(null);
+    try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      const token = getAuthToken();
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const res = await fetch(`/api/v1/documents/${docId}/category`, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({ category })
+      });
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || errorData.message || `${t('classificationConfirmError')} (HTTP ${res.status})`);
+      }
+      setCategoryDrafts(prev => {
+        const { [docId]: _confirmed, ...rest } = prev;
+        return rest;
+      });
+      await fetchQueue();
+    } catch (err: any) {
+      setActionError(err.message || t('classificationConfirmError'));
     }
   };
 
@@ -309,6 +339,11 @@ export const ReviewQueueView: React.FC<ReviewQueueViewProps> = ({
           filteredItems.map(item => {
             const rScore = item.riskResult.riskScore;
             const rLevel = item.riskResult.riskLevel;
+            const scorerCategory = item.document.classification?.suggestedCategory;
+            const suggestedCategory =
+              scorerCategory && scorerCategory !== item.document.category ? scorerCategory : undefined;
+            const selectedCategory =
+              categoryDrafts[item.document.id] || suggestedCategory || item.document.category;
 
             return (
               <div
@@ -334,6 +369,7 @@ export const ReviewQueueView: React.FC<ReviewQueueViewProps> = ({
                       <Badge variant="neutral" size="sm">
                         v{item.document.currentVersion}
                       </Badge>
+                      <ClassificationBadges doc={item.document} showSuggestion />
 
                       {/* Risk Score Pill */}
                       <span
@@ -378,6 +414,32 @@ export const ReviewQueueView: React.FC<ReviewQueueViewProps> = ({
                         {t('reviewQueueUpdated')}: <span className="text-slate-400">{item.document.updatedAt}</span>
                       </span>
                     </div>
+
+                    {/* Category confirmation for Ambiguous documents or when the scorer suggests another folder */}
+                    {(item.document.needsHumanReview || !!suggestedCategory) && (
+                      <div className="flex flex-wrap items-center gap-2 pt-1">
+                        <select
+                          aria-label={t('classificationCategorySelectLabel')}
+                          value={selectedCategory}
+                          onChange={(e) =>
+                            setCategoryDrafts(prev => ({ ...prev, [item.document.id]: e.target.value as DocumentCategory }))
+                          }
+                          className="bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+                        >
+                          {(Object.keys(CATEGORY_SHORT_LABEL_KEYS) as DocumentCategory[]).map(cat => (
+                            <option key={cat} value={cat}>{t(CATEGORY_SHORT_LABEL_KEYS[cat])}</option>
+                          ))}
+                        </select>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => handleConfirmCategory(item.document.id, selectedCategory)}
+                          icon={<CheckCircle2 className="w-3.5 h-3.5" />}
+                        >
+                          {t('classificationConfirmBtn')}
+                        </Button>
+                      </div>
+                    )}
                   </div>
 
                   {/* Actions */}

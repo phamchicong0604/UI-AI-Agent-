@@ -800,4 +800,10 @@ export const en = {
   settingsDbPathLabel: "Path: server/data/docqa.sqlite",
   quickModelActivated: "Activated model \"{name}\" (Effort: {effort}) via /model",
   allDocuments: 'All Documents',
+  classificationNeedsConfirmation: 'Needs confirmation',
+  classificationSecondaryTag: 'Also: {category}',
+  classificationSuggested: 'Suggested: {category}',
+  classificationCategorySelectLabel: 'Category',
+  classificationConfirmBtn: 'Confirm category',
+  classificationConfirmError: 'Could not update the document category',
 };
