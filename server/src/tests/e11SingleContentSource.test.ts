@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import http from 'http';
 import net from 'net';
 import Database from 'better-sqlite3';
@@ -13,6 +13,7 @@ describe('E11-T1: one source of document content', () => {
   describe('Migration 015 moves legacy content into document_versions', () => {
     let memDb: Database.Database;
     let applied: string[];
+    let migrationLog: string[];
     const untouchedData = JSON.stringify({ id: 'DOC-L-PLAIN', title: 'No legacy copy', currentVersion: 'v1.0' });
 
     const dataOf = (id: string) => JSON.parse((memDb.prepare('SELECT data FROM documents WHERE id = ?').get(id) as { data: string }).data);
@@ -66,7 +67,20 @@ describe('E11-T1: one source of document content', () => {
       // 8. Payload that is not valid JSON
       insertDoc.run('DOC-L-BROKEN', '{not json');
 
+      // 9. Legacy key present but null
+      legacyDoc('DOC-L-NULL', { contentMarkdown: null });
+      insertVersion.run('DOC-L-NULL-v1.0', 'DOC-L-NULL', 'v1.0', '# Version text of the null case');
+      // 10. Legacy value that is not text
+      legacyDoc('DOC-L-OBJECT', { contentMarkdown: { blocks: ['not', 'text'] } });
+      // 11. Legacy text equals an older version while the current version holds no text
+      legacyDoc('DOC-L-CURRENT-EMPTY', { currentVersion: 'v1.1', contentMarkdown: '# Text of v1.0 only' });
+      insertVersion.run('DOC-L-CURRENT-EMPTY-v1.0', 'DOC-L-CURRENT-EMPTY', 'v1.0', '# Text of v1.0 only');
+      insertVersion.run('DOC-L-CURRENT-EMPTY-v1.1', 'DOC-L-CURRENT-EMPTY', 'v1.1', '');
+
+      const logSpy = vi.spyOn(console, 'log');
       applied = new DatabaseMigrator(memDb, allMigrations).runPendingMigrations().appliedVersions;
+      migrationLog = logSpy.mock.calls.map(args => args.join(' ')).filter(line => line.includes('[Migration 015]'));
+      logSpy.mockRestore();
     });
 
     afterAll(() => {
@@ -123,9 +137,28 @@ describe('E11-T1: one source of document content', () => {
       });
     });
 
-    it('leaves no document with a contentMarkdown key and no foreign key violation', () => {
-      const left = memDb.prepare(`SELECT count(*) AS n FROM documents WHERE json_valid(data) AND json_type(data, '$.contentMarkdown') IS NOT NULL`).get() as { n: number };
-      expect(left.n).toBe(0);
+    it('removes a null legacy key and leaves the version alone', () => {
+      expect(dataOf('DOC-L-NULL')).not.toHaveProperty('contentMarkdown');
+      expect(dataOf('DOC-L-NULL')).not.toHaveProperty('legacyContentMarkdown');
+      expect(versionsOf('DOC-L-NULL').map(v => v.extracted_content)).toEqual(['# Version text of the null case']);
+    });
+
+    it('leaves a legacy value that is not text exactly as it is', () => {
+      expect(dataOf('DOC-L-OBJECT').contentMarkdown).toEqual({ blocks: ['not', 'text'] });
+      expect(versionsOf('DOC-L-OBJECT')).toEqual([]);
+    });
+
+    it('does not copy an older version into an empty current version, and reports it', () => {
+      // Filling v1.1 with the v1.0 text would attribute it to the wrong version
+      expect(versionsOf('DOC-L-CURRENT-EMPTY').map(v => v.extracted_content)).toEqual(['# Text of v1.0 only', '']);
+      expect(dataOf('DOC-L-CURRENT-EMPTY')).not.toHaveProperty('contentMarkdown');
+      expect(migrationLog).toHaveLength(1);
+      expect(migrationLog[0]).toContain('Of the moved, 1 have a current version without text');
+    });
+
+    it('leaves a contentMarkdown key only where the value was not text, and no foreign key violation', () => {
+      const left = memDb.prepare(`SELECT id FROM documents WHERE json_valid(data) AND json_type(data, '$.contentMarkdown') IS NOT NULL`).all() as Array<{ id: string }>;
+      expect(left.map(r => r.id)).toEqual(['DOC-L-OBJECT']);
       expect(memDb.pragma('foreign_key_check')).toEqual([]);
     });
 
@@ -251,6 +284,24 @@ describe('E11-T1: one source of document content', () => {
 
       const older = (await (await get(`/${legacyDocId}/content?version=v1.0`, tokenA)).json() as any).data;
       expect(older.content).toBe('# Version 1.0 text');
+    });
+
+    it('GET /documents/:id/content answers 404 for a version that does not exist', async () => {
+      const res = await fetch(`${baseUrl}/api/v1/documents`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenA}` },
+        body: JSON.stringify({ title: `E11 single version ${Date.now()}`, category: '01_Project_Overview', projectId: projA, contentMarkdown: '# Only version' })
+      });
+      expect(res.status).toBe(201);
+      const created = (await res.json() as any).data;
+
+      const missing = await get(`/${created.id}/content?version=v9.9`, tokenA);
+      expect(missing.status).toBe(404);
+      expect(await missing.text()).not.toContain('# Only version');
+
+      const existing = await get(`/${created.id}/content?version=${created.currentVersion}`, tokenA);
+      expect(existing.status).toBe(200);
+      expect((await existing.json() as any).data.content).toBe('# Only version');
     });
 
     it('GET /documents/:id/content keeps project access fail-closed', async () => {

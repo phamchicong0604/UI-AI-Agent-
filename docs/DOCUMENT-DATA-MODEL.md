@@ -241,6 +241,13 @@ erDiagram
   | `created_by` | `TEXT` | `NOT NULL` | Tác giả tải lên / chỉnh sửa |
   | `created_at` | `TEXT` | `NOT NULL` | Thời điểm tạo |
 
+**Nguồn nội dung duy nhất (E11-T1).** Văn bản của tài liệu chỉ nằm ở `document_versions.extracted_content`. Bản ghi `documents.data` không còn giữ bản sao `contentMarkdown`, và phản hồi của `GET /documents`, `GET /documents/:id`, `POST /documents`, `POST /documents/upload` không còn trường này.
+
+- **Đọc nội dung:** `GET /api/v1/documents/:id/content[?version=<versionNo>]` trả `{ documentId, versionId, versionNo, content }`. Không truyền `version` thì trả phiên bản hiện hành (`currentVersion`). Truyền `version` không tồn tại thì trả 404. Route yêu cầu đăng nhập và quyền truy cập project của tài liệu.
+- **Ghi nội dung:** `POST /documents` và `POST /documents/:id/versions` vẫn nhận `contentMarkdown` làm tên trường trong request để tương thích; giá trị chỉ được lưu vào phiên bản và file.
+- **Dữ liệu cũ:** migration `015_move_legacy_content_to_versions` chuyển bản sao cũ sang phiên bản và chỉ gỡ bản sao khi có phiên bản giữ đúng chuỗi đó. Nội dung cũ không khớp phiên bản nào được giữ trong `documents.data` dưới khóa `legacyContentMarkdown` để người xem lại; không code nào đọc khóa này. Giá trị `contentMarkdown` không phải chuỗi được giữ nguyên.
+- **Quay lui:** migration 015 không có bước `down`. Quay lui code về trước E11-T1 đòi hỏi khôi phục bản sao lưu cơ sở dữ liệu chụp trước khi deploy; dữ liệu ghi sau thời điểm đó sẽ mất. Vì vậy phải sao lưu trước khi deploy.
+
 #### 3. Bảng `document_relationships`
 - **Mục đích**: Lưu quan hệ liên tài liệu được phát hiện bởi hệ thống hoặc chỉ định thủ công.
 - **Cấu trúc trường**:

@@ -41,8 +41,16 @@ export const migration015MoveLegacyContentToVersions: Migration = {
       UPDATE documents SET data = json_set(json_remove(data, '$.contentMarkdown'), '$.legacyContentMarkdown', ?) WHERE id = ?
     `);
 
+    // The version the reader shows: the current one, else the highest version number
+    const shownVersion = <T extends { version_no: string }>(versions: T[], currentVersion: unknown): T =>
+      versions.find(v => v.version_no === currentVersion)
+      || [...versions].sort((a, b) => compareVersionNo(a.version_no, b.version_no))[versions.length - 1];
+
     let moved = 0;
     let kept = 0;
+    // Moved documents whose shown version still has no text: the text exists, but only in another version,
+    // so the reader shows nothing for them. Counted so that a person can look at them.
+    let shownWithoutText = 0;
     for (const row of rows) {
       const doc = JSON.parse(row.data);
       const legacy: unknown = doc.contentMarkdown;
@@ -71,9 +79,7 @@ export const migration015MoveLegacyContentToVersions: Migration = {
           doc.updatedAt || new Date().toISOString()
         );
       } else if (!versions.some(v => v.extracted_content === legacy)) {
-        // The version the reader shows: the current one, else the highest version number
-        const target = versions.find(v => v.version_no === doc.currentVersion)
-          || [...versions].sort((a, b) => compareVersionNo(a.version_no, b.version_no))[versions.length - 1];
+        const target = shownVersion(versions, doc.currentVersion);
         if (!target.extracted_content) {
           fillVersion.run(legacy, target.id);
         }
@@ -82,6 +88,10 @@ export const migration015MoveLegacyContentToVersions: Migration = {
       if (versionHoldsText.get(row.id, legacy)) {
         removeLegacy.run(row.id);
         moved++;
+        const after = selectVersions.all(row.id) as Array<{ id: string; version_no: string; extracted_content: string | null }>;
+        if (legacy !== '' && !shownVersion(after, doc.currentVersion).extracted_content) {
+          shownWithoutText++;
+        }
       } else if (doc.legacyContentMarkdown === undefined) {
         keepLegacy.run(legacy, row.id);
         kept++;
@@ -91,7 +101,10 @@ export const migration015MoveLegacyContentToVersions: Migration = {
     }
 
     if (rows.length > 0) {
-      console.log(`[Migration 015] Legacy document content: ${moved} moved to versions, ${kept} kept for manual review.`);
+      console.log(
+        `[Migration 015] Legacy document content: ${moved} moved to versions, ${kept} kept for manual review. ` +
+        `Of the moved, ${shownWithoutText} have a current version without text (their text is in another version).`
+      );
     }
   },
   down: (_db: Database.Database) => {

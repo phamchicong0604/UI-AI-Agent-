@@ -329,6 +329,11 @@ documentsRouter.get('/:id/content', authenticateUser, (req: Request, res: Respon
   }
 
   const targetVersion = resolveTargetVersion(doc, req);
+  // An explicitly requested version that does not exist is not answered with another version's text
+  const requestedVersionNo = (req.query.version as string) || (req.query.versionNo as string);
+  if (requestedVersionNo && targetVersion?.versionNo !== requestedVersionNo) {
+    return sendError(res, `Document version "${requestedVersionNo}" not found`, 404);
+  }
   sendSuccess(res, {
     documentId: doc.id,
     versionId: targetVersion?.id ?? null,
