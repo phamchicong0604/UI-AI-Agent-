@@ -20,8 +20,18 @@ import { computeSha256 } from '../../common/crypto.js';
  * - Empty text gives no section.
  *
  * Not recognised as headings: Setext headings (a line underlined with === or ---), HTML headings, and bold
- * lines used as titles. Only "\n" and "\r\n" end a line.
+ * lines used as titles. A line ends at "\n", "\r\n" or a lone "\r".
+ *
+ * Cost is bounded: the work and the stored size grow with the length of the text, never with the product
+ * of two things an uploader controls. That is why a heading title is hashed once, why only the first
+ * MAX_TITLE_CHARS characters of a title are kept in a heading path, and why a version has at most
+ * MAX_SECTIONS_PER_VERSION sections (the last one takes the rest of the text).
  */
+
+/** Characters of a heading title kept in heading_path. The stable key still depends on the whole title. */
+export const MAX_TITLE_CHARS = 200;
+/** Sections of one version. Text after the last section's start belongs to that section. */
+export const MAX_SECTIONS_PER_VERSION = 10_000;
 
 export interface SectionDraft {
   /** Titles of the ancestor headings down to the section's own heading; empty for level 0 */
@@ -45,9 +55,28 @@ export function normaliseForKey(value: string): string {
   return value.normalize('NFC').replace(/\s+/g, ' ').trim().toLowerCase();
 }
 
+/** Hash of one normalised heading title. Computed once per heading, however many sections sit below it. */
+function titleKey(title: string): string {
+  return computeSha256(normaliseForKey(title));
+}
+
+/** Key of a heading section from the title hashes of its ancestors and itself (at most 6 of them) */
+function stableKeyForTitleKeys(titleKeys: string[]): string {
+  return `h-${computeSha256(titleKeys.join('/')).slice(0, KEY_HEX_LENGTH)}`;
+}
+
 /** Key of a heading section: depends only on the normalised heading path, never on position or content. */
 export function stableKeyForHeadingPath(headingPath: string[]): string {
-  return `h-${computeSha256(JSON.stringify(headingPath.map(normaliseForKey))).slice(0, KEY_HEX_LENGTH)}`;
+  return stableKeyForTitleKeys(headingPath.map(titleKey));
+}
+
+/** A title as it is kept in heading_path: at most MAX_TITLE_CHARS characters, never half a surrogate pair */
+function displayTitle(title: string): string {
+  if (title.length <= MAX_TITLE_CHARS) return title;
+  let end = MAX_TITLE_CHARS;
+  const last = title.charCodeAt(end - 1);
+  if (last >= 0xd800 && last <= 0xdbff) end--;
+  return `${title.slice(0, end)}…`;
 }
 
 /** Key of a paragraph section in a text without headings: depends only on the normalised paragraph text. */
@@ -74,7 +103,11 @@ const BYTE_ORDER_MARK = 0xfeff;
 interface HeadingLine {
   offset: number;
   level: number;
+  /** Whole title; only used to compute the key once */
   title: string;
+  /** Filled when the heading becomes a section */
+  key?: string;
+  shown?: string;
 }
 
 // Lines are parsed by hand, character by character. Regular expressions with two adjacent quantifiers
@@ -113,17 +146,26 @@ function parseHeading(line: string): { level: number; rawTitle: string } | null 
 }
 
 /**
- * A line that opens an HTML comment or a <pre> block without closing it: returns the text that closes it.
+ * A line that starts an HTML comment or a <pre> block and does not end it: returns the text that ends it.
  * Lines inside such a block are not headings ("# TODO" in a comment, "# apt-get install" in <pre>).
+ *
+ * Same start condition as an HTML block in CommonMark: the marker must be the first thing on the line
+ * (after at most 3 spaces), and "<pre" must be followed by a space, a tab, ">" or the end of the line.
+ * A marker anywhere else is ordinary text: `<pre>` in a sentence or in inline code, <prefix>,
+ * <previous-version>, a heading that mentions <pre>. Treating those as the start of a block made every
+ * later heading of the document disappear.
  */
 function opensHtmlBlock(line: string): '-->' | '</pre>' | null {
-  if (!line.includes('<')) return null;
-  const comment = line.lastIndexOf('<!--');
-  if (comment >= 0 && line.indexOf('-->', comment + 4) === -1) return '-->';
-  const lower = line.toLowerCase();
-  const pre = lower.lastIndexOf('<pre');
-  if (pre >= 0 && lower.indexOf('</pre>', pre) === -1) return '</pre>';
-  return null;
+  const start = leadingSpaces(line);
+  if (start < 0 || line[start] !== '<') return null;
+  if (line.startsWith('<!--', start)) {
+    // "<!-->" is a complete comment, so the end may overlap the start marker
+    return line.indexOf('-->', start + 2) === -1 ? '-->' : null;
+  }
+  if (line.slice(start, start + 4).toLowerCase() !== '<pre') return null;
+  const next = line[start + 4];
+  if (next !== undefined && next !== ' ' && next !== '\t' && next !== '>') return null;
+  return line.toLowerCase().includes('</pre>') ? null : '</pre>';
 }
 
 // A line ends at "\n", "\r\n" or a lone "\r": the same rule sectionContentHash uses
@@ -169,7 +211,7 @@ function scanLines(text: string): { headings: HeadingLine[]; paragraphStarts: nu
       }
       previousBlank = false;
     } else {
-      if (!blank && previousBlank && seenContent) paragraphStarts.push(pos);
+      if (!blank && previousBlank && seenContent && paragraphStarts.length < MAX_SECTIONS_PER_VERSION) paragraphStarts.push(pos);
       // A byte order mark at the start of the text is not part of the first line's content. It stays in
       // the text (offsets are unchanged) but must not hide a heading on the first line.
       const content = pos === 0 && line.charCodeAt(0) === BYTE_ORDER_MARK ? line.slice(1) : line;
@@ -181,7 +223,9 @@ function scanLines(text: string): { headings: HeadingLine[]; paragraphStarts: nu
           fence = { char: open.char, length: open.length };
         } else {
           const heading = parseHeading(content);
-          if (heading) headings.push({ offset: pos, level: heading.level, title: headingTitle(heading.rawTitle) });
+          if (heading && headings.length < MAX_SECTIONS_PER_VERSION) {
+            headings.push({ offset: pos, level: heading.level, title: headingTitle(heading.rawTitle) });
+          }
           htmlBlock = opensHtmlBlock(content);
         }
       }
@@ -206,7 +250,7 @@ export function splitIntoSections(text: string | null | undefined, options: Sect
   if (!text) return [];
 
   const scanned = scanLines(text);
-  const headings = options.headings === false ? [] : scanned.headings;
+  let headings = options.headings === false ? [] : scanned.headings;
   const paragraphStarts = scanned.paragraphStarts;
   const sections: SectionDraft[] = [];
   const seenKeys = new Map<string, number>();
@@ -229,7 +273,7 @@ export function splitIntoSections(text: string | null | undefined, options: Sect
   };
 
   if (headings.length === 0) {
-    const starts = [0, ...paragraphStarts];
+    const starts = [0, ...paragraphStarts].slice(0, MAX_SECTIONS_PER_VERSION);
     for (let i = 0; i < starts.length; i++) {
       push(starts[i], i + 1 < starts.length ? starts[i + 1] : text.length, 0, [], null);
     }
@@ -241,16 +285,20 @@ export function splitIntoSections(text: string | null | undefined, options: Sect
   if (hasPreamble) {
     push(0, firstHeadingOffset, 0, [], PREAMBLE_STABLE_KEY);
   }
+  // Headings beyond the limit do not start a section; their text stays in the last section
+  headings = headings.slice(0, MAX_SECTIONS_PER_VERSION - sections.length);
 
   const ancestors: HeadingLine[] = [];
   for (let i = 0; i < headings.length; i++) {
     const heading = headings[i];
     while (ancestors.length > 0 && ancestors[ancestors.length - 1].level >= heading.level) ancestors.pop();
+    heading.key = titleKey(heading.title);
+    heading.shown = displayTitle(heading.title);
     ancestors.push(heading);
-    const headingPath = ancestors.map(a => a.title);
+    const headingPath = ancestors.map(a => a.shown as string);
     const charStart = i === 0 && !hasPreamble ? 0 : heading.offset;
     const charEnd = i + 1 < headings.length ? headings[i + 1].offset : text.length;
-    push(charStart, charEnd, heading.level, headingPath, stableKeyForHeadingPath(headingPath));
+    push(charStart, charEnd, heading.level, headingPath, stableKeyForTitleKeys(ancestors.map(a => a.key as string)));
   }
   return sections;
 }
@@ -342,11 +390,15 @@ export function findSectionForAnchor<T extends { charStart: number; charEnd: num
   }
 
   let found: T | null = null;
-  for (let at = text.indexOf(quote); at !== -1; at = text.indexOf(quote, at + 1)) {
+  // After an occurrence, continue from the end of its section: further occurrences inside the same section
+  // change nothing, and stepping one character at a time is quadratic for a long, repetitive quote.
+  for (let at = text.indexOf(quote); at !== -1; at = text.indexOf(quote, at)) {
     const section = sectionAt(sections, at);
     if (!section) return null;
     if (found && found !== section) return null;
     found = section;
+    at = section.charEnd;
+    if (at >= text.length) break;
   }
   return found;
 }

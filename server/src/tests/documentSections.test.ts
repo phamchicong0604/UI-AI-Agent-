@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
+  MAX_SECTIONS_PER_VERSION,
+  MAX_TITLE_CHARS,
   SectionDraft,
   findSectionForAnchor,
   mapSections,
@@ -252,6 +254,94 @@ describe('E11-T3: splitIntoSections', () => {
     expect(sectionContentHash(body.replace('có dấu', 'không dấu'))).not.toBe(sectionContentHash(body));
   });
 
+  // The cost must follow the length of the text, not the product of two things an uploader controls.
+  // Before the limits below, a 240 KB document of this shape wrote 2.9 GB of heading paths and made every
+  // later start of the server run out of memory.
+  it('keeps heading paths small when a very long title has many children', () => {
+    const text = `# ${'x'.repeat(100_000)}\n${'## a\n'.repeat(5_000)}`;
+    const sections = splitIntoSections(text);
+    expectCoverage(text, sections);
+    expect(sections).toHaveLength(5_001);
+    const pathBytes = sections.reduce((n, s) => n + JSON.stringify(s.headingPath).length, 0);
+    // 5,001 paths of at most two titles of at most MAX_TITLE_CHARS + 1 characters (it was 500 MB)
+    expect(pathBytes).toBeLessThan(5_001 * (MAX_TITLE_CHARS + 20));
+    expect(sections.every(s => s.headingPath.every(t => t.length <= MAX_TITLE_CHARS + 1))).toBe(true);
+  });
+
+  it('keeps the whole title in the key although the path shows only its beginning', () => {
+    const long = 'Tiêu đề rất dài '.repeat(40);
+    const a = splitIntoSections(`# ${long}A\nx\n`)[0];
+    const b = splitIntoSections(`# ${long}B\nx\n`)[0];
+    expect(a.headingPath[0]).toBe(b.headingPath[0]);
+    expect(a.headingPath[0].length).toBe(MAX_TITLE_CHARS + 1);
+    expect(a.stableKey).not.toBe(b.stableKey);
+    expect(a.stableKey).toBe(stableKeyForHeadingPath([`${long}A`]));
+  });
+
+  it('never cuts a title in the middle of a surrogate pair', () => {
+    const title = `${'a'.repeat(MAX_TITLE_CHARS - 1)}😀 tail`;
+    const shown = splitIntoSections(`# ${title}\n`)[0].headingPath[0];
+    expect(shown).toBe(`${'a'.repeat(MAX_TITLE_CHARS - 1)}…`);
+  });
+
+  it('stops starting sections at the limit and leaves the rest of the text in the last one', () => {
+    const headingText = `${'# a\nb\n'.repeat(MAX_SECTIONS_PER_VERSION + 5_000)}`;
+    const byHeading = splitIntoSections(headingText);
+    expectCoverage(headingText, byHeading);
+    expect(byHeading).toHaveLength(MAX_SECTIONS_PER_VERSION);
+    expect(byHeading[byHeading.length - 1].charEnd).toBe(headingText.length);
+
+    const paragraphText = 'word\n\n'.repeat(MAX_SECTIONS_PER_VERSION + 5_000);
+    const byParagraph = splitIntoSections(paragraphText);
+    expectCoverage(paragraphText, byParagraph);
+    expect(byParagraph).toHaveLength(MAX_SECTIONS_PER_VERSION);
+
+    const withPreamble = `intro\n${headingText}`;
+    expect(splitIntoSections(withPreamble)).toHaveLength(MAX_SECTIONS_PER_VERSION);
+  });
+
+  // "<pre" or "<!--" that is not the start of an HTML block is ordinary text. An earlier version of the
+  // rule opened a block on any of these lines and dropped every heading after it.
+  it.each([
+    ['inline code mentioning <pre>', 'Wrap output in `<pre>` tags.'],
+    ['prose mentioning the element', 'To show code use the <pre element.'],
+    ['a placeholder that starts with pre', 'Name it <prefix>-<name>.'],
+    ['two placeholders', 'Run: git diff <previous-version> <new-version>'],
+    ['inline code mentioning a comment', 'Comments start with `<!--` in HTML.'],
+    ['a comment marker in the middle of a line', 'Text before <!-- an unclosed note'],
+    ['<pre> indented as code', '    <pre>'],
+    ['a complete empty comment', '<!-->'],
+    ['a closed comment that mentions <pre>', '<!-- see <pre> below -->'],
+    ['a <pre> block closed on its own line', '<pre># not a heading</pre>']
+  ])('keeps every later heading after %s', (_label, line) => {
+    const text = `# G\n${line}\n## Usage\ntext\n# Config\nmore\n`;
+    const sections = splitIntoSections(text);
+    expectCoverage(text, sections);
+    expect(sections.map(s => s.headingPath)).toEqual([['G'], ['G', 'Usage'], ['Config']]);
+  });
+
+  it('keeps a heading that mentions <pre> and the headings after it', () => {
+    const sections = splitIntoSections('# A\n## Using <pre> blocks\ntext\n## B\ntext\n# C\n');
+    expect(sections.map(s => s.headingPath)).toEqual([['A'], ['A', 'Using <pre> blocks'], ['A', 'B'], ['C']]);
+  });
+
+  it.each([
+    ['a multi-line comment', '<!--\n# hidden\n-->'],
+    ['a comment with text on its first line', '<!-- note\n# hidden\nend -->'],
+    ['<pre>', '<pre>\n# hidden\n</pre>'],
+    ['<PRE> in upper case', '<PRE>\n# hidden\n</PRE>'],
+    ['<pre> with an attribute', '<pre class="x">\n# hidden\n</pre>'],
+    ['a block indented by three spaces', '   <!--\n# hidden\n   -->']
+  ])('does not take a "# " line inside %s as a heading', (_label, block) => {
+    const sections = splitIntoSections(`# G\n${block}\n## Usage\ntext\n`);
+    expect(sections.map(s => s.headingPath)).toEqual([['G'], ['G', 'Usage']]);
+  });
+
+  it('lets a comment that starts a line and is never closed run to the end, as CommonMark does', () => {
+    const sections = splitIntoSections('# G\n<!-- never closed\n## Usage\ntext\n');
+    expect(sections.map(s => s.headingPath)).toEqual([['G']]);
+  });
+
   it('survives one very long line without headings', () => {
     const text = `${' '.repeat(200_000)}x${'#'.repeat(200_000)}`;
     const sections = splitIntoSections(text);
@@ -482,6 +572,17 @@ describe('E11-T3: findSectionForAnchor', () => {
     const repeated = '# A\nsame. same. same.\n# B\nother';
     const found = findSectionForAnchor(repeated, splitIntoSections(repeated), { exactQuote: 'same.' });
     expect(found?.headingPath).toEqual(['A']);
+  });
+
+  it('searches a long repetitive quote in linear time', () => {
+    // 200k characters used to take about 4 s here, and again on every start because the result is null
+    const n = 400_000;
+    const big = `${'a'.repeat(n)}\n\n# H\n${'a'.repeat(n / 2)}`;
+    const bigSections = splitIntoSections(big);
+    const started = performance.now();
+    const found = findSectionForAnchor(big, bigSections, { charStart: 0, charEnd: 0, exactQuote: 'a'.repeat(n / 2) });
+    expect(performance.now() - started).toBeLessThan(1_000);
+    expect(found).toBeNull(); // the quote occurs in two sections
   });
 
   it('resolves nothing when no quote is given, because offsets alone cannot be checked', () => {
