@@ -183,6 +183,11 @@ export function registerPipelineHandlers(): void {
       // 4. Save extracted knowledge units and anchor sources with deterministic quote-anchored idempotency keys (NEW-04)
       const extractedUnits = stage2Result.output.extraction?.extracted_units || [];
       db.transaction(() => {
+        // E11-T3: each source is linked to the section of this version that holds its anchor. The sections
+        // are checked against the stored text first, so a version written outside the repository is covered.
+        dbRepository.documentSections.syncVersion(documentVersionId);
+        const sectionIdFor = dbRepository.documentSections.resolverForVersion(documentVersionId);
+
         for (const unit of extractedUnits) {
           const quote = (unit.source_anchor?.exact_quote || '').trim();
           const startOffset = unit.source_anchor?.char_offset_start ?? '';
@@ -218,7 +223,13 @@ export function registerPipelineHandlers(): void {
               charOffsetEnd: unit.source_anchor.char_offset_end || 0,
               pageNumber: 1,
               exactQuote: unit.source_anchor.exact_quote || '',
-              createdAt: now
+              createdAt: now,
+              // null when neither the offsets nor the quote identify one section; never guessed
+              sectionId: sectionIdFor({
+                charStart: unit.source_anchor.char_offset_start,
+                charEnd: unit.source_anchor.char_offset_end,
+                exactQuote: unit.source_anchor.exact_quote
+              })
             });
           }
         }

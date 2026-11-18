@@ -410,9 +410,22 @@ documentsRouter.get('/:id/file', authenticateUser, async (req: Request, res: Res
  * POST /api/v1/documents
  * Manual creation of a single document (BUG-030: Byte-for-byte SHA-256 and stored file integration)
  */
+/**
+ * A version label becomes part of the version id, which is repeated in every row and index that belongs to
+ * the version (sections among them). It is therefore short and made of plain characters only.
+ */
+const VERSION_LABEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$/;
+function invalidVersionLabel(value: unknown): boolean {
+  return value !== undefined && value !== null && value !== '' && (typeof value !== 'string' || !VERSION_LABEL_PATTERN.test(value));
+}
+const INVALID_VERSION_LABEL_MESSAGE = 'Số hiệu phiên bản không hợp lệ: tối đa 32 ký tự, chỉ gồm chữ cái không dấu, chữ số, dấu chấm, gạch dưới và gạch ngang, bắt đầu bằng chữ hoặc số (ví dụ "v1.2").';
+
 documentsRouter.post('/', authenticateUser, requireAuth, async (req: Request, res: Response) => {
   // contentMarkdown is still accepted as a request field name; the text is stored in the version only (E11-T1)
   const { title, category, currentVersion, description, tags, author, content, contentMarkdown, projectId } = req.body;
+  if (invalidVersionLabel(currentVersion)) {
+    return sendError(res, INVALID_VERSION_LABEL_MESSAGE, 400);
+  }
   if (!title || !category) {
     return sendError(res, 'Title and category are required', 400);
   }
@@ -1056,6 +1069,9 @@ documentsRouter.post('/:id/versions', authenticateUser, requireAuth, upload.sing
     return sendError(res, 'Either a file or contentMarkdown is required', 400);
   }
 
+  if (invalidVersionLabel(req.body.versionNo)) {
+    return sendError(res, INVALID_VERSION_LABEL_MESSAGE, 400);
+  }
   const currentVersions = dbRepository.documentVersions.getByDocumentId(doc.id);
   if (req.body.versionNo && currentVersions.some(v => v.versionNo === req.body.versionNo)) {
     return sendError(res, `Phiên bản "${req.body.versionNo}" đã tồn tại cho tài liệu này. Không được ghi đè phiên bản cũ.`, 409);

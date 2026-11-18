@@ -126,7 +126,16 @@ export class RetentionService {
            OR target_doc_id IN (SELECT id FROM documents WHERE project_id = ?)
       `).run(projectId, projectId);
 
-      // f. Delete document_versions
+      // f. Delete document_sections (E11-T3), then document_versions
+      db.prepare(`
+        DELETE FROM document_sections
+        WHERE document_version_id IN (
+          SELECT dv.id FROM document_versions dv
+          JOIN documents d ON d.id = dv.document_id
+          WHERE d.project_id = ?
+        )
+      `).run(projectId);
+
       db.prepare(`
         DELETE FROM document_versions
         WHERE document_id IN (SELECT id FROM documents WHERE project_id = ?)

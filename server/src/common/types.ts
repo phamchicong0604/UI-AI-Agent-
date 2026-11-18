@@ -126,6 +126,21 @@ export interface KnowledgeSourceRecord {
   pageNumber: number | null;
   exactQuote: string;
   createdAt: string;
+  /** document_sections.id of the section that holds the anchor; null when it could not be determined (E11-T3) */
+  sectionId?: string | null;
+}
+
+/** One section of a document version (E11-T3). Offsets are positions in the version's extracted_content. */
+export interface DocumentSectionRecord {
+  id: string;
+  documentVersionId: string;
+  headingPath: string; // JSON string array, empty for level 0
+  level: number;
+  orderNo: number;
+  charStart: number;
+  charEnd: number;
+  contentHash: string;
+  stableKey: string;
 }
 
 export type ConflictSeverity = 'Critical' | 'Major' | 'Minor';
