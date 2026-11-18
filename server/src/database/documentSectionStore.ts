@@ -6,7 +6,7 @@ import {
   SourceAnchor,
   findSectionForAnchor,
   mapSections,
-  splitIntoSections
+  splitIntoSectionsDetailed
 } from '../modules/documents/documentSections.js';
 
 /**
@@ -90,7 +90,8 @@ function rewriteVersionSections(db: Database.Database, documentVersionId: string
     const text = versionText(db, documentVersionId);
     if (text === undefined) return { rewritten: false, linkedSources: 0 };
 
-    const wanted: DocumentSectionRecord[] = splitIntoSections(text, splitOptionsForVersion(db, documentVersionId)).map(s => ({
+    const split = splitIntoSectionsDetailed(text, splitOptionsForVersion(db, documentVersionId));
+    const wanted: DocumentSectionRecord[] = split.sections.map(s => ({
       id: documentSectionId(documentVersionId, s.stableKey),
       documentVersionId,
       headingPath: JSON.stringify(s.headingPath),
@@ -110,6 +111,10 @@ function rewriteVersionSections(db: Database.Database, documentVersionId: string
     });
     if (same) return { rewritten: false, linkedSources: 0 };
 
+    if (split.truncated) {
+      // Logged when the sections are written, not on every start
+      console.warn(`[document_sections] Version ${documentVersionId}: a size limit stopped the splitting; the last of ${wanted.length} sections holds the rest of the text.`);
+    }
     // knowledge_sources.section_id of the deleted rows becomes NULL (ON DELETE SET NULL) and is set again below
     db.prepare('DELETE FROM document_sections WHERE document_version_id = ?').run(documentVersionId);
     const insert = db.prepare(`

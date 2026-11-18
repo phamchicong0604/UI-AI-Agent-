@@ -292,7 +292,12 @@ erDiagram
 - **Quy tắc bổ sung sau review độc lập PR #10** (khuyến nghị đã áp dụng, Tech Lead xác nhận trước khi gộp):
   - BOM UTF-8 ở đầu văn bản không thuộc nội dung dòng đầu: tiêu đề ở dòng đầu vẫn được nhận. Văn bản lưu không bị sửa và offset không đổi; ký tự BOM nằm trong mục đầu tiên và bị bỏ qua khi tính `content_hash`.
   - Dòng nằm trong chú thích HTML nhiều dòng (`<!--` tới `-->`) hoặc trong `<pre>` tới `</pre>` không phải tiêu đề. Khối chỉ được mở khi dấu mở đứng đầu dòng (sau tối đa 3 dấu cách), và sau `<pre` phải là dấu cách, tab, `>` hoặc hết dòng, giống điều kiện mở khối HTML của CommonMark. `<pre>` hay `<!--` nằm giữa câu, trong mã nội dòng, trong tiêu đề, hoặc chuỗi như `<prefix>` là văn bản thường. Chú thích mở ở đầu dòng mà không bao giờ đóng thì kéo tới hết tài liệu (như CommonMark).
-  - **Giới hạn chi phí.** `heading_path` chỉ giữ 200 ký tự đầu của mỗi tiêu đề (thêm `…` khi bị cắt); `stable_key` vẫn tính trên toàn bộ tiêu đề. Mỗi phiên bản có tối đa 10.000 mục; khi chạm giới hạn, phần còn lại của văn bản thuộc về mục cuối. Nhờ vậy thời gian và dung lượng tăng theo độ dài văn bản, không theo tích của độ dài tiêu đề với số mục con. Dung lượng `heading_path` của một phiên bản vì thế tối đa khoảng 13 MB (10.000 mục, sâu 6 cấp, tiêu đề đều dài hơn 200 ký tự).
+  - **Giới hạn chi phí.** Lượng lưu cho các mục của một phiên bản phải tỷ lệ với kích thước văn bản của nó, bất kể văn bản trông thế nào. Ba giới hạn:
+    - Số mục tối đa là `min(10.000, 16 + số ký tự / 24)`, vì mỗi mục tốn một dòng có kích thước cố định.
+    - Tổng `heading_path` của mọi mục, tính bằng số byte UTF-8 của JSON được lưu, tối đa là `16 KB + kích thước UTF-8 của văn bản`. Giới hạn theo số ký tự của từng tiêu đề là không đủ: đường dẫn của mỗi mục lặp lại tiêu đề các cấp cha, và JSON thoát ký tự điều khiển thành 6 byte.
+    - `heading_path` chỉ giữ 200 ký tự đầu của mỗi tiêu đề (thêm `…` khi bị cắt); `stable_key` vẫn tính trên toàn bộ tiêu đề.
+    
+    Khi chạm một giới hạn, không mục nào được mở thêm; phần còn lại của văn bản thuộc về mục cuối, và server ghi một dòng cảnh báo khi lưu các mục đó. Tài liệu thông thường không chạm giới hạn (ví dụ bảng thuật ngữ 400 mục, mỗi mục một dòng). Một phiên bản trước của mục này ghi "tối đa khoảng 13 MB mỗi phiên bản"; con số đó sai (review đo được 60 MB với một tài liệu 71 KB) và đã được thay bằng các giới hạn trên.
   - `content_hash` chuẩn hóa Unicode về NFC, giống `stable_key`.
   - Phiên bản có file gốc là PDF chỉ được chia theo đoạn, không theo dòng `#`. Lý do: bộ đọc PDF hiện tại đoán tiêu đề (dòng danh sách đánh số và dòng IN HOA thành dòng `#`). Khi bộ đọc được sửa và đo trên PDF thật, quy tắc này cần xem lại.
 - **Nhận nhầm đã biết, chưa xử lý**:

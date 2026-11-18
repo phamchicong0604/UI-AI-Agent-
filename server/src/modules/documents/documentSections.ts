@@ -32,6 +32,21 @@ import { computeSha256 } from '../../common/crypto.js';
 export const MAX_TITLE_CHARS = 200;
 /** Sections of one version. Text after the last section's start belongs to that section. */
 export const MAX_SECTIONS_PER_VERSION = 10_000;
+/**
+ * What is stored for the sections of a version must stay proportional to the size of its text, whatever
+ * the text looks like. Two limits follow from the length of the text itself:
+ *  - the number of sections is at most MIN_SECTIONS_ALLOWED + one per MIN_AVERAGE_SECTION_CHARS characters,
+ *    because every section costs a row of fixed size;
+ *  - the heading paths of all sections together, measured as the UTF-8 bytes of the JSON that is stored,
+ *    are at most PATH_BUDGET_BASE_BYTES + the UTF-8 size of the text. A character limit per title is not
+ *    enough: the path of every section repeats its ancestors' titles, and JSON escapes control characters
+ *    to six bytes each.
+ * When a limit is reached no further section starts; the rest of the text stays in the last section and
+ * the result is marked as truncated.
+ */
+export const MIN_SECTIONS_ALLOWED = 16;
+export const MIN_AVERAGE_SECTION_CHARS = 24;
+export const PATH_BUDGET_BASE_BYTES = 16 * 1024;
 
 export interface SectionDraft {
   /** Titles of the ancestor headings down to the section's own heading; empty for level 0 */
@@ -246,14 +261,25 @@ export interface SectionSplitOptions {
   headings?: boolean;
 }
 
+export interface SectionSplitResult {
+  sections: SectionDraft[];
+  /** true when a limit stopped the splitting and the last section holds the rest of the text */
+  truncated: boolean;
+}
+
 export function splitIntoSections(text: string | null | undefined, options: SectionSplitOptions = {}): SectionDraft[] {
-  if (!text) return [];
+  return splitIntoSectionsDetailed(text, options).sections;
+}
+
+export function splitIntoSectionsDetailed(text: string | null | undefined, options: SectionSplitOptions = {}): SectionSplitResult {
+  if (!text) return { sections: [], truncated: false };
 
   const scanned = scanLines(text);
-  let headings = options.headings === false ? [] : scanned.headings;
+  const headings = options.headings === false ? [] : scanned.headings;
   const paragraphStarts = scanned.paragraphStarts;
   const sections: SectionDraft[] = [];
   const seenKeys = new Map<string, number>();
+  const maxSections = Math.min(MAX_SECTIONS_PER_VERSION, MIN_SECTIONS_ALLOWED + Math.floor(text.length / MIN_AVERAGE_SECTION_CHARS));
 
   const push = (charStart: number, charEnd: number, level: number, headingPath: string[], baseKey: string | null) => {
     const sectionText = text.slice(charStart, charEnd);
@@ -273,11 +299,12 @@ export function splitIntoSections(text: string | null | undefined, options: Sect
   };
 
   if (headings.length === 0) {
-    const starts = [0, ...paragraphStarts].slice(0, MAX_SECTIONS_PER_VERSION);
+    const allStarts = [0, ...paragraphStarts];
+    const starts = allStarts.slice(0, maxSections);
     for (let i = 0; i < starts.length; i++) {
       push(starts[i], i + 1 < starts.length ? starts[i + 1] : text.length, 0, [], null);
     }
-    return sections;
+    return { sections, truncated: allStarts.length > starts.length || paragraphStarts.length >= MAX_SECTIONS_PER_VERSION };
   }
 
   const firstHeadingOffset = headings[0].offset;
@@ -285,9 +312,9 @@ export function splitIntoSections(text: string | null | undefined, options: Sect
   if (hasPreamble) {
     push(0, firstHeadingOffset, 0, [], PREAMBLE_STABLE_KEY);
   }
-  // Headings beyond the limit do not start a section; their text stays in the last section
-  headings = headings.slice(0, MAX_SECTIONS_PER_VERSION - sections.length);
 
+  let pathBudget = PATH_BUDGET_BASE_BYTES + Buffer.byteLength(text, 'utf8');
+  let truncated = scanned.headings.length >= MAX_SECTIONS_PER_VERSION;
   const ancestors: HeadingLine[] = [];
   for (let i = 0; i < headings.length; i++) {
     const heading = headings[i];
@@ -296,11 +323,28 @@ export function splitIntoSections(text: string | null | undefined, options: Sect
     heading.shown = displayTitle(heading.title);
     ancestors.push(heading);
     const headingPath = ancestors.map(a => a.shown as string);
+    const pathBytes = Buffer.byteLength(JSON.stringify(headingPath), 'utf8');
+    if (sections.length >= maxSections || pathBytes > pathBudget) {
+      truncated = true;
+      break;
+    }
+    pathBudget -= pathBytes;
     const charStart = i === 0 && !hasPreamble ? 0 : heading.offset;
     const charEnd = i + 1 < headings.length ? headings[i + 1].offset : text.length;
     push(charStart, charEnd, heading.level, headingPath, stableKeyForTitleKeys(ancestors.map(a => a.key as string)));
   }
-  return sections;
+
+  if (sections.length === 0) {
+    // Cannot happen with the limits above (the first heading always fits); kept so that coverage holds anyway
+    push(0, text.length, 0, [], PREAMBLE_STABLE_KEY);
+  }
+  const last = sections[sections.length - 1];
+  if (last.charEnd !== text.length) {
+    // The headings that did not get a section stay inside the last one
+    last.charEnd = text.length;
+    last.contentHash = sectionContentHash(text.slice(last.charStart));
+  }
+  return { sections, truncated };
 }
 
 export interface SectionPair<T> {
@@ -348,6 +392,33 @@ export interface SourceAnchor {
   exactQuote?: string | null;
 }
 
+/** Above this length a quote is searched with linearIndexOf instead of String.prototype.indexOf */
+const LONG_QUOTE_CHARS = 256;
+
+/**
+ * Knuth-Morris-Pratt search, O(text + pattern) for any input. The built-in indexOf is faster on ordinary
+ * text but takes time proportional to text length times pattern length on long periodic input (a quote such
+ * as "aaa…b…aaa" in "aaaa…"), and an unresolved source is searched again on every start.
+ */
+function linearIndexOf(text: string, pattern: string): (from: number) => number {
+  const m = pattern.length;
+  const fail = new Int32Array(m);
+  for (let i = 1, k = 0; i < m; i++) {
+    while (k > 0 && pattern.charCodeAt(i) !== pattern.charCodeAt(k)) k = fail[k - 1];
+    if (pattern.charCodeAt(i) === pattern.charCodeAt(k)) k++;
+    fail[i] = k;
+  }
+  return (from: number) => {
+    for (let i = Math.max(0, from), k = 0; i < text.length; i++) {
+      const c = text.charCodeAt(i);
+      while (k > 0 && c !== pattern.charCodeAt(k)) k = fail[k - 1];
+      if (c === pattern.charCodeAt(k)) k++;
+      if (k === m) return i - m + 1;
+    }
+    return -1;
+  };
+}
+
 function sectionAt<T extends { charStart: number; charEnd: number }>(sections: T[], offset: number): T | null {
   let low = 0;
   let high = sections.length - 1;
@@ -389,10 +460,11 @@ export function findSectionForAnchor<T extends { charStart: number; charEnd: num
     return sectionAt(sections, start);
   }
 
+  const indexOfQuote = quote.length > LONG_QUOTE_CHARS ? linearIndexOf(text, quote) : (from: number) => text.indexOf(quote, from);
   let found: T | null = null;
   // After an occurrence, continue from the end of its section: further occurrences inside the same section
   // change nothing, and stepping one character at a time is quadratic for a long, repetitive quote.
-  for (let at = text.indexOf(quote); at !== -1; at = text.indexOf(quote, at)) {
+  for (let at = indexOfQuote(0); at !== -1; at = indexOfQuote(at)) {
     const section = sectionAt(sections, at);
     if (!section) return null;
     if (found && found !== section) return null;

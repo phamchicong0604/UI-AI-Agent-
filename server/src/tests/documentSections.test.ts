@@ -2,6 +2,10 @@ import { describe, it, expect } from 'vitest';
 import {
   MAX_SECTIONS_PER_VERSION,
   MAX_TITLE_CHARS,
+  MIN_AVERAGE_SECTION_CHARS,
+  MIN_SECTIONS_ALLOWED,
+  PATH_BUDGET_BASE_BYTES,
+  splitIntoSectionsDetailed,
   SectionDraft,
   findSectionForAnchor,
   mapSections,
@@ -257,15 +261,41 @@ describe('E11-T3: splitIntoSections', () => {
   // The cost must follow the length of the text, not the product of two things an uploader controls.
   // Before the limits below, a 240 KB document of this shape wrote 2.9 GB of heading paths and made every
   // later start of the server run out of memory.
-  it('keeps heading paths small when a very long title has many children', () => {
-    const text = `# ${'x'.repeat(100_000)}\n${'## a\n'.repeat(5_000)}`;
-    const sections = splitIntoSections(text);
+  // What is stored for a version must stay proportional to its text, whatever the text looks like.
+  // Before these limits a 71 KB document stored 62 MB of section rows (870 times its size), and a
+  // 240 KB one made every later start of the server run out of memory.
+  const pathBytesOf = (sections: SectionDraft[]) => sections.reduce((n, s) => n + Buffer.byteLength(JSON.stringify(s.headingPath), 'utf8'), 0);
+  const nested = (titleChar: string) =>
+    `${[1, 2, 3, 4, 5].map(level => `${'#'.repeat(level)} ${titleChar.repeat(MAX_TITLE_CHARS)}\n`).join('')}${'###### a\n'.repeat(10_000)}`;
+
+  it.each([
+    ['a very long title with many children', `# ${'x'.repeat(100_000)}\n${'## a\n'.repeat(5_000)}`],
+    ['five nested 200-character titles of control characters and 10,000 leaves', nested('\u0001')],
+    ['the same with CJK titles', nested('中')],
+    ['the same with quote characters', nested('"')],
+    ['the same with ASCII titles', nested('x')],
+    ['only short heading lines', '# a\n'.repeat(50_000)],
+    ['only one-word paragraphs', 'w\n\n'.repeat(50_000)],
+    ['six levels cycling with long titles', Array.from({ length: 3_000 }, (_, i) => `${'#'.repeat((i % 6) + 1)} ${'t'.repeat(150)} ${i}\nbody\n`).join('')]
+  ])('bounds sections and heading paths by the size of the text: %s', (_label, text) => {
+    const { sections, truncated } = splitIntoSectionsDetailed(text);
     expectCoverage(text, sections);
-    expect(sections).toHaveLength(5_001);
-    const pathBytes = sections.reduce((n, s) => n + JSON.stringify(s.headingPath).length, 0);
-    // 5,001 paths of at most two titles of at most MAX_TITLE_CHARS + 1 characters (it was 500 MB)
-    expect(pathBytes).toBeLessThan(5_001 * (MAX_TITLE_CHARS + 20));
-    expect(sections.every(s => s.headingPath.every(t => t.length <= MAX_TITLE_CHARS + 1))).toBe(true);
+    expect(new Set(sections.map(s => s.stableKey)).size).toBe(sections.length);
+    expect(sections.length).toBeLessThanOrEqual(MIN_SECTIONS_ALLOWED + Math.floor(text.length / MIN_AVERAGE_SECTION_CHARS));
+    expect(sections.length).toBeLessThanOrEqual(MAX_SECTIONS_PER_VERSION);
+    expect(pathBytesOf(sections)).toBeLessThanOrEqual(PATH_BUDGET_BASE_BYTES + Buffer.byteLength(text, 'utf8'));
+    expect(truncated).toBe(true);
+  });
+
+  it('does not truncate ordinary documents, including a glossary of many short entries', () => {
+    const glossary = `# Bảng thuật ngữ\n\n${Array.from({ length: 400 }, (_, i) => `### Thuật ngữ ${i}\nĐịnh nghĩa ngắn của thuật ngữ.\n\n`).join('')}`;
+    const result = splitIntoSectionsDetailed(glossary);
+    expect(result.truncated).toBe(false);
+    expect(result.sections).toHaveLength(401);
+
+    const small = splitIntoSectionsDetailed('# A\n## B\n## C\n### D\n## E\n# F\n');
+    expect(small.truncated).toBe(false);
+    expect(small.sections).toHaveLength(6);
   });
 
   it('keeps the whole title in the key although the path shows only its beginning', () => {
@@ -285,19 +315,25 @@ describe('E11-T3: splitIntoSections', () => {
   });
 
   it('stops starting sections at the limit and leaves the rest of the text in the last one', () => {
-    const headingText = `${'# a\nb\n'.repeat(MAX_SECTIONS_PER_VERSION + 5_000)}`;
-    const byHeading = splitIntoSections(headingText);
-    expectCoverage(headingText, byHeading);
-    expect(byHeading).toHaveLength(MAX_SECTIONS_PER_VERSION);
-    expect(byHeading[byHeading.length - 1].charEnd).toBe(headingText.length);
+    // Long enough bodies for the per-length limit not to apply: only the absolute limit does
+    const block = `# a\n${'b'.repeat(30)}\n`;
+    const headingText = block.repeat(MAX_SECTIONS_PER_VERSION + 5_000);
+    const byHeading = splitIntoSectionsDetailed(headingText);
+    expectCoverage(headingText, byHeading.sections);
+    expect(byHeading.sections).toHaveLength(MAX_SECTIONS_PER_VERSION);
+    expect(byHeading.truncated).toBe(true);
+    const last = byHeading.sections[byHeading.sections.length - 1];
+    expect(last.charEnd).toBe(headingText.length);
+    expect(last.contentHash).toBe(sectionContentHash(headingText.slice(last.charStart)));
 
-    const paragraphText = 'word\n\n'.repeat(MAX_SECTIONS_PER_VERSION + 5_000);
-    const byParagraph = splitIntoSections(paragraphText);
-    expectCoverage(paragraphText, byParagraph);
-    expect(byParagraph).toHaveLength(MAX_SECTIONS_PER_VERSION);
+    const paragraphText = `${'word '.repeat(6)}\n\n`.repeat(MAX_SECTIONS_PER_VERSION + 5_000);
+    const byParagraph = splitIntoSectionsDetailed(paragraphText);
+    expectCoverage(paragraphText, byParagraph.sections);
+    expect(byParagraph.sections).toHaveLength(MAX_SECTIONS_PER_VERSION);
+    expect(byParagraph.truncated).toBe(true);
 
-    const withPreamble = `intro\n${headingText}`;
-    expect(splitIntoSections(withPreamble)).toHaveLength(MAX_SECTIONS_PER_VERSION);
+    expect(splitIntoSections(`intro\n${headingText}`)).toHaveLength(MAX_SECTIONS_PER_VERSION);
+    expect(splitIntoSectionsDetailed(block.repeat(MAX_SECTIONS_PER_VERSION - 1)).truncated).toBe(false);
   });
 
   // "<pre" or "<!--" that is not the start of an HTML block is ordinary text. An earlier version of the
@@ -583,6 +619,42 @@ describe('E11-T3: findSectionForAnchor', () => {
     const found = findSectionForAnchor(big, bigSections, { charStart: 0, charEnd: 0, exactQuote: 'a'.repeat(n / 2) });
     expect(performance.now() - started).toBeLessThan(1_000);
     expect(found).toBeNull(); // the quote occurs in two sections
+  });
+
+  it('searches a long quote that is absent from a periodic text in linear time', () => {
+    // "aaa…b…aaa" in "aaaa…": 400k characters used to take over 5 s, on every start
+    const n = 800_000;
+    const big = `# H\n${'a'.repeat(n)}`;
+    const quote = `${'a'.repeat(n / 4)}b${'a'.repeat(n / 4)}`;
+    const started = performance.now();
+    expect(findSectionForAnchor(big, splitIntoSections(big), { charStart: 0, charEnd: 0, exactQuote: quote })).toBeNull();
+    expect(performance.now() - started).toBeLessThan(2_000);
+  });
+
+  it('finds long quotes exactly as it finds short ones', () => {
+    // Every word carries its position, so a slice of one body occurs nowhere else in that body
+    const body = (seed: number) => Array.from({ length: 400 }, (_, i) => `từ${seed}-${i} `).join('');
+    const doc = `# A\n${body(1)}\n# B\n${body(2)}\n# C\n${body(1)}\n`;
+    const docSections = splitIntoSections(doc);
+    const longOnlyInB = body(2).slice(100, 900);
+    const longInAAndC = body(1).slice(50, 700);
+    expect(longOnlyInB.length).toBeGreaterThan(256);
+    expect(findSectionForAnchor(doc, docSections, { charStart: 0, charEnd: 0, exactQuote: longOnlyInB })?.headingPath).toEqual(['B']);
+    expect(findSectionForAnchor(doc, docSections, { charStart: 0, charEnd: 0, exactQuote: longInAAndC })).toBeNull();
+    expect(findSectionForAnchor(doc, docSections, { charStart: 0, charEnd: 0, exactQuote: `${longOnlyInB}không có` })).toBeNull();
+
+    // Same answers as the built-in search on random long and short quotes
+    let seed = 7;
+    const random = (n: number) => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n; };
+    const haystack = Array.from({ length: 6_000 }, () => 'ab'[random(2)]).join('');
+    const one = [{ charStart: 0, charEnd: haystack.length }];
+    for (let i = 0; i < 300; i++) {
+      const length = [3, 40, 300, 700][random(4)];
+      const start = random(haystack.length - length);
+      const quote = random(3) === 0 ? `${haystack.slice(start, start + length - 1)}c` : haystack.slice(start, start + length);
+      const expected = haystack.includes(quote) ? one[0] : null;
+      expect(findSectionForAnchor(haystack, one, { charStart: 0, charEnd: 0, exactQuote: quote })).toBe(expected);
+    }
   });
 
   it('resolves nothing when no quote is given, because offsets alone cannot be checked', () => {
