@@ -5,6 +5,7 @@ import {
   MIN_AVERAGE_SECTION_CHARS,
   MIN_SECTIONS_ALLOWED,
   PATH_BUDGET_BASE_BYTES,
+  PATH_BUDGET_PER_TEXT_BYTE,
   splitIntoSectionsDetailed,
   SectionDraft,
   findSectionForAnchor,
@@ -275,27 +276,44 @@ describe('E11-T3: splitIntoSections', () => {
     ['the same with quote characters', nested('"')],
     ['the same with ASCII titles', nested('x')],
     ['only short heading lines', '# a\n'.repeat(50_000)],
-    ['only one-word paragraphs', 'w\n\n'.repeat(50_000)],
-    ['six levels cycling with long titles', Array.from({ length: 3_000 }, (_, i) => `${'#'.repeat((i % 6) + 1)} ${'t'.repeat(150)} ${i}\nbody\n`).join('')]
+    ['only one-word paragraphs', 'w\n\n'.repeat(50_000)]
   ])('bounds sections and heading paths by the size of the text: %s', (_label, text) => {
     const { sections, truncated } = splitIntoSectionsDetailed(text);
     expectCoverage(text, sections);
     expect(new Set(sections.map(s => s.stableKey)).size).toBe(sections.length);
     expect(sections.length).toBeLessThanOrEqual(MIN_SECTIONS_ALLOWED + Math.floor(text.length / MIN_AVERAGE_SECTION_CHARS));
     expect(sections.length).toBeLessThanOrEqual(MAX_SECTIONS_PER_VERSION);
-    expect(pathBytesOf(sections)).toBeLessThanOrEqual(PATH_BUDGET_BASE_BYTES + Buffer.byteLength(text, 'utf8'));
+    expect(pathBytesOf(sections)).toBeLessThanOrEqual(PATH_BUDGET_BASE_BYTES + PATH_BUDGET_PER_TEXT_BYTE * Buffer.byteLength(text, 'utf8'));
     expect(truncated).toBe(true);
   });
 
-  it('does not truncate ordinary documents, including a glossary of many short entries', () => {
-    const glossary = `# Bảng thuật ngữ\n\n${Array.from({ length: 400 }, (_, i) => `### Thuật ngữ ${i}\nĐịnh nghĩa ngắn của thuật ngữ.\n\n`).join('')}`;
-    const result = splitIntoSectionsDetailed(glossary);
-    expect(result.truncated).toBe(false);
-    expect(result.sections).toHaveLength(401);
+  it('stays within the budget for six cycling levels of long titles, truncated or not', () => {
+    const text = Array.from({ length: 3_000 }, (_, i) => `${'#'.repeat((i % 6) + 1)} ${'t'.repeat(150)} ${i}\nbody\n`).join('');
+    const { sections } = splitIntoSectionsDetailed(text);
+    expectCoverage(text, sections);
+    expect(pathBytesOf(sections)).toBeLessThanOrEqual(PATH_BUDGET_BASE_BYTES + PATH_BUDGET_PER_TEXT_BYTE * Buffer.byteLength(text, 'utf8'));
+  });
 
-    const small = splitIntoSectionsDetailed('# A\n## B\n## C\n### D\n## E\n# F\n');
-    expect(small.truncated).toBe(false);
-    expect(small.sections).toHaveLength(6);
+  // Terse but legitimate documents. An earlier, tighter version of the limits cut each of the first eight
+  // (a changelog kept 236 of 301 sections, a test-case catalogue 295 of 667).
+  const viTitle = (i: number) => `Quy định chi tiết về điều kiện áp dụng, phạm vi hiệu lực và trách nhiệm của các bên liên quan trong quá trình tiếp nhận, xử lý và phản hồi yêu cầu hỗ trợ của khách hàng doanh nghiệp theo từng cấp độ ưu tiên đã thỏa thuận trong hợp đồng dịch vụ số ${i}`;
+  it.each([
+    ['a changelog of 300 versions with one-line bodies', `# Changelog\n${Array.from({ length: 300 }, (_, i) => `## 1.${i}.0\n- fix\n`).join('')}`, 301],
+    ['a changelog with Added and Fixed subheadings', `# Changelog\n${Array.from({ length: 200 }, (_, i) => `## 1.${i}.0\n### Added\n- x\n### Fixed\n- y\n`).join('')}`, 601],
+    ['a four-level API reference with 60-character titles', `# API\n${Array.from({ length: 10 }, (_, a) => `## ${'Module '.padEnd(52, 'm')} ${a}\n${Array.from({ length: 6 }, (_, b) => `### ${'Resource '.padEnd(50, 'r')} ${a}.${b}\n${Array.from({ length: 5 }, (_, c) => `#### ${'Operation '.padEnd(48, 'o')} ${a}.${b}.${c}\nReturns 200.\n`).join('')}`).join('')}`).join('')}`, 371],
+    ['a three-level API reference with 30-character titles', `# API\n${Array.from({ length: 10 }, (_, a) => `## ${'Group '.padEnd(26, 'g')} ${a}\n${Array.from({ length: 50 }, (_, b) => `### ${'Endpoint '.padEnd(24, 'e')} ${a}.${b}\nOK\n`).join('')}`).join('')}`, 511],
+    ['a table of contents of 400 lines', Array.from({ length: 400 }, (_, i) => `## Mục ${i}\n`).join(''), 400],
+    ['Vietnamese titles of about 220 characters with one-line bodies', `# ${viTitle(0)}\n${Array.from({ length: 6 }, (_, a) => `## ${viTitle(a)}\n${Array.from({ length: 9 }, (_, b) => `### ${viTitle(a * 10 + b)}\nÁp dụng.\n`).join('')}`).join('')}`, 61],
+    ['a glossary of 400 terms with ten-character definitions', `# Glossary\n${Array.from({ length: 400 }, (_, i) => `### T${i}\nDefinition\n`).join('')}`, 401],
+    ['a four-level test-case catalogue with "Pass" bodies', `# Catalogue\n${Array.from({ length: 6 }, (_, a) => `## Suite ${a} Thanh toán\n${Array.from({ length: 10 }, (_, b) => `### Feature ${a}.${b} Hoàn tiền\n${Array.from({ length: 10 }, (_, c) => `#### TC-${a}${b}${c} Kiểm tra số dư\nPass\n`).join('')}`).join('')}`).join('')}`, 667],
+    ['a glossary with one-line Vietnamese definitions', `# Bảng thuật ngữ\n\n${Array.from({ length: 400 }, (_, i) => `### Thuật ngữ ${i}\nĐịnh nghĩa ngắn của thuật ngữ.\n\n`).join('')}`, 401],
+    ['a small nested document', '# A\n## B\n## C\n### D\n## E\n# F\n', 6],
+    ['exactly the absolute limit of headings', `# a\n${'b'.repeat(30)}\n`.repeat(MAX_SECTIONS_PER_VERSION), MAX_SECTIONS_PER_VERSION]
+  ])('keeps every section of %s', (_label, text, expected) => {
+    const { sections, truncated } = splitIntoSectionsDetailed(text);
+    expectCoverage(text, sections);
+    expect(sections).toHaveLength(expected);
+    expect(truncated).toBe(false);
   });
 
   it('keeps the whole title in the key although the path shows only its beginning', () => {

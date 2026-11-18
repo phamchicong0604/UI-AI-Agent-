@@ -327,6 +327,37 @@ describe('E11-T3: document_sections', () => {
       return (await res.json() as any).data.documents[0] as { id: string };
     };
 
+    // The version label is part of the version id, which every section row and three indexes repeat.
+    // Without a limit, a 1,000-character label made one 241 KB request store 181 MB.
+    it('rejects a version label that is long or has unusual characters, and stores nothing', async () => {
+      const post = (body: Record<string, unknown>) => fetch(`${baseUrl}/api/v1/documents`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ title: `Label ${stamp}`, category: '01_Project_Overview', projectId: projA, contentMarkdown: '# A\ntext\n', ...body })
+      });
+      const versionsBefore = (db.prepare('SELECT count(*) AS n FROM document_versions').get() as { n: number }).n;
+      for (const currentVersion of ['v'.repeat(33), 'x'.repeat(1_000), 'v1 0', 'v1/0', 'phiên-bản', '-v1', { a: 1 }, 12]) {
+        const res = await post({ currentVersion });
+        expect(res.status).toBe(400);
+      }
+      expect((db.prepare('SELECT count(*) AS n FROM document_versions').get() as { n: number }).n).toBe(versionsBefore);
+
+      const ok = await post({ currentVersion: 'v3.2-draft_1' });
+      expect(ok.status).toBe(201);
+      const doc = (await ok.json() as any).data as { id: string };
+      expect(sectionsOf(`${doc.id}-v3.2-draft_1`)).toHaveLength(1);
+
+      const addVersionWith = (versionNo: unknown) => fetch(`${baseUrl}/api/v1/documents/${doc.id}/versions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ content: '# A\nnew text\n', versionNo })
+      });
+      expect((await addVersionWith('y'.repeat(250))).status).toBe(400);
+      expect((await addVersionWith('v4.0 final')).status).toBe(400);
+      expect((await addVersionWith('v4.0')).status).toBe(201);
+      expect((await addVersionWith(undefined)).status).toBe(201); // the server still picks the next label itself
+    });
+
     it('a byte order mark does not hide the first heading, and does not break the mapping to a version without it', async () => {
       const body = '# Đặc tả thanh toán\n\n## Mục tiêu\nMô tả mục tiêu.\n\n## Phạm vi\nMô tả phạm vi.\n';
       const doc = await createDoc(`BOM ${stamp}`, `\uFEFF${body}`);

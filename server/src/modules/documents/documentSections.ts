@@ -38,15 +38,19 @@ export const MAX_SECTIONS_PER_VERSION = 10_000;
  *  - the number of sections is at most MIN_SECTIONS_ALLOWED + one per MIN_AVERAGE_SECTION_CHARS characters,
  *    because every section costs a row of fixed size;
  *  - the heading paths of all sections together, measured as the UTF-8 bytes of the JSON that is stored,
- *    are at most PATH_BUDGET_BASE_BYTES + the UTF-8 size of the text. A character limit per title is not
+ *    are at most PATH_BUDGET_BASE_BYTES + PATH_BUDGET_PER_TEXT_BYTE times the UTF-8 size of the text.
+ * The constants are chosen so that terse but legitimate documents keep all their sections: a changelog of
+ * "## 1.2.0" headings with one-line bodies, a table of contents, a four-level API reference or test-case
+ * catalogue with one-line bodies (their paths are several times longer than their text). A character limit per title is not
  *    enough: the path of every section repeats its ancestors' titles, and JSON escapes control characters
  *    to six bytes each.
  * When a limit is reached no further section starts; the rest of the text stays in the last section and
  * the result is marked as truncated.
  */
 export const MIN_SECTIONS_ALLOWED = 16;
-export const MIN_AVERAGE_SECTION_CHARS = 24;
+export const MIN_AVERAGE_SECTION_CHARS = 8;
 export const PATH_BUDGET_BASE_BYTES = 16 * 1024;
+export const PATH_BUDGET_PER_TEXT_BYTE = 8;
 
 export interface SectionDraft {
   /** Titles of the ancestor headings down to the section's own heading; empty for level 0 */
@@ -226,7 +230,7 @@ function scanLines(text: string): { headings: HeadingLine[]; paragraphStarts: nu
       }
       previousBlank = false;
     } else {
-      if (!blank && previousBlank && seenContent && paragraphStarts.length < MAX_SECTIONS_PER_VERSION) paragraphStarts.push(pos);
+      if (!blank && previousBlank && seenContent && paragraphStarts.length <= MAX_SECTIONS_PER_VERSION) paragraphStarts.push(pos);
       // A byte order mark at the start of the text is not part of the first line's content. It stays in
       // the text (offsets are unchanged) but must not hide a heading on the first line.
       const content = pos === 0 && line.charCodeAt(0) === BYTE_ORDER_MARK ? line.slice(1) : line;
@@ -238,7 +242,8 @@ function scanLines(text: string): { headings: HeadingLine[]; paragraphStarts: nu
           fence = { char: open.char, length: open.length };
         } else {
           const heading = parseHeading(content);
-          if (heading && headings.length < MAX_SECTIONS_PER_VERSION) {
+          // One more than the limit is collected, so that reaching exactly the limit is not taken for truncation
+          if (heading && headings.length <= MAX_SECTIONS_PER_VERSION) {
             headings.push({ offset: pos, level: heading.level, title: headingTitle(heading.rawTitle) });
           }
           htmlBlock = opensHtmlBlock(content);
@@ -304,7 +309,7 @@ export function splitIntoSectionsDetailed(text: string | null | undefined, optio
     for (let i = 0; i < starts.length; i++) {
       push(starts[i], i + 1 < starts.length ? starts[i + 1] : text.length, 0, [], null);
     }
-    return { sections, truncated: allStarts.length > starts.length || paragraphStarts.length >= MAX_SECTIONS_PER_VERSION };
+    return { sections, truncated: allStarts.length > starts.length };
   }
 
   const firstHeadingOffset = headings[0].offset;
@@ -313,8 +318,8 @@ export function splitIntoSectionsDetailed(text: string | null | undefined, optio
     push(0, firstHeadingOffset, 0, [], PREAMBLE_STABLE_KEY);
   }
 
-  let pathBudget = PATH_BUDGET_BASE_BYTES + Buffer.byteLength(text, 'utf8');
-  let truncated = scanned.headings.length >= MAX_SECTIONS_PER_VERSION;
+  let pathBudget = PATH_BUDGET_BASE_BYTES + PATH_BUDGET_PER_TEXT_BYTE * Buffer.byteLength(text, 'utf8');
+  let truncated = false;
   const ancestors: HeadingLine[] = [];
   for (let i = 0; i < headings.length; i++) {
     const heading = headings[i];
@@ -402,6 +407,7 @@ const LONG_QUOTE_CHARS = 256;
  */
 function linearIndexOf(text: string, pattern: string): (from: number) => number {
   const m = pattern.length;
+  if (m === 0) return (from: number) => Math.min(Math.max(0, from), text.length);
   const fail = new Int32Array(m);
   for (let i = 1, k = 0; i < m; i++) {
     while (k > 0 && pattern.charCodeAt(i) !== pattern.charCodeAt(k)) k = fail[k - 1];
